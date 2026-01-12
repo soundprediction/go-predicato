@@ -21,6 +21,7 @@ type ExtractedNode struct {
 	SourceID    string    `json:"source_id"`
 	Name        string    `json:"name"`
 	Type        string    `json:"type"`
+	EntityType  string    `json:"entity_type"`
 	Description string    `json:"description"`
 	Embedding   []float32 `json:"embedding"`
 	ChunkIndex  int       `json:"chunk_index"`

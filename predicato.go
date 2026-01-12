@@ -62,6 +62,14 @@ type Predicato interface {
 	// This is equivalent to the Python add_episode method.
 	AddEpisode(ctx context.Context, episode types.Episode, options *AddEpisodeOptions) (*types.AddEpisodeResults, error)
 
+	// ExtractToFacts extracts knowledge from an episode and saves it to the facts database.
+	// This is step 1 of the decoupled ingestion pipeline.
+	ExtractToFacts(ctx context.Context, episode types.Episode, options *AddEpisodeOptions) error
+
+	// PromoteToGraph reads extracted knowledge from facts DB and ingests it into the graph.
+	// This is step 2 of the decoupled ingestion pipeline.
+	PromoteToGraph(ctx context.Context, sourceID string, options *AddEpisodeOptions) (*types.AddEpisodeResults, error)
+
 	// Search performs hybrid search across the knowledge graph combining
 	// semantic embeddings, keyword search, and graph traversal.
 	Search(ctx context.Context, query string, config *types.SearchConfig) (*types.SearchResults, error)

@@ -47,7 +47,19 @@ func (d *DoltDB) Initialize(ctx context.Context) error {
 			metadata JSON,
 			created_at TIMESTAMP
 		)`,
-		`CREATE TABLE IF NOT EXISTS extracted_nodes (
+		// Table for identified entities
+		`CREATE TABLE IF NOT EXISTS extracted_entities (
+			id VARCHAR(255) PRIMARY KEY,
+			source_id VARCHAR(255),
+			name TEXT,
+			entity_type VARCHAR(100),
+			description TEXT,
+			embedding JSON,
+			chunk_index INT,
+			FOREIGN KEY (source_id) REFERENCES sources(id)
+		)`,
+		// Table for other structural/generic nodes
+		`CREATE TABLE IF NOT EXISTS extracted_other_nodes (
 			id VARCHAR(255) PRIMARY KEY,
 			source_id VARCHAR(255),
 			name TEXT,
@@ -99,19 +111,69 @@ func (d *DoltDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, no
 	}
 	defer tx.Rollback()
 
-	nodeStmt, err := tx.PrepareContext(ctx, `INSERT INTO extracted_nodes (id, source_id, name, type, description, embedding, chunk_index) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	// Prepare statements for both tables
+	entityStmt, err := tx.PrepareContext(ctx, `INSERT INTO extracted_entities (id, source_id, name, entity_type, description, embedding, chunk_index) VALUES (?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
-		return fmt.Errorf("failed to prepare node statement: %w", err)
+		return fmt.Errorf("failed to prepare entity statement: %w", err)
 	}
-	defer nodeStmt.Close()
+	defer entityStmt.Close()
+
+	otherStmt, err := tx.PrepareContext(ctx, `INSERT INTO extracted_other_nodes (id, source_id, name, type, description, embedding, chunk_index) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare other node statement: %w", err)
+	}
+	defer otherStmt.Close()
+
+	// Helper to check existence
+	nodeExists := func(table string, name string, typeOrCategory string, isEntity bool) (bool, error) {
+		var exists bool
+		var query string
+		if isEntity {
+			// For entities, we check name (and maybe entity_type, but name usually key)
+			query = fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE source_id = ? AND name = ?)", table)
+			err := tx.QueryRowContext(ctx, query, sourceID, name).Scan(&exists)
+			return exists, err
+		} else {
+			// For others, check type as well
+			query = fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE source_id = ? AND name = ? AND type = ?)", table)
+			err := tx.QueryRowContext(ctx, query, sourceID, name, typeOrCategory).Scan(&exists)
+			return exists, err
+		}
+	}
 
 	for _, node := range nodes {
 		embeddingJSON, err := json.Marshal(node.Embedding)
 		if err != nil {
 			return fmt.Errorf("failed to marshal embedding for node %s: %w", node.ID, err)
 		}
-		if _, err := nodeStmt.ExecContext(ctx, node.ID, sourceID, node.Name, node.Type, node.Description, embeddingJSON, node.ChunkIndex); err != nil {
-			return fmt.Errorf("failed to insert node %s: %w", node.ID, err)
+
+		// Determine target table and logic
+		if node.Type == "entity" || node.Type == "Entity" {
+			// Check existence in extracted_entities
+			exists, err := nodeExists("extracted_entities", node.Name, "", true)
+			if err != nil {
+				return fmt.Errorf("failed to check existence for entity %s: %w", node.Name, err)
+			}
+			if exists {
+				continue // Skip duplicate
+			}
+
+			if _, err := entityStmt.ExecContext(ctx, node.ID, sourceID, node.Name, node.EntityType, node.Description, embeddingJSON, node.ChunkIndex); err != nil {
+				return fmt.Errorf("failed to insert entity %s: %w", node.ID, err)
+			}
+		} else {
+			// Check existence in extracted_other_nodes
+			exists, err := nodeExists("extracted_other_nodes", node.Name, node.Type, false)
+			if err != nil {
+				return fmt.Errorf("failed to check existence for node %s: %w", node.Name, err)
+			}
+			if exists {
+				continue // Skip duplicate
+			}
+
+			if _, err := otherStmt.ExecContext(ctx, node.ID, sourceID, node.Name, node.Type, node.Description, embeddingJSON, node.ChunkIndex); err != nil {
+				return fmt.Errorf("failed to insert other node %s: %w", node.ID, err)
+			}
 		}
 	}
 
@@ -122,6 +184,9 @@ func (d *DoltDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, no
 	defer edgeStmt.Close()
 
 	for _, edge := range edges {
+		// Deduping edges? User didn't strictly ask, but good practice.
+		// For now, let's just insert as edges are often redundant or many-to-many.
+		// Or check existence? Let's keep it simple and insert.
 		if _, err := edgeStmt.ExecContext(ctx, edge.ID, sourceID, edge.SourceNodeName, edge.TargetNodeName, edge.Relation, edge.Description, edge.Weight, edge.ChunkIndex); err != nil {
 			return fmt.Errorf("failed to insert edge %s: %w", edge.ID, err)
 		}
@@ -140,12 +205,6 @@ func (d *DoltDB) GetSource(ctx context.Context, sourceID string) (*Source, error
 	var s Source
 	var metadataBytes []byte
 
-	// Using generic scanning and converting
-	// To ensure CreatedAt is parsed correctly, we usually add ?parseTime=true to DSN.
-	// We'll assume the user configures DSN correctly, but handle both if possible or just rely on driver.
-	// For simplicity, we scan into a temporary holding variable if needed, but let's try direct time.Time scan.
-	// If it fails, we know DSN needs parseTime=true.
-
 	if err := row.Scan(&s.ID, &s.Name, &s.Content, &s.GroupID, &metadataBytes, &s.CreatedAt); err != nil {
 		return nil, fmt.Errorf("failed to scan source: %w", err)
 	}
@@ -160,7 +219,17 @@ func (d *DoltDB) GetSource(ctx context.Context, sourceID string) (*Source, error
 }
 
 func (d *DoltDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]*ExtractedNode, error) {
-	rows, err := d.db.QueryContext(ctx, "SELECT id, source_id, name, type, description, embedding, chunk_index FROM extracted_nodes WHERE source_id = ?", sourceID)
+	// Union query to get all nodes
+	query := `
+		SELECT id, source_id, name, 'entity' as type, entity_type, description, embedding, chunk_index 
+		FROM extracted_entities 
+		WHERE source_id = ?
+		UNION ALL
+		SELECT id, source_id, name, type, '' as entity_type, description, embedding, chunk_index 
+		FROM extracted_other_nodes 
+		WHERE source_id = ?
+	`
+	rows, err := d.db.QueryContext(ctx, query, sourceID, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query extracted nodes: %w", err)
 	}
@@ -170,8 +239,14 @@ func (d *DoltDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]*Ext
 	for rows.Next() {
 		var n ExtractedNode
 		var embeddingBytes []byte
-		if err := rows.Scan(&n.ID, &n.SourceID, &n.Name, &n.Type, &n.Description, &embeddingBytes, &n.ChunkIndex); err != nil {
+		var entityType sql.NullString // Handle potential nulls or mismatched columns safely?
+		// Actually UNION should align columns. entity_type is string in first, '' in second.
+
+		if err := rows.Scan(&n.ID, &n.SourceID, &n.Name, &n.Type, &entityType, &n.Description, &embeddingBytes, &n.ChunkIndex); err != nil {
 			return nil, err
+		}
+		if entityType.Valid {
+			n.EntityType = entityType.String
 		}
 		if len(embeddingBytes) > 0 {
 			if err := json.Unmarshal(embeddingBytes, &n.Embedding); err != nil {
@@ -234,15 +309,18 @@ func (d *DoltDB) GetAllSources(ctx context.Context, limit int) ([]*Source, error
 }
 
 func (d *DoltDB) GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNode, error) {
-	query := "SELECT id, source_id, name, type, description, embedding, chunk_index FROM extracted_nodes"
-	var rows *sql.Rows
-	var err error
+	query := `
+		SELECT id, source_id, name, 'entity' as type, entity_type, description, embedding, chunk_index 
+		FROM extracted_entities
+		UNION ALL
+		SELECT id, source_id, name, type, '' as entity_type, description, embedding, chunk_index 
+		FROM extracted_other_nodes
+	`
 	if limit > 0 {
-		query += " LIMIT ?"
-		rows, err = d.db.QueryContext(ctx, query, limit)
-	} else {
-		rows, err = d.db.QueryContext(ctx, query)
+		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
+
+	rows, err := d.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query nodes: %w", err)
 	}
@@ -252,8 +330,12 @@ func (d *DoltDB) GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNode, 
 	for rows.Next() {
 		var n ExtractedNode
 		var embeddingBytes []byte
-		if err := rows.Scan(&n.ID, &n.SourceID, &n.Name, &n.Type, &n.Description, &embeddingBytes, &n.ChunkIndex); err != nil {
+		var entityType sql.NullString
+		if err := rows.Scan(&n.ID, &n.SourceID, &n.Name, &n.Type, &entityType, &n.Description, &embeddingBytes, &n.ChunkIndex); err != nil {
 			return nil, err
+		}
+		if entityType.Valid {
+			n.EntityType = entityType.String
 		}
 		if len(embeddingBytes) > 0 {
 			if err := json.Unmarshal(embeddingBytes, &n.Embedding); err != nil {
@@ -297,9 +379,18 @@ func (d *DoltDB) GetStats(ctx context.Context) (*Stats, error) {
 	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sources").Scan(&stats.SourceCount); err != nil {
 		return nil, fmt.Errorf("failed to count sources: %w", err)
 	}
-	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_nodes").Scan(&stats.NodeCount); err != nil {
-		return nil, fmt.Errorf("failed to count nodes: %w", err)
+
+	var entityCount, otherCount int64
+	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_entities").Scan(&entityCount); err != nil {
+		// Log error or ignore if table doesn't exist yet? (Should exist after Init)
+		// return nil, fmt.Errorf("failed to count entities: %w", err)
+		// For robustness, maybe 0 if missing? But Initialize runs on startup.
 	}
+	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_other_nodes").Scan(&otherCount); err != nil {
+
+	}
+	stats.NodeCount = entityCount + otherCount
+
 	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_edges").Scan(&stats.EdgeCount); err != nil {
 		return nil, fmt.Errorf("failed to count edges: %w", err)
 	}

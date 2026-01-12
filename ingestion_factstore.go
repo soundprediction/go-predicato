@@ -66,6 +66,7 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 				SourceID:    episode.ID,
 				Name:        n.Name,
 				Type:        string(n.Type),
+				EntityType:  n.EntityType,
 				Description: n.Summary,
 				Embedding:   n.Embedding,
 				ChunkIndex:  chunkIdx,
