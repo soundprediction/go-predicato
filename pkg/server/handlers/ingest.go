@@ -279,3 +279,273 @@ func (h *IngestHandler) ClearData(w http.ResponseWriter, r *http.Request) {
 		Message: message,
 	})
 }
+
+// ExtractEpisode handles POST /ingest/extract
+// This is the first stage of two-stage ingestion - extracts entities and relationships
+// without promoting to the graph.
+func (h *IngestHandler) ExtractEpisode(w http.ResponseWriter, r *http.Request) {
+	var req dto.ExtractEpisodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	// Validate the request
+	if err := req.Validate(); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
+	ctx := context.Background()
+
+	// Build episode from request
+	now := time.Now()
+	episodeID := req.ID
+	if episodeID == "" {
+		episodeID = fmt.Sprintf("%s-extract-%d", req.GroupID, now.UnixNano())
+	}
+
+	episode := types.Episode{
+		ID:        episodeID,
+		Name:      req.Name,
+		Content:   req.Content,
+		Source:    req.Source,
+		GroupID:   req.GroupID,
+		Metadata:  req.Metadata,
+		CreatedAt: now,
+	}
+	if req.Reference != nil {
+		episode.Reference = *req.Reference
+	} else {
+		episode.Reference = now
+	}
+
+	// Build options
+	options := &predicato.AddEpisodeOptions{
+		EntityTypes:          req.EntityTypes,
+		ExcludedEntityTypes:  req.ExcludedEntityTypes,
+		EdgeTypes:            req.EdgeTypes,
+		PreviousEpisodeUUIDs: req.PreviousEpisodeUUIDs,
+		MaxCharacters:        req.MaxCharacters,
+		UseYAML:              req.UseYAML,
+	}
+
+	// Convert EdgeTypeMap if provided
+	if req.EdgeTypeMap != nil {
+		options.EdgeTypeMap = make(map[string]map[string][]interface{})
+		for outerKey, innerMap := range req.EdgeTypeMap {
+			options.EdgeTypeMap[outerKey] = make(map[string][]interface{})
+			for innerKey, val := range innerMap {
+				// Convert to []interface{}
+				if arr, ok := val.([]interface{}); ok {
+					options.EdgeTypeMap[outerKey][innerKey] = arr
+				}
+			}
+		}
+	}
+
+	// Perform extraction
+	results, err := h.predicato.ExtractToFacts(ctx, episode, options)
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "extraction_failed", err.Error())
+		return
+	}
+
+	// Convert to DTO
+	response := dto.ExtractEpisodeResponse{
+		Success:        true,
+		SourceID:       results.SourceID,
+		ChunkCount:     results.ChunkCount,
+		ExtractionTime: results.ExtractionTime.String(),
+		ExtractedNodes: make([]dto.ExtractedNodeDTO, 0, len(results.ExtractedNodes)),
+		ExtractedEdges: make([]dto.ExtractedEdgeDTO, 0, len(results.ExtractedEdges)),
+	}
+
+	for _, n := range results.ExtractedNodes {
+		response.ExtractedNodes = append(response.ExtractedNodes, dto.ExtractedNodeDTO{
+			ID:          n.ID,
+			SourceID:    n.SourceID,
+			GroupID:     req.GroupID,
+			Name:        n.Name,
+			Type:        n.Type,
+			Description: n.Description,
+			ChunkIndex:  n.ChunkIndex,
+			CreatedAt:   n.CreatedAt,
+		})
+	}
+
+	for _, e := range results.ExtractedEdges {
+		response.ExtractedEdges = append(response.ExtractedEdges, dto.ExtractedEdgeDTO{
+			ID:             e.ID,
+			SourceID:       e.SourceID,
+			GroupID:        req.GroupID,
+			SourceNodeName: e.SourceNodeName,
+			TargetNodeName: e.TargetNodeName,
+			Relation:       e.Relation,
+			Description:    e.Description,
+			Weight:         e.Weight,
+			ChunkIndex:     e.ChunkIndex,
+			CreatedAt:      e.CreatedAt,
+		})
+	}
+
+	if results.Metadata != nil {
+		response.Metadata = &dto.ExtractionMetadataDTO{
+			ModelUsed:           results.Metadata.ModelUsed,
+			EmbeddingModel:      results.Metadata.EmbeddingModel,
+			EmbeddingDimensions: results.Metadata.EmbeddingDimensions,
+			TotalTokens:         results.Metadata.TotalTokens,
+		}
+	}
+
+	log.Printf("Extracted %d nodes and %d edges from episode %s in group %s\n",
+		len(response.ExtractedNodes), len(response.ExtractedEdges), episodeID, req.GroupID)
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// PromoteToGraph handles POST /ingest/promote
+// This is the second stage of two-stage ingestion - promotes extracted knowledge to the graph.
+func (h *IngestHandler) PromoteToGraph(w http.ResponseWriter, r *http.Request) {
+	var req dto.PromoteToGraphRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	// Validate the request
+	if err := req.Validate(); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
+	ctx := context.Background()
+
+	// Build options
+	options := &predicato.AddEpisodeOptions{
+		EntityTypes:          req.EntityTypes,
+		EdgeTypes:            req.EdgeTypes,
+		PreviousEpisodeUUIDs: req.PreviousEpisodeUUIDs,
+		SkipReflexion:        req.SkipReflexion,
+		SkipResolution:       req.SkipResolution,
+		SkipAttributes:       req.SkipAttributes,
+		SkipEdgeResolution:   req.SkipEdgeResolution,
+		UseYAML:              req.UseYAML,
+	}
+
+	// Convert EdgeTypeMap if provided
+	if req.EdgeTypeMap != nil {
+		options.EdgeTypeMap = make(map[string]map[string][]interface{})
+		for outerKey, innerMap := range req.EdgeTypeMap {
+			options.EdgeTypeMap[outerKey] = make(map[string][]interface{})
+			for innerKey, val := range innerMap {
+				if arr, ok := val.([]interface{}); ok {
+					options.EdgeTypeMap[outerKey][innerKey] = arr
+				}
+			}
+		}
+	}
+
+	// Perform promotion
+	results, err := h.predicato.PromoteToGraph(ctx, req.SourceID, options)
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "promotion_failed", err.Error())
+		return
+	}
+
+	// Convert to DTO
+	response := dto.PromoteToGraphResponse{
+		Success:        true,
+		Nodes:          make([]dto.NodeDTO, 0, len(results.Nodes)),
+		Edges:          make([]dto.EdgeDTO, 0, len(results.Edges)),
+		EpisodicEdges:  make([]dto.EdgeDTO, 0, len(results.EpisodicEdges)),
+		Communities:    make([]dto.NodeDTO, 0, len(results.Communities)),
+		CommunityEdges: make([]dto.EdgeDTO, 0, len(results.CommunityEdges)),
+	}
+
+	// Convert episode
+	if results.Episode != nil {
+		response.Episode = nodeToDTO(results.Episode)
+	}
+
+	// Convert nodes
+	for _, n := range results.Nodes {
+		response.Nodes = append(response.Nodes, *nodeToDTO(n))
+	}
+
+	// Convert edges
+	for _, e := range results.Edges {
+		response.Edges = append(response.Edges, *edgeToDTO(e))
+	}
+
+	// Convert episodic edges
+	for _, e := range results.EpisodicEdges {
+		response.EpisodicEdges = append(response.EpisodicEdges, *edgeToDTO(e))
+	}
+
+	// Convert communities
+	for _, n := range results.Communities {
+		response.Communities = append(response.Communities, *nodeToDTO(n))
+	}
+
+	// Convert community edges
+	for _, e := range results.CommunityEdges {
+		response.CommunityEdges = append(response.CommunityEdges, *edgeToDTO(e))
+	}
+
+	log.Printf("Promoted source %s to graph: %d nodes, %d edges, %d communities\n",
+		req.SourceID, len(response.Nodes), len(response.Edges), len(response.Communities))
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// nodeToDTO converts a types.Node to dto.NodeDTO
+func nodeToDTO(n *types.Node) *dto.NodeDTO {
+	d := &dto.NodeDTO{
+		UUID:       n.Uuid,
+		GroupID:    n.GroupID,
+		Name:       n.Name,
+		Type:       string(n.Type),
+		EntityType: n.EntityType,
+		Summary:    n.Summary,
+		CreatedAt:  n.CreatedAt,
+		SourceIDs:  n.SourceIDs,
+		Metadata:   n.Metadata,
+	}
+	if !n.UpdatedAt.IsZero() {
+		d.UpdatedAt = &n.UpdatedAt
+	}
+	if !n.ValidFrom.IsZero() {
+		d.ValidFrom = &n.ValidFrom
+	}
+	if n.ValidTo != nil {
+		d.ValidTo = n.ValidTo
+	}
+	return d
+}
+
+// edgeToDTO converts a types.Edge to dto.EdgeDTO
+func edgeToDTO(e *types.Edge) *dto.EdgeDTO {
+	d := &dto.EdgeDTO{
+		UUID:           e.Uuid,
+		GroupID:        e.GroupID,
+		SourceNodeUUID: e.SourceNodeID,
+		TargetNodeUUID: e.TargetNodeID,
+		Type:           string(e.Type),
+		Name:           e.Name,
+		Fact:           e.Fact,
+		CreatedAt:      e.CreatedAt,
+		Episodes:       e.Episodes,
+		Metadata:       e.Metadata,
+	}
+	if e.ExpiredAt != nil {
+		d.ExpiredAt = e.ExpiredAt
+	}
+	if !e.ValidFrom.IsZero() {
+		d.ValidAt = &e.ValidFrom
+	}
+	if e.ValidTo != nil {
+		d.InvalidAt = e.ValidTo
+	}
+	return d
+}
