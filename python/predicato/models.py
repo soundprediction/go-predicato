@@ -631,3 +631,75 @@ class PromoteToGraphResults(BaseModel):
     edges: list[Edge] = Field(default_factory=list)
     communities: list[Node] = Field(default_factory=list)
     community_edges: list[Edge] = Field(default_factory=list)
+
+
+# =============================================================================
+# Fact Store Search Models
+# =============================================================================
+
+
+class SearchFactsRequest(BaseModel):
+    """
+    Request to search the fact store using vector similarity and/or keyword search.
+
+    The fact store contains raw extracted entities and relationships before
+    they are promoted to the knowledge graph. This is useful for RAG applications
+    that don't need full graph traversal.
+
+    Args:
+        query: Search query text.
+        group_id: Group to search within.
+        node_types: Filter to specific entity types.
+        limit: Maximum results to return.
+        min_score: Minimum similarity score threshold (0.0-1.0).
+        search_methods: Search methods to use ("vector", "keyword", or both).
+
+    Example:
+        >>> request = SearchFactsRequest(
+        ...     query="hypertension treatment",
+        ...     group_id="medical-kb",
+        ...     limit=10,
+        ...     min_score=0.7
+        ... )
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    query: str = Field(..., min_length=1)
+    group_id: str | None = None
+    node_types: list[str] | None = None
+    limit: int = Field(default=10, ge=1, le=1000)
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    search_methods: list[Literal["vector", "keyword"]] | None = None
+
+
+class SearchFactsResults(BaseModel):
+    """
+    Results from searching the fact store.
+
+    Contains extracted nodes and edges with their similarity scores.
+
+    Args:
+        success: Whether the search succeeded.
+        nodes: Matching extracted nodes.
+        edges: Matching extracted edges.
+        node_scores: Similarity scores for each node (parallel to nodes list).
+        edge_scores: Similarity scores for each edge (parallel to edges list).
+        query: The original search query.
+        total: Total number of results.
+
+    Example:
+        >>> results = client.search_facts("diabetes treatment", group_id="medical")
+        >>> for node, score in zip(results.nodes, results.node_scores):
+        ...     print(f"{node.name} ({node.type}): {score:.2f}")
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    success: bool = True
+    nodes: list[ExtractedNode] = Field(default_factory=list)
+    edges: list[ExtractedEdge] = Field(default_factory=list)
+    node_scores: list[float] = Field(default_factory=list)
+    edge_scores: list[float] = Field(default_factory=list)
+    query: str = ""
+    total: int = 0

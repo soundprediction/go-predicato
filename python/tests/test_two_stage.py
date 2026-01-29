@@ -332,3 +332,120 @@ class TestAsyncPromoteToGraph:
             result = await client.promote_to_graph(source_id="ep-123")
 
         assert isinstance(result, PromoteToGraphResults)
+
+
+class TestSyncSearchFacts:
+    """Tests for sync search_facts method."""
+
+    def test_search_facts_success(self, httpx_mock: HTTPXMock):
+        """Test searching facts successfully."""
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8080/api/v1/search/facts",
+            json={
+                "success": True,
+                "nodes": [
+                    {
+                        "id": "n1",
+                        "source_id": "ep-123",
+                        "group_id": "test-group",
+                        "name": "Hypertension",
+                        "type": "Disease",
+                        "description": "High blood pressure",
+                        "chunk_index": 0,
+                        "created_at": "2024-01-15T10:30:00Z",
+                    }
+                ],
+                "edges": [],
+                "node_scores": [0.95],
+                "edge_scores": [],
+                "query": "hypertension",
+                "total": 1,
+            },
+            status_code=200,
+        )
+
+        with PredicatoClient(base_url="http://localhost:8080") as client:
+            result = client.search_facts(
+                query="hypertension",
+                group_id="test-group",
+                limit=10,
+            )
+
+        assert result.success is True
+        assert len(result.nodes) == 1
+        assert result.nodes[0].name == "Hypertension"
+        assert result.nodes[0].type == "Disease"
+        assert len(result.node_scores) == 1
+        assert result.node_scores[0] == 0.95
+        assert result.total == 1
+
+    def test_search_facts_with_min_score(self, httpx_mock: HTTPXMock):
+        """Test searching with minimum score threshold."""
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8080/api/v1/search/facts",
+            json={
+                "success": True,
+                "nodes": [],
+                "edges": [],
+                "node_scores": [],
+                "edge_scores": [],
+                "query": "rare condition",
+                "total": 0,
+            },
+            status_code=200,
+        )
+
+        with PredicatoClient(base_url="http://localhost:8080") as client:
+            result = client.search_facts(
+                query="rare condition",
+                group_id="test-group",
+                min_score=0.8,
+            )
+
+        assert result.success is True
+        assert len(result.nodes) == 0
+
+
+class TestAsyncSearchFacts:
+    """Tests for async search_facts method."""
+
+    @pytest.mark.asyncio
+    async def test_search_facts_success(self, httpx_mock: HTTPXMock):
+        """Test searching facts successfully."""
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8080/api/v1/search/facts",
+            json={
+                "success": True,
+                "nodes": [
+                    {
+                        "id": "n1",
+                        "source_id": "ep-123",
+                        "group_id": "test-group",
+                        "name": "Diabetes",
+                        "type": "Disease",
+                        "description": "Metabolic disorder",
+                        "chunk_index": 0,
+                        "created_at": "2024-01-15T10:30:00Z",
+                    }
+                ],
+                "edges": [],
+                "node_scores": [0.88],
+                "edge_scores": [],
+                "query": "diabetes",
+                "total": 1,
+            },
+            status_code=200,
+        )
+
+        async with AsyncPredicatoClient(base_url="http://localhost:8080") as client:
+            result = await client.search_facts(
+                query="diabetes",
+                group_id="test-group",
+            )
+
+        assert result.success is True
+        assert len(result.nodes) == 1
+        assert result.nodes[0].name == "Diabetes"

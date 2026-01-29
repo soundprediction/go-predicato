@@ -474,9 +474,121 @@ make build-cli
 
 # API endpoints
 POST /api/v1/ingest/messages  # Add content
+POST /api/v1/ingest/extract   # Extract entities (two-stage)
+POST /api/v1/ingest/promote   # Promote to graph (two-stage)
 POST /api/v1/search           # Search knowledge graph
+POST /api/v1/search/facts     # Search fact store (cosine similarity)
 GET  /api/v1/episodes/:id     # Get episodes
 ```
+
+## Python Client
+
+Predicato includes an official Python client for interacting with the HTTP server.
+
+### Installation
+
+```bash
+pip install predicato
+# or with uv
+uv add predicato
+```
+
+### Quick Start
+
+```python
+from predicato import PredicatoClient
+
+# Connect to the server
+with PredicatoClient(base_url="http://localhost:8080") as client:
+    # Add content
+    result = client.add_episode(
+        name="Team Meeting",
+        content="Alice mentioned the API redesign is blocked on auth.",
+        group_id="my-project",
+        source="meeting-notes",
+    )
+
+    # Search the knowledge graph
+    results = client.search(
+        query="API redesign status",
+        group_id="my-project",
+        limit=10,
+    )
+
+    for node in results.nodes:
+        print(f"- {node.name} ({node.entity_type})")
+```
+
+### Two-Stage Ingestion
+
+For more control over entity extraction and graph building:
+
+```python
+from predicato import PredicatoClient
+
+with PredicatoClient(base_url="http://localhost:8080") as client:
+    # Stage 1: Extract entities and relationships
+    extraction = client.extract_to_facts(
+        name="Medical Article",
+        content="Hypertension is treated with ACE inhibitors like lisinopril...",
+        group_id="medical-kb",
+        entity_types={
+            "Disease": {"description": "A medical condition"},
+            "Drug": {"description": "A medication"},
+        },
+    )
+
+    print(f"Extracted {len(extraction.extracted_nodes)} entities")
+
+    # Inspect/modify extracted entities before promoting...
+
+    # Stage 2: Promote to graph with entity resolution
+    result = client.promote_to_graph(source_id=extraction.source_id)
+
+    print(f"Resolved {len(result.nodes)} entities in graph")
+```
+
+### Async Support
+
+```python
+import asyncio
+from predicato import AsyncPredicatoClient
+
+async def main():
+    async with AsyncPredicatoClient(base_url="http://localhost:8080") as client:
+        result = await client.add_episode(
+            name="Meeting Notes",
+            content="...",
+            group_id="my-project",
+        )
+
+asyncio.run(main())
+```
+
+### Fact Store Search (RAG)
+
+Search the structured fact store directly using cosine similarity:
+
+```python
+from predicato import PredicatoClient
+
+with PredicatoClient(base_url="http://localhost:8080") as client:
+    # Search extracted entities with vector similarity
+    results = client.search_facts(
+        query="hypertension treatment options",
+        group_id="medical-kb",
+        limit=20,
+        min_score=0.5,  # Cosine similarity threshold
+    )
+
+    # Results include similarity scores
+    for node, score in zip(results.nodes, results.node_scores):
+        print(f"- {node.name} ({node.type}): {score:.2f}")
+```
+
+This is useful for RAG applications that need semantic search without full graph traversal.
+
+See [`python/`](python/) for full documentation and [`python/examples/`](python/examples/) for more examples including StatPearls medical article ingestion.
 
 ## Documentation
 
