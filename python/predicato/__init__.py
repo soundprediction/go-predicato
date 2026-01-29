@@ -46,6 +46,8 @@ from predicato.models import (
     Node,
     PromoteToGraphRequest,
     PromoteToGraphResults,
+    SearchFactsRequest,
+    SearchFactsResults,
     SearchRequest,
     SearchResults,
 )
@@ -88,4 +90,7 @@ __all__ = [
     "ExtractionResults",
     "PromoteToGraphRequest",
     "PromoteToGraphResults",
+    # Fact Store Search Models
+    "SearchFactsRequest",
+    "SearchFactsResults",
 ]

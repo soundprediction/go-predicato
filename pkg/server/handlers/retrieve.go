@@ -359,3 +359,91 @@ func (h *RetrieveHandler) edgeToFactDescription(edge *types.Edge) string {
 	}
 	return edge.SourceID + " " + string(edge.Type) + " " + edge.TargetID
 }
+
+// SearchFacts handles POST /search/facts
+// This searches the structured fact store using vector similarity (cosine) and/or keyword search
+func (h *RetrieveHandler) SearchFacts(w http.ResponseWriter, r *http.Request) {
+	var req dto.SearchFactsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	// Validate required fields
+	if strings.TrimSpace(req.Query) == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid_request", "query field is required and cannot be empty")
+		return
+	}
+
+	ctx := context.Background()
+
+	// Set default limit if not provided
+	if req.Limit <= 0 {
+		req.Limit = 10
+	}
+
+	// Create search configuration with filters
+	searchConfig := &types.SearchConfig{
+		Limit:    req.Limit,
+		MinScore: req.MinScore,
+	}
+
+	// Add group ID filter if provided
+	if req.GroupID != "" {
+		searchConfig.Filters = &types.SearchFilters{
+			GroupIDs: []string{req.GroupID},
+		}
+	}
+
+	// Perform the search using predicato's SearchFacts method
+	searchResults, err := h.predicato.SearchFacts(ctx, req.Query, searchConfig)
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "search_failed", err.Error())
+		return
+	}
+
+	// Convert factstore results to DTO format
+	var nodes []dto.ExtractedNodeDTO
+	for _, node := range searchResults.Nodes {
+		nodeDTO := dto.ExtractedNodeDTO{
+			ID:          node.ID,
+			SourceID:    node.SourceID,
+			GroupID:     node.GroupID,
+			Name:        node.Name,
+			Type:        node.Type,
+			Description: node.Description,
+			ChunkIndex:  node.ChunkIndex,
+			CreatedAt:   node.CreatedAt,
+		}
+		nodes = append(nodes, nodeDTO)
+	}
+
+	var edges []dto.ExtractedEdgeDTO
+	for _, edge := range searchResults.Edges {
+		edgeDTO := dto.ExtractedEdgeDTO{
+			ID:             edge.ID,
+			SourceID:       edge.SourceID,
+			GroupID:        edge.GroupID,
+			SourceNodeName: edge.SourceNodeName,
+			TargetNodeName: edge.TargetNodeName,
+			Relation:       edge.Relation,
+			Description:    edge.Description,
+			Weight:         edge.Weight,
+			ChunkIndex:     edge.ChunkIndex,
+			CreatedAt:      edge.CreatedAt,
+		}
+		edges = append(edges, edgeDTO)
+	}
+
+	response := dto.SearchFactsResponse{
+		Success:    true,
+		Nodes:      nodes,
+		Edges:      edges,
+		NodeScores: searchResults.NodeScores,
+		EdgeScores: searchResults.EdgeScores,
+		Query:      searchResults.Query,
+		Total:      searchResults.Total,
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}

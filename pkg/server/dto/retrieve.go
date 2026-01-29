@@ -48,3 +48,25 @@ type GetEpisodesResponse struct {
 	Episodes []Episode `json:"episodes"`
 	Total    int       `json:"total"`
 }
+
+// SearchFactsRequest represents a request to search the fact store
+type SearchFactsRequest struct {
+	Query         string   `json:"query" binding:"required"`
+	GroupID       string   `json:"group_id,omitempty"`
+	NodeTypes     []string `json:"node_types,omitempty"`
+	Limit         int      `json:"limit,omitempty"`
+	MinScore      float64  `json:"min_score,omitempty"`
+	SearchMethods []string `json:"search_methods,omitempty"` // "vector", "keyword", or both
+}
+
+// SearchFactsResponse represents the response from a fact store search
+// Uses ExtractedNodeDTO and ExtractedEdgeDTO from ingest.go
+type SearchFactsResponse struct {
+	Success    bool               `json:"success"`
+	Nodes      []ExtractedNodeDTO `json:"nodes"`
+	Edges      []ExtractedEdgeDTO `json:"edges,omitempty"`
+	NodeScores []float64          `json:"node_scores"`
+	EdgeScores []float64          `json:"edge_scores,omitempty"`
+	Query      string             `json:"query"`
+	Total      int                `json:"total"`
+}

@@ -31,6 +31,8 @@ from predicato.models import (
     Message,
     Node,
     PromoteToGraphResults,
+    SearchFactsRequest,
+    SearchFactsResults,
     SearchRequest,
     SearchResults,
 )
@@ -487,6 +489,99 @@ class PredicatoClient:
             success=response.get("success", False),
             cleared_groups=group_ids if response.get("success") else [],
             failed_groups=[] if response.get("success") else group_ids,
+        )
+
+    def search_facts(
+        self,
+        query: str,
+        *,
+        group_id: str | None = None,
+        node_types: list[str] | None = None,
+        limit: int = 10,
+        min_score: float = 0.0,
+        search_methods: list[str] | None = None,
+    ) -> SearchFactsResults:
+        """
+        Search the fact store using vector similarity and/or keyword search.
+
+        The fact store contains raw extracted entities and relationships before
+        they are promoted to the knowledge graph. This is useful for RAG applications
+        that don't need full graph traversal.
+
+        Search uses cosine similarity on embeddings for semantic search and/or
+        BM25-style keyword matching.
+
+        Args:
+            query: Search query string.
+            group_id: Filter results to a specific group.
+            node_types: Filter to specific entity types (e.g., ["Disease", "Drug"]).
+            limit: Maximum results to return (1-1000, default 10).
+            min_score: Minimum similarity score threshold (0.0-1.0).
+            search_methods: Search methods to use. Options: "vector", "keyword".
+                           Default uses both (hybrid search).
+
+        Returns:
+            SearchFactsResults containing extracted nodes/edges with scores.
+
+        Raises:
+            ValidationError: If query is empty or parameters are invalid.
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error.
+
+        Example:
+            >>> results = client.search_facts(
+            ...     query="hypertension treatment",
+            ...     group_id="medical-kb",
+            ...     limit=20,
+            ...     min_score=0.5
+            ... )
+            >>> for node, score in zip(results.nodes, results.node_scores):
+            ...     print(f"- {node.name} ({node.type}): {score:.2f}")
+        """
+        # Validate using the request model
+        SearchFactsRequest(
+            query=query,
+            group_id=group_id,
+            node_types=node_types,
+            limit=limit,
+            min_score=min_score,
+            search_methods=search_methods,  # type: ignore[arg-type]
+        )
+
+        request_data: dict[str, Any] = {
+            "query": query,
+            "limit": limit,
+            "min_score": min_score,
+        }
+        if group_id:
+            request_data["group_id"] = group_id
+        if node_types:
+            request_data["node_types"] = node_types
+        if search_methods:
+            request_data["search_methods"] = search_methods
+
+        response = self._http.request(
+            "POST",
+            "/api/v1/search/facts",
+            json=request_data,
+        )
+
+        # Parse response into SearchFactsResults
+        nodes = [
+            ExtractedNode(**node) for node in response.get("nodes", [])
+        ]
+        edges = [
+            ExtractedEdge(**edge) for edge in response.get("edges", [])
+        ]
+
+        return SearchFactsResults(
+            success=response.get("success", True),
+            nodes=nodes,
+            edges=edges,
+            node_scores=response.get("node_scores", []),
+            edge_scores=response.get("edge_scores", []),
+            query=response.get("query", query),
+            total=response.get("total", len(nodes) + len(edges)),
         )
 
     # =========================================================================
@@ -1086,6 +1181,84 @@ class AsyncPredicatoClient:
             success=response.get("success", False),
             cleared_groups=group_ids if response.get("success") else [],
             failed_groups=[] if response.get("success") else group_ids,
+        )
+
+    async def search_facts(
+        self,
+        query: str,
+        *,
+        group_id: str | None = None,
+        node_types: list[str] | None = None,
+        limit: int = 10,
+        min_score: float = 0.0,
+        search_methods: list[str] | None = None,
+    ) -> SearchFactsResults:
+        """
+        Search the fact store using vector similarity and/or keyword search.
+
+        The fact store contains raw extracted entities and relationships before
+        they are promoted to the knowledge graph. This is useful for RAG applications
+        that don't need full graph traversal.
+
+        Search uses cosine similarity on embeddings for semantic search and/or
+        BM25-style keyword matching.
+
+        Args:
+            query: Search query string.
+            group_id: Filter results to a specific group.
+            node_types: Filter to specific entity types (e.g., ["Disease", "Drug"]).
+            limit: Maximum results to return (1-1000, default 10).
+            min_score: Minimum similarity score threshold (0.0-1.0).
+            search_methods: Search methods to use. Options: "vector", "keyword".
+                           Default uses both (hybrid search).
+
+        Returns:
+            SearchFactsResults containing extracted nodes/edges with scores.
+        """
+        # Validate using the request model
+        SearchFactsRequest(
+            query=query,
+            group_id=group_id,
+            node_types=node_types,
+            limit=limit,
+            min_score=min_score,
+            search_methods=search_methods,  # type: ignore[arg-type]
+        )
+
+        request_data: dict[str, Any] = {
+            "query": query,
+            "limit": limit,
+            "min_score": min_score,
+        }
+        if group_id:
+            request_data["group_id"] = group_id
+        if node_types:
+            request_data["node_types"] = node_types
+        if search_methods:
+            request_data["search_methods"] = search_methods
+
+        response = await self._http.request(
+            "POST",
+            "/api/v1/search/facts",
+            json=request_data,
+        )
+
+        # Parse response into SearchFactsResults
+        nodes = [
+            ExtractedNode(**node) for node in response.get("nodes", [])
+        ]
+        edges = [
+            ExtractedEdge(**edge) for edge in response.get("edges", [])
+        ]
+
+        return SearchFactsResults(
+            success=response.get("success", True),
+            nodes=nodes,
+            edges=edges,
+            node_scores=response.get("node_scores", []),
+            edge_scores=response.get("edge_scores", []),
+            query=response.get("query", query),
+            total=response.get("total", len(nodes) + len(edges)),
         )
 
     # =========================================================================

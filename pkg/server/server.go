@@ -84,6 +84,7 @@ func (s *Server) setupRoutes() {
 
 		// Retrieve routes
 		r.Post("/search", retrieveHandler.Search)
+		r.Post("/search/facts", retrieveHandler.SearchFacts) // Fact store search with cosine similarity
 		r.Get("/entity-edge/{uuid}", retrieveHandler.GetEntityEdge)
 		r.Get("/episodes/{group_id}", retrieveHandler.GetEpisodes)
 		r.Post("/get-memory", retrieveHandler.GetMemory)
