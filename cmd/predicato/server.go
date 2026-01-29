@@ -13,8 +13,10 @@ import (
 	"github.com/soundprediction/predicato/pkg/config"
 	"github.com/soundprediction/predicato/pkg/driver"
 	"github.com/soundprediction/predicato/pkg/embedder"
+	"github.com/soundprediction/predicato/pkg/factstore"
 	predicatoLogger "github.com/soundprediction/predicato/pkg/logger"
 	"github.com/soundprediction/predicato/pkg/nlp"
+	"github.com/soundprediction/predicato/pkg/rustbert"
 	"github.com/soundprediction/predicato/pkg/server"
 	"github.com/soundprediction/predicato/pkg/telemetry"
 	"github.com/spf13/cobra"
@@ -312,6 +314,17 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 		default:
 			return nil, fmt.Errorf("unsupported NLP provider: %s", defaultModel.Provider)
 		}
+	} else {
+		// Default to internal RustBert NLP client (no external API required)
+		fmt.Println("Initializing internal RustBert NLP service...")
+		rustbertClient := rustbert.NewClient(rustbert.Config{})
+		if err := rustbertClient.LoadTextGenerationModel(); err != nil {
+			fmt.Printf("Warning: Failed to load RustBert text generation model: %v\n", err)
+			fmt.Println("Continuing without NLP service - some features will be unavailable")
+		} else {
+			nlProcessor = rustbert.NewLLMAdapter(rustbertClient, "text_generation")
+			fmt.Println("RustBert NLP service initialized (internal, no API key required)")
+		}
 	}
 
 	// Initialize embedder client
@@ -327,12 +340,92 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 		default:
 			return nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Embedding.Provider)
 		}
+	} else {
+		// Default to internal EmbedEverything embedder (no external API required)
+		fmt.Println("Initializing internal EmbedEverything embedder service...")
+		embedderConfig := &embedder.EmbedEverythingConfig{
+			Config: &embedder.Config{
+				Model:      "qwen/qwen3-embedding-0.6b",
+				Dimensions: 1024,
+				BatchSize:  32,
+			},
+		}
+		internalEmbedder, err := embedder.NewEmbedEverythingClient(embedderConfig)
+		if err != nil {
+			fmt.Printf("Warning: Failed to initialize EmbedEverything embedder: %v\n", err)
+			fmt.Println("Continuing without embedder - semantic search will be unavailable")
+		} else {
+			embedderClient = internalEmbedder
+			fmt.Println("EmbedEverything embedder initialized (internal, no API key required)")
+		}
+	}
+
+	// Initialize FactStore - always configure one
+	// Priority: 1. PostgreSQL connection string, 2. Embedded Dolt
+	var factsDBConfig *factstore.FactStoreConfig
+
+	if cfg.FactStore.ConnectionString != "" {
+		// External PostgreSQL/DoltGres configured
+		factsDBConfig = &factstore.FactStoreConfig{
+			Type:                factstore.FactStoreType(cfg.FactStore.Type),
+			ConnectionString:    cfg.FactStore.ConnectionString,
+			EmbeddingDimensions: cfg.FactStore.EmbeddingDimensions,
+		}
+		fmt.Printf("Using external factstore: %s\n", cfg.FactStore.Type)
+	} else {
+		// Use embedded Dolt factstore via legacy FactsDBURL path
+		dataPath := cfg.FactStore.DataPath
+		if dataPath == "" {
+			dataPath, _ = factstore.DefaultDataPath()
+		}
+
+		// Ensure data directory exists
+		if err := os.MkdirAll(dataPath, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create factstore data directory: %w", err)
+		}
+
+		// Build connection string for embedded Dolt (uses dolt:// protocol, not postgres://)
+		connString := fmt.Sprintf(
+			"file://%s?commitname=predicato&commitemail=predicato@localhost&database=facts",
+			dataPath,
+		)
+
+		fmt.Printf("Using embedded Dolt factstore at: %s\n", dataPath)
+
+		// Use the legacy FactsDBURL path which handles the Dolt driver directly
+		predicatoConfig := &predicato.Config{
+			GroupID:    "default",
+			TimeZone:   time.UTC,
+			FactsDBURL: connString,
+		}
+
+		// Create and return Predicato client with embedded Dolt
+		client, err := predicato.NewClient(graphDriver, nlProcessor, embedderClient, predicatoConfig, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Predicato client: %w", err)
+		}
+
+		fmt.Printf("Predicato initialized successfully with driver: %s\n", cfg.Database.Driver)
+		if nlProcessor != nil {
+			fmt.Printf("NLP provider: %s, model: %s\n", defaultModel.Provider, defaultModel.Model)
+		}
+		if embedderClient != nil {
+			fmt.Printf("Embedding provider: %s, model: %s\n", cfg.Embedding.Provider, cfg.Embedding.Model)
+		}
+		fmt.Println("FactStore: embedded Dolt (ready)")
+
+		return client, nil
+	}
+
+	if factsDBConfig != nil && factsDBConfig.EmbeddingDimensions <= 0 {
+		factsDBConfig.EmbeddingDimensions = 1024 // Default for qwen3-embedding
 	}
 
 	// Create Predicato client configuration
 	predicatoConfig := &predicato.Config{
-		GroupID:  "default", // Default group ID - could be made configurable
-		TimeZone: time.UTC,
+		GroupID:         "default", // Default group ID - could be made configurable
+		TimeZone:        time.UTC,
+		FactStoreConfig: factsDBConfig,
 	}
 
 	// Create and return Predicato client
@@ -348,6 +441,7 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 	if embedderClient != nil {
 		fmt.Printf("Embedding provider: %s, model: %s\n", cfg.Embedding.Provider, cfg.Embedding.Model)
 	}
+	fmt.Println("FactStore: ready")
 
 	return client, nil
 }

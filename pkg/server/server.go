@@ -62,6 +62,8 @@ func (s *Server) setupRoutes() {
 	healthHandler := handlers.NewHealthHandler(s.predicato)
 	ingestHandler := handlers.NewIngestHandler(s.predicato)
 	retrieveHandler := handlers.NewRetrieveHandler(s.predicato)
+	configHandler := handlers.NewConfigHandler(s.config)
+	nlpHandler := handlers.NewNLPHandler(s.predicato)
 
 	// Health endpoints
 	s.router.Get("/health", healthHandler.HealthCheck)
@@ -72,6 +74,19 @@ func (s *Server) setupRoutes() {
 
 	// API v1 routes
 	s.router.Route("/api/v1", func(r chi.Router) {
+		// Config routes - expose configured models (without API keys)
+		r.Route("/config", func(r chi.Router) {
+			r.Get("/models", configHandler.GetModels)
+			r.Get("/nlp", configHandler.GetNLPModels)
+			r.Get("/embedding", configHandler.GetEmbeddingModels)
+		})
+
+		// NLP utility routes - use server's configured LLM for analysis
+		r.Route("/nlp", func(r chi.Router) {
+			r.Post("/analyze-relevance", nlpHandler.AnalyzeRelevance)
+			r.Post("/extract-source", nlpHandler.ExtractSource)
+		})
+
 		// Ingest routes
 		r.Route("/ingest", func(r chi.Router) {
 			r.Post("/messages", ingestHandler.AddMessages)

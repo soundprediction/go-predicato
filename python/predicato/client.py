@@ -23,14 +23,19 @@ from predicato.models import (
     ClearDataRequest,
     ClearDataResponse,
     Edge,
+    EmbeddingModelConfig,
     Episode,
     ExtractedEdge,
     ExtractedNode,
     ExtractionMetadata,
     ExtractionResults,
     Message,
+    ModelsConfig,
+    NLPModelConfig,
+    NLPModelsConfig,
     Node,
     PromoteToGraphResults,
+    RouterRule,
     SearchFactsRequest,
     SearchFactsResults,
     SearchRequest,
@@ -105,6 +110,48 @@ class PredicatoClient:
         Should be called when done using the client, or use the context manager.
         """
         self._http.close()
+
+    def get_models(self) -> ModelsConfig:
+        """
+        Get the server's configured NLP and embedding models.
+
+        Returns the model configuration without API keys. Useful for
+        understanding what models the server is using or for configuring
+        clients that need to interact with the same providers.
+
+        Returns:
+            ModelsConfig containing NLP and embedding model configuration.
+
+        Raises:
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error.
+
+        Example:
+            >>> config = client.get_models()
+            >>> print(f"NLP provider: {config.nlp.models['default'].provider}")
+            >>> print(f"NLP model: {config.nlp.models['default'].model}")
+            >>> print(f"Base URL: {config.nlp.models['default'].base_url}")
+        """
+        response = self._http.request("GET", "/api/v1/config/models")
+
+        # Parse NLP models
+        nlp_models = {}
+        for name, model_data in response.get("nlp", {}).get("models", {}).items():
+            nlp_models[name] = NLPModelConfig(**model_data)
+
+        router_rules = [
+            RouterRule(**rule)
+            for rule in response.get("nlp", {}).get("router_rules", [])
+        ]
+
+        # Parse embedding config
+        embedding_data = response.get("embedding", {})
+        embedding = EmbeddingModelConfig(**embedding_data) if embedding_data else EmbeddingModelConfig()
+
+        return ModelsConfig(
+            nlp=NLPModelsConfig(models=nlp_models, router_rules=router_rules),
+            embedding=embedding,
+        )
 
     def _resolve_group_id(self, group_id: str | None) -> str:
         """Resolve group_id, falling back to default if not provided."""
@@ -880,6 +927,44 @@ class AsyncPredicatoClient:
         Should be called when done using the client, or use the async context manager.
         """
         await self._http.close()
+
+    async def get_models(self) -> ModelsConfig:
+        """
+        Get the server's configured NLP and embedding models.
+
+        Returns the model configuration without API keys. Useful for
+        understanding what models the server is using or for configuring
+        clients that need to interact with the same providers.
+
+        Returns:
+            ModelsConfig containing NLP and embedding model configuration.
+
+        Raises:
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error.
+
+        Example:
+            >>> config = await client.get_models()
+            >>> print(f"NLP provider: {config.nlp.models['default'].provider}")
+        """
+        response = await self._http.request("GET", "/api/v1/config/models")
+
+        nlp_models = {}
+        for name, model_data in response.get("nlp", {}).get("models", {}).items():
+            nlp_models[name] = NLPModelConfig(**model_data)
+
+        router_rules = [
+            RouterRule(**rule)
+            for rule in response.get("nlp", {}).get("router_rules", [])
+        ]
+
+        embedding_data = response.get("embedding", {})
+        embedding = EmbeddingModelConfig(**embedding_data) if embedding_data else EmbeddingModelConfig()
+
+        return ModelsConfig(
+            nlp=NLPModelsConfig(models=nlp_models, router_rules=router_rules),
+            embedding=embedding,
+        )
 
     def _resolve_group_id(self, group_id: str | None) -> str:
         """Resolve group_id, falling back to default if not provided."""

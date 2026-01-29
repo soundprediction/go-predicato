@@ -122,6 +122,15 @@ type Predicato interface {
 	// Returns validation results including pass/fail status for each method,
 	// latency measurements, and any warnings.
 	ValidateModeler(ctx context.Context, gm modeler.GraphModeler) (*modeler.ModelerValidationResult, error)
+
+	// AnalyzeContentRelevance uses the configured LLM to determine if content is
+	// relevant to the specified topics. Returns true if the content is relevant.
+	// This is useful for filtering content before ingestion.
+	AnalyzeContentRelevance(ctx context.Context, content string, topics []string) (bool, error)
+
+	// ExtractSourceInfo uses the configured LLM to extract source metadata from
+	// web content. Returns the source name and type (e.g., "CDC", "government_health_agency").
+	ExtractSourceInfo(ctx context.Context, content string, url string) (sourceName string, sourceType string, err error)
 }
 
 // Client is the main implementation of the Predicato interface.

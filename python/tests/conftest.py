@@ -8,6 +8,34 @@ from datetime import datetime, timezone
 import pytest
 
 
+def pytest_addoption(parser):
+    """Add custom command line options."""
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run integration tests that require a running server",
+    )
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers", "integration: marks tests as integration tests (requires running server)"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip integration tests unless --run-integration is passed."""
+    if not config.getoption("--run-integration"):
+        skip_integration = pytest.mark.skip(
+            reason="Integration tests require --run-integration flag"
+        )
+        for item in items:
+            if "integration" in item.keywords:
+                item.add_marker(skip_integration)
+
+
 @pytest.fixture
 def base_url() -> str:
     """Base URL for the Predicato server."""

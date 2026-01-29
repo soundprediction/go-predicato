@@ -52,6 +52,9 @@ temp/
 # Build artifacts
 bin/
 graphiti
+predicato
+predicato-test
+gliner2-api
 examples/basic/basic
 examples/chat/chat
 examples/ladybug_ollama/ladybug_ollama
@@ -60,6 +63,24 @@ go.work.sum
 
 # Ladybug libraries
 lib-ladybug/
+
+# Ladybug database files
+ladybug_db
+ladybug_db.*
+*.ladybugdb
+*.wal
+*.wal.*
+*.corrupt
+integration_test_db/
+test_ladybug_db/
+
+# Dolt/DoltGres database files
+.predicato/
+
+# Server logs
+predicato_server.log
+
+# Claude/Ralphy files
 .claude
 .ralphy
 openspec/

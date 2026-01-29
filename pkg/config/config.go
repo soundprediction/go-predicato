@@ -32,6 +32,9 @@ type Config struct {
 
 	// CircuitBreaker configuration
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
+
+	// FactStore configuration
+	FactStore FactStoreConfig `mapstructure:"factstore"`
 }
 
 // AlertConfig holds configuration for alerting
@@ -114,6 +117,19 @@ type EmbeddingConfig struct {
 	Model    string `mapstructure:"model" json:"model"`
 	APIKey   string `mapstructure:"api_key" json:"-"` // Excluded from JSON to prevent credential exposure
 	BaseURL  string `mapstructure:"base_url" json:"base_url"`
+}
+
+// FactStoreConfig holds factstore configuration
+type FactStoreConfig struct {
+	// Type is the backend type: "postgres" or "dolt" (default: "dolt" for embedded)
+	Type string `mapstructure:"type" json:"type"`
+	// ConnectionString for PostgreSQL/DoltGres (e.g., "postgres://user:pass@host:5432/db")
+	// For embedded Dolt, this is the path to the database directory
+	ConnectionString string `mapstructure:"connection_string" json:"connection_string"`
+	// DataPath is the path to the embedded Dolt database directory (when Type is "dolt")
+	DataPath string `mapstructure:"data_path" json:"data_path"`
+	// EmbeddingDimensions is the vector dimension (e.g., 1024 for qwen3-embedding)
+	EmbeddingDimensions int `mapstructure:"embedding_dimensions" json:"embedding_dimensions"`
 }
 
 // Load loads configuration from file and environment variables
