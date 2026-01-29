@@ -1,6 +1,8 @@
 # Predicato
 
-A temporal knowledge graph library for Go with a fully local ML stack - no API keys required.
+A temporal knowledge graph framework with a fully local ML stack - no API keys required.
+
+The core service is written in **Go** and provides an HTTP API for building and querying knowledge graphs. It can also be imported into other Go applications as a library. A **Python client library** is also provided for convenient integration with Python applications and data pipelines.
 
 ## What Makes Predicato Different
 
