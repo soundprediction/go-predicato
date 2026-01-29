@@ -4,13 +4,24 @@ Predicato Python Client.
 A Python client for the Predicato knowledge graph framework, providing
 a Pythonic interface for ingesting content and querying the knowledge graph.
 
-Example:
+Basic Example:
     >>> from predicato import PredicatoClient
     >>> with PredicatoClient(base_url="http://localhost:8080") as client:
     ...     result = client.add_episode(
     ...         name="Meeting Notes",
     ...         content="Discussed project timeline...",
     ...         group_id="my-project"
+    ...     )
+
+Crawler Example (requires `pip install predicato[crawler]`):
+    >>> from predicato import PredicatoClient
+    >>> from predicato.crawler import crawl_and_ingest, CrawlConfig
+    >>> with PredicatoClient(base_url="http://localhost:8080") as client:
+    ...     stats = crawl_and_ingest(
+    ...         client,
+    ...         seed_urls=["https://example.com/health"],
+    ...         group_id="health-kb",
+    ...         crawl_config=CrawlConfig(max_depth=2)
     ...     )
 """
 
@@ -35,6 +46,7 @@ from predicato.models import (
     ClearDataRequest,
     ClearDataResponse,
     Edge,
+    EmbeddingModelConfig,
     Episode,
     ErrorResponse,
     ExtractedEdge,
@@ -43,9 +55,13 @@ from predicato.models import (
     ExtractionMetadata,
     ExtractionResults,
     Message,
+    ModelsConfig,
+    NLPModelConfig,
+    NLPModelsConfig,
     Node,
     PromoteToGraphRequest,
     PromoteToGraphResults,
+    RouterRule,
     SearchFactsRequest,
     SearchFactsResults,
     SearchRequest,
@@ -93,4 +109,10 @@ __all__ = [
     # Fact Store Search Models
     "SearchFactsRequest",
     "SearchFactsResults",
+    # Server Configuration Models
+    "ModelsConfig",
+    "NLPModelsConfig",
+    "NLPModelConfig",
+    "EmbeddingModelConfig",
+    "RouterRule",
 ]

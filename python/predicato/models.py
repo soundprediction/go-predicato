@@ -703,3 +703,116 @@ class SearchFactsResults(BaseModel):
     edge_scores: list[float] = Field(default_factory=list)
     query: str = ""
     total: int = 0
+
+
+# =============================================================================
+# Server Configuration Models
+# =============================================================================
+
+
+class NLPModelConfig(BaseModel):
+    """
+    Configuration for a single NLP model.
+
+    Args:
+        provider: Model provider (e.g., "openai", "anthropic").
+        model: Model name (e.g., "gpt-4o-mini").
+        base_url: API base URL for the provider.
+        temperature: Sampling temperature (0.0-2.0).
+        max_tokens: Maximum tokens in response.
+
+    Example:
+        >>> config = client.get_models()
+        >>> default_model = config.nlp.models.get("default")
+        >>> print(f"Using {default_model.model} at {default_model.base_url}")
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    provider: str = ""
+    model: str = ""
+    base_url: str = Field(default="", alias="base_url")
+    temperature: float = 0.0
+    max_tokens: int = 0
+
+
+class RouterRule(BaseModel):
+    """
+    A rule for routing NLP requests to different providers.
+
+    Args:
+        usage: Tag to match (e.g., "hipaa", "coding").
+        provider: Provider ID to use.
+        fallback: Fallback provider ID.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    usage: str
+    provider: str
+    fallback: str = ""
+
+
+class NLPModelsConfig(BaseModel):
+    """
+    NLP model configuration from the server.
+
+    Args:
+        models: Map of model name to configuration.
+        router_rules: Rules for routing requests.
+
+    Example:
+        >>> config = client.get_models()
+        >>> for name, model in config.nlp.models.items():
+        ...     print(f"{name}: {model.provider}/{model.model}")
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    models: dict[str, NLPModelConfig] = Field(default_factory=dict)
+    router_rules: list[RouterRule] = Field(default_factory=list)
+
+
+class EmbeddingModelConfig(BaseModel):
+    """
+    Configuration for the embedding model.
+
+    Args:
+        provider: Embedding provider (e.g., "openai", "voyage").
+        model: Model name (e.g., "text-embedding-3-small").
+        base_url: API base URL for the provider.
+
+    Example:
+        >>> config = client.get_models()
+        >>> print(f"Embeddings: {config.embedding.model}")
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    provider: str = ""
+    model: str = ""
+    base_url: str = Field(default="", alias="base_url")
+
+
+class ModelsConfig(BaseModel):
+    """
+    Complete model configuration from the server.
+
+    Contains both NLP (language model) and embedding model configurations.
+    Use this to understand what models the server is using and to configure
+    clients that need to interact with the same models.
+
+    Args:
+        nlp: NLP model configuration.
+        embedding: Embedding model configuration.
+
+    Example:
+        >>> config = client.get_models()
+        >>> print(f"NLP: {config.nlp.models}")
+        >>> print(f"Embedding: {config.embedding.model}")
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    nlp: NLPModelsConfig = Field(default_factory=NLPModelsConfig)
+    embedding: EmbeddingModelConfig = Field(default_factory=EmbeddingModelConfig)

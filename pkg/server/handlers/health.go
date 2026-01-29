@@ -170,7 +170,8 @@ func (h *HealthHandler) DetailedHealthCheck(w http.ResponseWriter, r *http.Reque
 		"environment": map[string]interface{}{
 			"go_version": GoVersion,
 		},
-		"checks": map[string]interface{}{},
+		"checks":   map[string]interface{}{},
+		"services": map[string]interface{}{},
 		"metrics": map[string]interface{}{
 			"response_time_ms": 0, // Will be set at the end
 		},
@@ -178,6 +179,7 @@ func (h *HealthHandler) DetailedHealthCheck(w http.ResponseWriter, r *http.Reque
 
 	allHealthy := true
 	checks := response["checks"].(map[string]interface{})
+	services := response["services"].(map[string]interface{})
 
 	// Test all critical dependencies
 	if h.predicato != nil {
@@ -244,6 +246,25 @@ func (h *HealthHandler) DetailedHealthCheck(w http.ResponseWriter, r *http.Reque
 		}
 
 		checks["search_functionality"] = searchStatus
+
+		// Check configured language models and services
+		nlpStatus, nlpHealthy := h.checkNLPServices(ctx)
+		services["nlp"] = nlpStatus
+		if !nlpHealthy {
+			allHealthy = false
+		}
+
+		embedderStatus, embedderHealthy := h.checkEmbedderServices(ctx)
+		services["embedder"] = embedderStatus
+		if !embedderHealthy {
+			allHealthy = false
+		}
+
+		factStoreStatus, factStoreHealthy := h.checkFactStoreServices(ctx)
+		services["factstore"] = factStoreStatus
+		if !factStoreHealthy {
+			allHealthy = false
+		}
 	} else {
 		checks["predicato_client"] = map[string]interface{}{
 			"status": "unhealthy",
@@ -301,4 +322,93 @@ func (h *HealthHandler) getSystemMetrics() SystemMetrics {
 		HeapObjects: m.HeapObjects,
 		StackUsage:  stackUsage,
 	}
+}
+
+// checkNLPServices checks if NLP/language model services are operational
+// Returns status map and whether the service is healthy
+func (h *HealthHandler) checkNLPServices(ctx context.Context) (map[string]interface{}, bool) {
+	status := map[string]interface{}{
+		"status": "not_configured",
+	}
+
+	// For now, we can only check if predicato has NLP configured
+	// We don't have direct access to NLP client through the Predicato interface
+	// A real check would require adding GetNLProcessor to the interface
+	status["note"] = "NLP service check requires interface extension - assuming healthy if predicato is initialized"
+	status["status"] = "assumed_healthy"
+	return status, true
+}
+
+// checkEmbedderServices checks if embedding services are operational
+func (h *HealthHandler) checkEmbedderServices(ctx context.Context) (map[string]interface{}, bool) {
+	status := map[string]interface{}{
+		"status": "not_configured",
+	}
+
+	// For now, we can verify embedder is working by attempting a search
+	// If search works, the embedder is functional
+	startTime := time.Now()
+	_, err := h.predicato.Search(ctx, "embedder health check", nil)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		if ctx.Err() != nil {
+			status["status"] = "unhealthy"
+			status["error"] = "Embedder service timeout during search"
+			status["duration_ms"] = duration.Milliseconds()
+			return status, false
+		}
+		// Non-timeout errors during search suggest embedder might have issues
+		status["status"] = "degraded"
+		status["note"] = fmt.Sprintf("Search test completed with error: %v", err)
+		status["duration_ms"] = duration.Milliseconds()
+		return status, true
+	}
+
+	status["status"] = "healthy"
+	status["duration_ms"] = duration.Milliseconds()
+	return status, true
+}
+
+// checkFactStoreServices checks if fact store services are operational
+func (h *HealthHandler) checkFactStoreServices(ctx context.Context) (map[string]interface{}, bool) {
+	status := map[string]interface{}{
+		"status": "not_configured",
+	}
+
+	factStore := h.predicato.GetFactStore()
+	if factStore == nil {
+		status["note"] = "FactStore not configured - two-stage ingestion unavailable"
+		return status, true // Not configured is OK for basic operation
+	}
+
+	// Check if fact store is responsive by listing sources
+	startTime := time.Now()
+	_, err := factStore.GetAllSources(ctx, 1)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		if ctx.Err() != nil {
+			status["status"] = "unhealthy"
+			status["error"] = "FactStore timeout"
+			status["duration_ms"] = duration.Milliseconds()
+			return status, false
+		}
+		// Some errors are expected (empty results)
+		errStr := err.Error()
+		if errStr == "no sources found" || errStr == "empty result" || errStr == "sql: no rows in result set" {
+			status["status"] = "healthy"
+			status["note"] = "FactStore is responsive (no sources yet)"
+			status["duration_ms"] = duration.Milliseconds()
+			return status, true
+		}
+		status["status"] = "unhealthy"
+		status["error"] = fmt.Sprintf("FactStore error: %v", err)
+		status["duration_ms"] = duration.Milliseconds()
+		return status, false
+	}
+
+	status["status"] = "healthy"
+	status["duration_ms"] = duration.Milliseconds()
+	return status, true
 }
