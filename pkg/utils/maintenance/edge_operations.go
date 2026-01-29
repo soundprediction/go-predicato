@@ -633,13 +633,11 @@ func (eo *EdgeOperations) resolveExtractedEdge(ctx context.Context, extractedEdg
 
 	// Convert edge types map to slice format for TSV formatting in prompts
 	edgeTypesContext := []map[string]interface{}{}
-	if edgeTypes != nil {
-		for typeName := range edgeTypes {
-			edgeTypesContext = append(edgeTypesContext, map[string]interface{}{
-				"fact_type_name":        typeName,
-				"fact_type_description": fmt.Sprintf("custom type: %s", typeName),
-			})
-		}
+	for typeName := range edgeTypes {
+		edgeTypesContext = append(edgeTypesContext, map[string]interface{}{
+			"fact_type_name":        typeName,
+			"fact_type_description": fmt.Sprintf("custom type: %s", typeName),
+		})
 	}
 
 	// Note: Data is passed as slices for TSV formatting in prompts
@@ -755,11 +753,9 @@ func (eo *EdgeOperations) resolveExtractedEdge(ctx context.Context, extractedEdg
 		resolvedEdge.Name = edgeDuplicate.FactType
 	}
 
-	// Handle temporal invalidation logic
-	now := time.Now().UTC()
-	if resolvedEdge.ValidTo != nil && resolvedEdge.ValidTo.Before(now) {
-		// Edge is already expired, don't modify expiration
-	}
+	// Note: Temporal invalidation logic is handled elsewhere.
+	// If resolvedEdge.ValidTo is set and in the past, the edge is already expired.
+	// We don't modify expiration here as it's handled by the graph driver.
 
 	log.Printf("Resolved edge %s in %v", extractedEdge.Name, time.Since(start))
 	return resolvedEdge, invalidatedEdges, nil

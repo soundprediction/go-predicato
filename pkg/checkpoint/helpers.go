@@ -32,11 +32,7 @@ func (c *EpisodeCheckpoint) CanRetry(maxAttempts int, maxAge time.Duration) bool
 	}
 
 	age := time.Since(c.CreatedAt)
-	if age > maxAge {
-		return false
-	}
-
-	return true
+	return age <= maxAge
 }
 
 // GetProgress returns a human-readable progress description

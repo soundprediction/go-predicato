@@ -302,10 +302,8 @@ func (s *MCPServer) Run(ctx context.Context) error {
 	s.logger.Info("MCP server is ready to accept requests")
 
 	// Keep the server running
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func main() {

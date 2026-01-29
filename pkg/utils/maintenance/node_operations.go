@@ -390,10 +390,8 @@ func (no *NodeOperations) ResolveExtractedNodes(ctx context.Context, extractedNo
 	entityTypeDescriptions := make(map[string]string)
 	entityTypeDescriptions["Entity"] = "Default classification. Use this entity type if the entity is not one of the other listed types."
 
-	if entityTypes != nil {
-		for typeName := range entityTypes {
-			entityTypeDescriptions[typeName] = fmt.Sprintf("custom type: %s", typeName)
-		}
+	for typeName := range entityTypes {
+		entityTypeDescriptions[typeName] = fmt.Sprintf("custom type: %s", typeName)
 	}
 
 	// Prepare context for LLM deduplication

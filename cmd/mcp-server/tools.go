@@ -148,11 +148,11 @@ func (s *MCPServer) SearchMemoryNodesTool(ctx *ai.ToolContext, input *SearchRequ
 		limit = 10
 	}
 
-	// Use provided group_ids or fall back to default
-	groupIDs := input.GroupIDs
-	if len(groupIDs) == 0 {
-		groupIDs = []string{s.config.GroupID}
-	}
+	// TODO: Use provided group_ids or fall back to default when multi-group search is supported
+	// groupIDs := input.GroupIDs
+	// if len(groupIDs) == 0 {
+	// 	groupIDs = []string{s.config.GroupID}
+	// }
 
 	// Create search configuration based on whether center node is specified
 	searchConfig := &types.SearchConfig{
@@ -245,11 +245,11 @@ func (s *MCPServer) SearchMemoryFactsTool(ctx *ai.ToolContext, input *SearchRequ
 		}, nil
 	}
 
-	// Use provided group_ids or fall back to default
-	groupIDs := input.GroupIDs
-	if len(groupIDs) == 0 {
-		groupIDs = []string{s.config.GroupID}
-	}
+	// TODO: Use provided group_ids or fall back to default when multi-group search is supported
+	// groupIDs := input.GroupIDs
+	// if len(groupIDs) == 0 {
+	// 	groupIDs = []string{s.config.GroupID}
+	// }
 
 	// Create search configuration focused on edges
 	searchConfig := &types.SearchConfig{

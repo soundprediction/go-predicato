@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -729,23 +728,6 @@ func (k *LadybugDriver) GetAossClient() interface{} {
 	return nil // aoss_client: None = None
 }
 
-// flatTupleToDict converts a Ladybug FlatTuple to a map to simulate Python's rows_as_dict()
-func (k *LadybugDriver) flatTupleToDict(tuple *ladybug.FlatTuple) (map[string]interface{}, error) {
-	values, err := tuple.GetAsSlice()
-	if err != nil {
-		return nil, err
-	}
-
-	// For now, create generic column names since ladybug Go doesn't expose column names easily
-	// In a full implementation, this would need proper column name extraction
-	result := make(map[string]interface{})
-	for i, value := range values {
-		result[fmt.Sprintf("col_%d", i)] = value
-	}
-
-	return result, nil
-}
-
 // === Backward compatibility methods for existing interface ===
 
 // GetNode retrieves a node by ID from the appropriate table based on node type.
@@ -874,7 +856,7 @@ func (k *LadybugDriver) DeleteNode(ctx context.Context, nodeID, groupID string) 
 			DELETE r
 		`, table)
 
-		k.ExecuteQuery(ctx, deleteRelsQuery, params) // Ignore errors for missing relationships
+		_, _, _, _ = k.ExecuteQuery(ctx, deleteRelsQuery, params) // Ignore errors for missing relationships
 
 		// Delete the node using parameterized query
 		deleteNodeQuery := fmt.Sprintf(`
@@ -883,7 +865,7 @@ func (k *LadybugDriver) DeleteNode(ctx context.Context, nodeID, groupID string) 
 			DELETE n
 		`, table)
 
-		k.ExecuteQuery(ctx, deleteNodeQuery, params) // Ignore errors for nodes not in this table
+		_, _, _, _ = k.ExecuteQuery(ctx, deleteNodeQuery, params) // Ignore errors for nodes not in this table
 	}
 
 	return nil
@@ -1704,12 +1686,11 @@ func (k *LadybugDriver) SearchNodesByVector(ctx context.Context, vector []float3
 	}
 
 	// Note: MinScore filtering is already handled in SearchNodesByEmbedding via the WHERE score > 0.0 clause
-	// Additional filtering by options.MinScore could be added here if needed
-	if options != nil && options.MinScore > 0 {
-		// The score is already computed in SearchNodesByEmbedding, but we need to recompute
-		// for filtering since we don't store it in the Node struct
-		// For now, we rely on the database-level filtering
-	}
+	// Additional filtering by options.MinScore could be added here if needed in the future.
+	// The score is already computed in SearchNodesByEmbedding, but we need to recompute
+	// for filtering since we don't store it in the Node struct.
+	// For now, we rely on the database-level filtering.
+	_ = options // Acknowledge options for future MinScore filtering
 
 	return nodes, nil
 }
@@ -1733,12 +1714,11 @@ func (k *LadybugDriver) SearchEdgesByVector(ctx context.Context, vector []float3
 	}
 
 	// Note: MinScore filtering is already handled in SearchEdgesByEmbedding via the WHERE score > 0.0 clause
-	// Additional filtering by options.MinScore could be added here if needed
-	if options != nil && options.MinScore > 0 {
-		// The score is already computed in SearchEdgesByEmbedding, but we need to recompute
-		// for filtering since we don't store it in the Edge struct
-		// For now, we rely on the database-level filtering
-	}
+	// Additional filtering by options.MinScore could be added here if needed in the future.
+	// The score is already computed in SearchEdgesByEmbedding, but we need to recompute
+	// for filtering since we don't store it in the Edge struct.
+	// For now, we rely on the database-level filtering.
+	_ = options // Acknowledge options for future MinScore filtering
 
 	return edges, nil
 }
@@ -2704,26 +2684,6 @@ func convertToFloat32Slice(data interface{}) []float32 {
 		return floatSlice
 	}
 	return nil
-}
-
-// cosineSimilarity computes the cosine similarity between two vectors
-func (k *LadybugDriver) cosineSimilarity(a, b []float32) float32 {
-	if len(a) != len(b) {
-		return 0.0
-	}
-
-	var dotProduct, normA, normB float32
-	for i := 0; i < len(a); i++ {
-		dotProduct += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-
-	if normA == 0.0 || normB == 0.0 {
-		return 0.0
-	}
-
-	return dotProduct / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
 }
 
 // LadybugDriverSession implements GraphDriverSession for ladybug exactly like Python

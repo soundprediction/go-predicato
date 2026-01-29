@@ -151,7 +151,7 @@ func (d *DoltDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, no
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Get source's group_id for nodes/edges
 	var groupID string
@@ -485,7 +485,7 @@ func (d *DoltDB) SearchNodes(ctx context.Context, query string, embedding []floa
 		var score float64 = 0
 
 		// Vector similarity
-		if embedding != nil && len(embedding) > 0 && len(node.Embedding) > 0 {
+		if len(embedding) > 0 && len(node.Embedding) > 0 {
 			score = cosineSimilarity(embedding, node.Embedding)
 		}
 
@@ -556,7 +556,7 @@ func (d *DoltDB) SearchEdges(ctx context.Context, query string, embedding []floa
 		var score float64 = 0
 
 		// Vector similarity
-		if embedding != nil && len(embedding) > 0 && len(edge.Embedding) > 0 {
+		if len(embedding) > 0 && len(edge.Embedding) > 0 {
 			score = cosineSimilarity(embedding, edge.Embedding)
 		}
 

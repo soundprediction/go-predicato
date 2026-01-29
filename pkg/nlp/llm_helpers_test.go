@@ -17,6 +17,7 @@ func ExampleGenerateJSONResponseWithContinuation() {
 		Category string   `json:"category"`
 		Tips     []string `json:"tips"`
 	}
+	_ = PregnancyTips{} // Example type for documentation
 
 	// Create LLM client (example - replace with actual client)
 	// nlProcessor, _ := nlp.NewOpenAIClient("your-api-key", nlp.Config{

@@ -578,7 +578,7 @@ func buildEntityEdgeFromRecord(record map[string]interface{}, provider GraphProv
 	if provider == GraphProviderLadybug {
 		// ladybug stores attributes as JSON string
 		if attrStr, ok := record["attributes"].(string); ok && attrStr != "" {
-			json.Unmarshal([]byte(attrStr), &attributes)
+			_ = json.Unmarshal([]byte(attrStr), &attributes)
 		}
 	} else {
 		// Other providers store attributes as map, need to filter out standard fields

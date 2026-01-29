@@ -43,7 +43,7 @@ type Config struct {
 
 func NewHTTPClient(config Config) (*HTTPClient, error) {
 	var baseURL, apiKey string
-	var timeout time.Duration = 30 * time.Second
+	var timeout time.Duration
 
 	switch config.Provider {
 	case ProviderLocal:
@@ -233,7 +233,7 @@ func (c *HTTPClient) makeRequest(ctx context.Context, request ExtractRequest, re
 		var apiError struct {
 			Detail string `json:"detail"`
 		}
-		json.Unmarshal(body, &apiError)
+		_ = json.Unmarshal(body, &apiError)
 		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, apiError.Detail)
 	}
 

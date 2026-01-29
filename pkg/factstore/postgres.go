@@ -291,7 +291,7 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Get source's group_id for nodes/edges
 	var groupID string
@@ -512,7 +512,7 @@ func (p *PostgresDB) SearchNodes(ctx context.Context, query string, embedding []
 	}
 
 	// Determine search methods
-	useVector := embedding != nil && len(embedding) > 0
+	useVector := len(embedding) > 0
 	useKeyword := query != ""
 
 	if len(config.SearchMethods) > 0 {
@@ -520,7 +520,7 @@ func (p *PostgresDB) SearchNodes(ctx context.Context, query string, embedding []
 		useKeyword = false
 		for _, m := range config.SearchMethods {
 			if m == VectorSearch {
-				useVector = embedding != nil && len(embedding) > 0
+				useVector = len(embedding) > 0
 			}
 			if m == KeywordSearch {
 				useKeyword = query != ""
@@ -560,7 +560,7 @@ func (p *PostgresDB) SearchEdges(ctx context.Context, query string, embedding []
 		config.Limit = 10
 	}
 
-	useVector := embedding != nil && len(embedding) > 0
+	useVector := len(embedding) > 0
 	useKeyword := query != ""
 
 	if len(config.SearchMethods) > 0 {
@@ -568,7 +568,7 @@ func (p *PostgresDB) SearchEdges(ctx context.Context, query string, embedding []
 		useKeyword = false
 		for _, m := range config.SearchMethods {
 			if m == VectorSearch {
-				useVector = embedding != nil && len(embedding) > 0
+				useVector = len(embedding) > 0
 			}
 			if m == KeywordSearch {
 				useKeyword = query != ""
@@ -638,7 +638,6 @@ func (p *PostgresDB) SearchSources(ctx context.Context, query string, config *Fa
 		if !config.TimeRange.End.IsZero() {
 			sqlQuery += fmt.Sprintf(" AND created_at <= $%d", argIdx)
 			args = append(args, config.TimeRange.End)
-			argIdx++
 		}
 	}
 
@@ -840,7 +839,6 @@ func (p *PostgresDB) inMemoryVectorSearchNodes(ctx context.Context, embedding []
 		if !config.TimeRange.End.IsZero() {
 			sqlQuery += fmt.Sprintf(" AND created_at <= $%d", argIdx)
 			args = append(args, config.TimeRange.End)
-			argIdx++
 		}
 	}
 
@@ -1092,7 +1090,6 @@ func (p *PostgresDB) inMemoryVectorSearchEdges(ctx context.Context, embedding []
 		if !config.TimeRange.End.IsZero() {
 			sqlQuery += fmt.Sprintf(" AND created_at <= $%d", argIdx)
 			args = append(args, config.TimeRange.End)
-			argIdx++
 		}
 	}
 

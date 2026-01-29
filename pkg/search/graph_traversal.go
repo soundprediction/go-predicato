@@ -54,10 +54,10 @@ func (su *SearchUtilities) NodeBFSSearch(ctx context.Context, originNodeUUIDs []
 			filterParams["entity_types"] = options.SearchFilters.EntityTypes
 		}
 
-		// Add time range filters if specified
-		if options.SearchFilters.TimeRange != nil {
-			// Would add temporal filtering here
-		}
+		// TODO: Add time range filters if specified
+		// if options.SearchFilters.TimeRange != nil {
+		// 	// Would add temporal filtering here
+		// }
 	}
 
 	if len(options.GroupIDs) > 0 {
@@ -436,157 +436,6 @@ func stringValue(v interface{}) string {
 		return s
 	}
 	return fmt.Sprintf("%v", v)
-}
-
-// getRelatedNodes is a helper function to get nodes related to a given node
-// This executes a direct Cypher query to find connected nodes
-func (su *SearchUtilities) getRelatedNodes(ctx context.Context, node *types.Node, options *BFSSearchOptions) ([]*types.Node, error) {
-	provider := su.driver.Provider()
-
-	var query string
-	if provider == driver.GraphProviderLadybug {
-		// For Ladybug, handle the RelatesToNode_ intermediate nodes
-		query = `
-			MATCH (origin:Entity {uuid: $node_uuid})-[:RELATES_TO*2..2]->(n:Entity)
-			WHERE n.group_id = $group_id
-			RETURN
-				n.uuid AS uuid,
-				n.group_id AS group_id,
-				n.name AS name,
-				n.name_embedding AS name_embedding,
-				n.labels AS labels,
-				n.created_at AS created_at,
-				n.summary AS summary,
-				n.embedding AS embedding
-			LIMIT $limit
-		`
-	} else {
-		query = `
-			MATCH (origin:Entity {uuid: $node_uuid})-[:RELATES_TO]->(n:Entity)
-			WHERE n.group_id = $group_id
-			RETURN
-				n.uuid AS uuid,
-				n.group_id AS group_id,
-				n.name AS name,
-				n.name_embedding AS name_embedding,
-				n.labels AS labels,
-				n.created_at AS created_at,
-				n.summary AS summary,
-				n.embedding AS embedding
-			LIMIT $limit
-		`
-	}
-
-	groupID := node.GroupID
-	if len(options.GroupIDs) > 0 {
-		groupID = options.GroupIDs[0]
-	}
-
-	params := map[string]interface{}{
-		"node_uuid": node.Uuid,
-		"group_id":  groupID,
-		"limit":     options.Limit,
-	}
-
-	records, _, _, err := su.driver.ExecuteQuery(ctx, query, params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get related nodes: %w", err)
-	}
-
-	if recordList, ok := records.([]map[string]interface{}); ok {
-		return convertRecordsToNodes(recordList), nil
-	}
-
-	return []*types.Node{}, nil
-}
-
-// getEdgesForNode is a helper function to get edges connected to a given node
-// This executes a direct Cypher query to find edges
-func (su *SearchUtilities) getEdgesForNode(ctx context.Context, nodeUUID string, options *BFSSearchOptions) ([]*types.Edge, error) {
-	provider := su.driver.Provider()
-
-	var query string
-	if provider == driver.GraphProviderLadybug {
-		// For Ladybug, query the RelatesToNode_ intermediate nodes
-		query = `
-			MATCH (n:Entity {uuid: $node_uuid})-[:RELATES_TO]->(e:RelatesToNode_)-[:RELATES_TO]->(m:Entity)
-			WHERE e.group_id = $group_id
-			RETURN DISTINCT
-				e.uuid AS uuid,
-				e.group_id AS group_id,
-				n.uuid AS source_node_uuid,
-				m.uuid AS target_node_uuid,
-				e.created_at AS created_at,
-				e.name AS name,
-				e.fact AS fact,
-				e.fact_embedding AS fact_embedding,
-				e.episodes AS episodes,
-				e.expired_at AS expired_at,
-				e.valid_at AS valid_at,
-				e.invalid_at AS invalid_at
-			LIMIT $limit
-		`
-	} else if provider == driver.GraphProviderNeptune {
-		query = `
-			MATCH (n:Entity {uuid: $node_uuid})-[e:RELATES_TO]-(m:Entity)
-			WHERE e.group_id = $group_id
-			RETURN DISTINCT
-				e.uuid AS uuid,
-				e.group_id AS group_id,
-				startNode(e).uuid AS source_node_uuid,
-				endNode(e).uuid AS target_node_uuid,
-				e.created_at AS created_at,
-				e.name AS name,
-				e.fact AS fact,
-				e.fact_embedding AS fact_embedding,
-				split(e.episodes, ',') AS episodes,
-				e.expired_at AS expired_at,
-				e.valid_at AS valid_at,
-				e.invalid_at AS invalid_at
-			LIMIT $limit
-		`
-	} else {
-		query = `
-			MATCH (n:Entity {uuid: $node_uuid})-[e:RELATES_TO]-(m:Entity)
-			WHERE e.group_id = $group_id
-			RETURN DISTINCT
-				e.uuid AS uuid,
-				e.group_id AS group_id,
-				startNode(e).uuid AS source_node_uuid,
-				endNode(e).uuid AS target_node_uuid,
-				e.created_at AS created_at,
-				e.name AS name,
-				e.fact AS fact,
-				e.fact_embedding AS fact_embedding,
-				e.episodes AS episodes,
-				e.expired_at AS expired_at,
-				e.valid_at AS valid_at,
-				e.invalid_at AS invalid_at
-			LIMIT $limit
-		`
-	}
-
-	groupID := ""
-	if len(options.GroupIDs) > 0 {
-		groupID = options.GroupIDs[0]
-	}
-
-	params := map[string]interface{}{
-		"node_uuid": nodeUUID,
-		"group_id":  groupID,
-		"limit":     options.Limit,
-	}
-
-	records, _, _, err := su.driver.ExecuteQuery(ctx, query, params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get edges for node: %w", err)
-	}
-
-	if recordList, ok := records.([]map[string]interface{}); ok {
-		return convertRecordsToEdges(recordList), nil
-	}
-
-	return []*types.Edge{}, nil
 }
 
 // PathFinder provides utilities for finding paths between nodes

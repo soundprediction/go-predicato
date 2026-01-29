@@ -1775,7 +1775,7 @@ func (n *Neo4jDriver) DeleteAllIndexes(database string) {
 	for _, record := range records {
 		if indexName, found := record.Get("name"); found {
 			if name, ok := indexName.(string); ok {
-				session.Run(context.Background(), fmt.Sprintf("DROP INDEX %s IF EXISTS", name), nil)
+				_, _ = session.Run(context.Background(), fmt.Sprintf("DROP INDEX %s IF EXISTS", name), nil)
 			}
 		}
 	}

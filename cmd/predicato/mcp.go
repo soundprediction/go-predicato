@@ -66,25 +66,25 @@ func init() {
 
 	// Set up specific environment variable bindings to maintain compatibility
 	// with existing environment variable names
-	viper.BindEnv("nlp.api_key", "OPENAI_API_KEY")
-	viper.BindEnv("nlp.base_url", "LLM_BASE_URL")
-	viper.BindEnv("embedder.api_key", "EMBEDDING_API_KEY", "OPENAI_API_KEY") // Fallback to OpenAI key
-	viper.BindEnv("embedder.base_url", "EMBEDDING_BASE_URL")
-	viper.BindEnv("embedder.model", "EMBEDDER_MODEL_NAME")
-	viper.BindEnv("database.uri", "NEO4J_URI")
-	viper.BindEnv("database.username", "NEO4J_USER")
-	viper.BindEnv("database.password", "NEO4J_PASSWORD")
-	viper.BindEnv("database.database", "NEO4J_DATABASE")
-	viper.BindEnv("mcp.group_id", "GROUP_ID")
-	viper.BindEnv("mcp.transport", "MCP_TRANSPORT")
-	viper.BindEnv("mcp.host", "MCP_HOST")
-	viper.BindEnv("mcp.port", "MCP_PORT")
-	viper.BindEnv("mcp.model", "MODEL_NAME")
-	viper.BindEnv("mcp.small_model", "SMALL_MODEL_NAME")
-	viper.BindEnv("mcp.temperature", "LLM_TEMPERATURE")
-	viper.BindEnv("mcp.use_custom_entities", "USE_CUSTOM_ENTITIES")
-	viper.BindEnv("mcp.destroy_graph", "DESTROY_GRAPH")
-	viper.BindEnv("mcp.semaphore_limit", "SEMAPHORE_LIMIT")
+	_ = viper.BindEnv("nlp.api_key", "OPENAI_API_KEY")
+	_ = viper.BindEnv("nlp.base_url", "LLM_BASE_URL")
+	_ = viper.BindEnv("embedder.api_key", "EMBEDDING_API_KEY", "OPENAI_API_KEY") // Fallback to OpenAI key
+	_ = viper.BindEnv("embedder.base_url", "EMBEDDING_BASE_URL")
+	_ = viper.BindEnv("embedder.model", "EMBEDDER_MODEL_NAME")
+	_ = viper.BindEnv("database.uri", "NEO4J_URI")
+	_ = viper.BindEnv("database.username", "NEO4J_USER")
+	_ = viper.BindEnv("database.password", "NEO4J_PASSWORD")
+	_ = viper.BindEnv("database.database", "NEO4J_DATABASE")
+	_ = viper.BindEnv("mcp.group_id", "GROUP_ID")
+	_ = viper.BindEnv("mcp.transport", "MCP_TRANSPORT")
+	_ = viper.BindEnv("mcp.host", "MCP_HOST")
+	_ = viper.BindEnv("mcp.port", "MCP_PORT")
+	_ = viper.BindEnv("mcp.model", "MODEL_NAME")
+	_ = viper.BindEnv("mcp.small_model", "SMALL_MODEL_NAME")
+	_ = viper.BindEnv("mcp.temperature", "LLM_TEMPERATURE")
+	_ = viper.BindEnv("mcp.use_custom_entities", "USE_CUSTOM_ENTITIES")
+	_ = viper.BindEnv("mcp.destroy_graph", "DESTROY_GRAPH")
+	_ = viper.BindEnv("mcp.semaphore_limit", "SEMAPHORE_LIMIT")
 
 	// MCP Server specific flags
 	mcpCmd.Flags().StringVar(&mcpGroupID, "group-id", "default", "Namespace for the graph")
@@ -118,34 +118,34 @@ func init() {
 	mcpCmd.Flags().String("telemetry-parquet-path", "", "Path to directory for telemetry (errors and token usage)")
 
 	// Bind flags to viper for configuration
-	viper.BindPFlag("mcp.group_id", mcpCmd.Flags().Lookup("group-id"))
-	viper.BindPFlag("mcp.transport", mcpCmd.Flags().Lookup("transport"))
-	viper.BindPFlag("mcp.host", mcpCmd.Flags().Lookup("host"))
-	viper.BindPFlag("mcp.port", mcpCmd.Flags().Lookup("port"))
-	viper.BindPFlag("mcp.model", mcpCmd.Flags().Lookup("model"))
-	viper.BindPFlag("mcp.small_model", mcpCmd.Flags().Lookup("small-model"))
-	viper.BindPFlag("mcp.temperature", mcpCmd.Flags().Lookup("temperature"))
-	viper.BindPFlag("mcp.use_custom_entities", mcpCmd.Flags().Lookup("use-custom-entities"))
-	viper.BindPFlag("mcp.destroy_graph", mcpCmd.Flags().Lookup("destroy-graph"))
-	viper.BindPFlag("mcp.semaphore_limit", mcpCmd.Flags().Lookup("semaphore-limit"))
+	_ = viper.BindPFlag("mcp.group_id", mcpCmd.Flags().Lookup("group-id"))
+	_ = viper.BindPFlag("mcp.transport", mcpCmd.Flags().Lookup("transport"))
+	_ = viper.BindPFlag("mcp.host", mcpCmd.Flags().Lookup("host"))
+	_ = viper.BindPFlag("mcp.port", mcpCmd.Flags().Lookup("port"))
+	_ = viper.BindPFlag("mcp.model", mcpCmd.Flags().Lookup("model"))
+	_ = viper.BindPFlag("mcp.small_model", mcpCmd.Flags().Lookup("small-model"))
+	_ = viper.BindPFlag("mcp.temperature", mcpCmd.Flags().Lookup("temperature"))
+	_ = viper.BindPFlag("mcp.use_custom_entities", mcpCmd.Flags().Lookup("use-custom-entities"))
+	_ = viper.BindPFlag("mcp.destroy_graph", mcpCmd.Flags().Lookup("destroy-graph"))
+	_ = viper.BindPFlag("mcp.semaphore_limit", mcpCmd.Flags().Lookup("semaphore-limit"))
 
 	// Database configuration
-	viper.BindPFlag("database.uri", mcpCmd.Flags().Lookup("db-uri"))
-	viper.BindPFlag("database.username", mcpCmd.Flags().Lookup("db-username"))
-	viper.BindPFlag("database.password", mcpCmd.Flags().Lookup("db-password"))
-	viper.BindPFlag("database.database", mcpCmd.Flags().Lookup("db-database"))
+	_ = viper.BindPFlag("database.uri", mcpCmd.Flags().Lookup("db-uri"))
+	_ = viper.BindPFlag("database.username", mcpCmd.Flags().Lookup("db-username"))
+	_ = viper.BindPFlag("database.password", mcpCmd.Flags().Lookup("db-password"))
+	_ = viper.BindPFlag("database.database", mcpCmd.Flags().Lookup("db-database"))
 
 	// LLM configuration
-	viper.BindPFlag("nlp.api_key", mcpCmd.Flags().Lookup("llm-api-key"))
-	viper.BindPFlag("nlp.base_url", mcpCmd.Flags().Lookup("llm-base-url"))
+	_ = viper.BindPFlag("nlp.api_key", mcpCmd.Flags().Lookup("llm-api-key"))
+	_ = viper.BindPFlag("nlp.base_url", mcpCmd.Flags().Lookup("llm-base-url"))
 
 	// Embedder configuration
-	viper.BindPFlag("embedder.model", mcpCmd.Flags().Lookup("embedder-model"))
-	viper.BindPFlag("embedder.api_key", mcpCmd.Flags().Lookup("embedding-api-key"))
-	viper.BindPFlag("embedder.base_url", mcpCmd.Flags().Lookup("embedding-base-url"))
+	_ = viper.BindPFlag("embedder.model", mcpCmd.Flags().Lookup("embedder-model"))
+	_ = viper.BindPFlag("embedder.api_key", mcpCmd.Flags().Lookup("embedding-api-key"))
+	_ = viper.BindPFlag("embedder.base_url", mcpCmd.Flags().Lookup("embedding-base-url"))
 
 	// Telemetry configuration
-	viper.BindPFlag("telemetry.parquet_path", mcpCmd.Flags().Lookup("telemetry-parquet-path"))
+	_ = viper.BindPFlag("telemetry.parquet_path", mcpCmd.Flags().Lookup("telemetry-parquet-path"))
 }
 
 // MCPConfig holds all configuration for the MCP server
@@ -1003,7 +1003,7 @@ func (s *MCPServer) handleSSETransport(ctx context.Context) error {
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status": "MCP server running", "transport": "sse"}`))
+			_, _ = w.Write([]byte(`{"status": "MCP server running", "transport": "sse"}`))
 		}),
 	}
 
@@ -1101,43 +1101,4 @@ func getViperBoolWithFallback(key string, fallback bool) bool {
 		return viper.GetBool(key)
 	}
 	return fallback
-}
-
-func getStringFlagOrEnv(cmd *cobra.Command, flagName, envName, defaultValue string) string {
-	if cmd.Flags().Changed(flagName) {
-		value, _ := cmd.Flags().GetString(flagName)
-		return value
-	}
-	if value := os.Getenv(envName); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getConfigString(key, defaultValue string) string {
-	if viper.IsSet(key) {
-		return viper.GetString(key)
-	}
-	return defaultValue
-}
-
-func getConfigInt(key string, defaultValue int) int {
-	if viper.IsSet(key) {
-		return viper.GetInt(key)
-	}
-	return defaultValue
-}
-
-func getConfigFloat64(key string, defaultValue float64) float64 {
-	if viper.IsSet(key) {
-		return viper.GetFloat64(key)
-	}
-	return defaultValue
-}
-
-func getConfigBool(key string, defaultValue bool) bool {
-	if viper.IsSet(key) {
-		return viper.GetBool(key)
-	}
-	return defaultValue
 }

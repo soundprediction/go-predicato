@@ -130,7 +130,7 @@ func TestMemgraphDriver_UpsertNode(t *testing.T) {
 
 	// Cleanup at the end
 	defer func() {
-		d.DeleteNode(ctx, testNode.Uuid, testNode.GroupID)
+		_ = d.DeleteNode(ctx, testNode.Uuid, testNode.GroupID)
 	}()
 
 	// Upsert the node
@@ -198,8 +198,8 @@ func TestMemgraphDriver_UpsertEdge(t *testing.T) {
 
 	// Cleanup at the end
 	defer func() {
-		d.DeleteNode(ctx, sourceNode.Uuid, sourceNode.GroupID)
-		d.DeleteNode(ctx, targetNode.Uuid, targetNode.GroupID)
+		_ = d.DeleteNode(ctx, sourceNode.Uuid, sourceNode.GroupID)
+		_ = d.DeleteNode(ctx, targetNode.Uuid, targetNode.GroupID)
 	}()
 
 	err = d.UpsertNode(ctx, sourceNode)
@@ -227,7 +227,7 @@ func TestMemgraphDriver_UpsertEdge(t *testing.T) {
 
 	// Cleanup edge at the end
 	defer func() {
-		d.DeleteEdge(ctx, testEdge.Uuid, testEdge.GroupID)
+		_ = d.DeleteEdge(ctx, testEdge.Uuid, testEdge.GroupID)
 	}()
 
 	// Upsert the edge
@@ -284,7 +284,7 @@ func TestMemgraphDriver_NodeExists(t *testing.T) {
 	}
 
 	defer func() {
-		d.DeleteNode(ctx, testNode.Uuid, testNode.GroupID)
+		_ = d.DeleteNode(ctx, testNode.Uuid, testNode.GroupID)
 	}()
 
 	// Should not exist initially
@@ -330,8 +330,8 @@ func TestMemgraphDriver_EdgeExists(t *testing.T) {
 	}
 
 	defer func() {
-		d.DeleteNode(ctx, sourceNode.Uuid, sourceNode.GroupID)
-		d.DeleteNode(ctx, targetNode.Uuid, targetNode.GroupID)
+		_ = d.DeleteNode(ctx, sourceNode.Uuid, sourceNode.GroupID)
+		_ = d.DeleteNode(ctx, targetNode.Uuid, targetNode.GroupID)
 	}()
 
 	err := d.UpsertNode(ctx, sourceNode)
@@ -353,7 +353,7 @@ func TestMemgraphDriver_EdgeExists(t *testing.T) {
 	}
 
 	defer func() {
-		d.DeleteEdge(ctx, testEdge.Uuid, testEdge.GroupID)
+		_ = d.DeleteEdge(ctx, testEdge.Uuid, testEdge.GroupID)
 	}()
 
 	// Should not exist initially
@@ -409,7 +409,7 @@ func TestMemgraphDriver_GetNodes(t *testing.T) {
 
 	defer func() {
 		for _, node := range nodes {
-			d.DeleteNode(ctx, node.Uuid, node.GroupID)
+			_ = d.DeleteNode(ctx, node.Uuid, node.GroupID)
 		}
 	}()
 

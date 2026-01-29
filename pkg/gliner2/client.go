@@ -166,6 +166,21 @@ func (c *Client) ExtractFacts(ctx context.Context, text string, relationTypes []
 	}
 }
 
+// ClassifyText provides direct access to text classification
+func (c *Client) ClassifyText(ctx context.Context, text string, schema interface{}, threshold float64) (*ClassificationResult, error) {
+	switch c.provider {
+	case ProviderNative:
+		return c.nativeClient.ClassifyText(ctx, text, schema, threshold)
+	case ProviderLocal, ProviderFastino:
+		if c.httpClient == nil {
+			return nil, fmt.Errorf("HTTP client not available")
+		}
+		return c.httpClient.ClassifyText(ctx, text, schema, threshold)
+	default:
+		return nil, fmt.Errorf("unsupported provider: %v", c.provider)
+	}
+}
+
 func (c *Client) handleNodeExtraction(ctx context.Context, userMsg string) (*types.Response, error) {
 	entityTypesTSV := parseSection(userMsg, "ENTITY TYPES")
 	text := parseSection(userMsg, "TEXT")

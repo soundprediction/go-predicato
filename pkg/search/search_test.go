@@ -358,7 +358,7 @@ func TestNewSearcher(t *testing.T) {
 
 	searcher := NewSearcher(mockDriver, mockEmbedder, nil)
 	if searcher == nil {
-		t.Error("expected non-nil searcher")
+		t.Fatal("expected non-nil searcher")
 	}
 
 	if searcher.driver == nil {

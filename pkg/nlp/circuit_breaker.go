@@ -20,14 +20,10 @@ type CircuitBreakerClient struct {
 }
 
 // NewCircuitBreakerClient creates a new circuit breaker client
+// Note: If cfg.Enabled is false, the wrapper is still created but the circuit breaker
+// behavior is determined by the gobreaker settings. Consider checking cfg.Enabled
+// at the call site if you want to skip wrapping entirely.
 func NewCircuitBreakerClient(client Client, cfg config.CircuitBreakerConfig, alerter alert.Alerter, name string) *CircuitBreakerClient {
-	if !cfg.Enabled {
-		// Just return the original client if disabled?
-		// Or wrap with a pass-through. For type safety we return the wrapper but with no-op CB.
-		// Usually better to return the interface type.
-		// For now we assume this function is called when enabled or we handle it here.
-	}
-
 	st := gobreaker.Settings{
 		Name:        name,
 		MaxRequests: cfg.MaxRequests,

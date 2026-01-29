@@ -77,6 +77,9 @@ func (s *Server) setupRoutes() {
 			r.Post("/messages", ingestHandler.AddMessages)
 			r.Post("/entity", ingestHandler.AddEntityNode)
 			r.Delete("/clear", ingestHandler.ClearData)
+			// Two-stage ingestion
+			r.Post("/extract", ingestHandler.ExtractEpisode)
+			r.Post("/promote", ingestHandler.PromoteToGraph)
 		})
 
 		// Retrieve routes

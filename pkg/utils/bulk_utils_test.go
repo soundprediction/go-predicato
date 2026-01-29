@@ -155,9 +155,10 @@ func TestClients(t *testing.T) {
 		Prompts:  nil,
 	}
 
-	// Just test that the structure is properly defined
-	if clients == nil {
-		t.Error("Clients should be initialized")
+	// Verify structure is properly initialized by checking it's not the zero value pointer
+	// (Note: clients cannot be nil here since we just assigned it a non-nil pointer)
+	if clients.Driver != nil || clients.NLP != nil || clients.Embedder != nil || clients.Prompts != nil {
+		t.Error("Clients fields should be nil as initialized")
 	}
 }
 

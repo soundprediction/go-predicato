@@ -1809,7 +1809,7 @@ func (m *MemgraphDriver) DeleteAllIndexes(database string) {
 	for _, record := range records {
 		if label, ok := record.Values[0].(string); ok {
 			if property, ok := record.Values[1].(string); ok {
-				session.Run(context.Background(), fmt.Sprintf("DROP INDEX ON :%s(%s)", label, property), nil)
+				_, _ = session.Run(context.Background(), fmt.Sprintf("DROP INDEX ON :%s(%s)", label, property), nil)
 			}
 		}
 	}
