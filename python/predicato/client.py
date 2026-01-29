@@ -22,8 +22,15 @@ from predicato.models import (
     AddMessagesResponse,
     ClearDataRequest,
     ClearDataResponse,
+    Edge,
     Episode,
+    ExtractedEdge,
+    ExtractedNode,
+    ExtractionMetadata,
+    ExtractionResults,
     Message,
+    Node,
+    PromoteToGraphResults,
     SearchRequest,
     SearchResults,
 )
@@ -482,6 +489,235 @@ class PredicatoClient:
             failed_groups=[] if response.get("success") else group_ids,
         )
 
+    # =========================================================================
+    # Two-Stage Ingestion Methods
+    # =========================================================================
+
+    def extract_to_facts(
+        self,
+        name: str,
+        content: str,
+        *,
+        episode_id: str | None = None,
+        source: str = "",
+        group_id: str | None = None,
+        reference: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
+        entity_types: dict[str, Any] | None = None,
+        excluded_entity_types: list[str] | None = None,
+        edge_types: dict[str, Any] | None = None,
+        edge_type_map: dict[str, dict[str, Any]] | None = None,
+        previous_episode_uuids: list[str] | None = None,
+        max_characters: int | None = None,
+        use_yaml: bool = False,
+    ) -> ExtractionResults:
+        """
+        Extract entities and relationships from content without promoting to graph.
+
+        This is the first stage of two-stage ingestion. The extracted knowledge
+        is stored in the fact store and can later be promoted to the graph
+        using promote_to_graph().
+
+        Args:
+            name: Name/title of the episode (max 1024 chars).
+            content: The content to process (max 1MB).
+            episode_id: Optional episode identifier (auto-generated if not provided).
+            source: Source identifier (e.g., "meeting", "document").
+            group_id: Group for data isolation. Uses client default if not provided.
+            reference: Reference timestamp for the content.
+            metadata: Additional metadata to attach to the episode.
+            entity_types: Custom entity type definitions.
+            excluded_entity_types: Entity types to exclude from extraction.
+            edge_types: Custom edge type definitions.
+            edge_type_map: Mapping of entity pairs to edge types.
+            previous_episode_uuids: UUIDs of previous episodes for context.
+            max_characters: Maximum characters per chunk.
+            use_yaml: Whether to use YAML for LLM interchange.
+
+        Returns:
+            ExtractionResults containing the source_id and extracted entities/edges.
+            Use the source_id to later call promote_to_graph().
+
+        Raises:
+            ValidationError: If content exceeds size limits or required fields are missing.
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error.
+
+        Example:
+            >>> # Stage 1: Extract
+            >>> extraction = client.extract_to_facts(
+            ...     name="Meeting Notes",
+            ...     content="Discussed project timeline...",
+            ...     group_id="project-alpha"
+            ... )
+            >>> print(f"Extracted {len(extraction.extracted_nodes)} entities")
+            >>>
+            >>> # Stage 2: Promote (later, possibly with different options)
+            >>> results = client.promote_to_graph(extraction.source_id)
+        """
+        resolved_group_id = self._resolve_group_id(group_id)
+
+        # Validate content size
+        if len(content) > 1_048_576:
+            raise ValidationError(
+                f"content exceeds maximum size of 1MB ({len(content)} bytes)",
+                field="content",
+            )
+
+        request_data: dict[str, Any] = {
+            "name": name,
+            "content": content,
+            "source": source,
+            "group_id": resolved_group_id,
+            "use_yaml": use_yaml,
+        }
+
+        if episode_id:
+            request_data["id"] = episode_id
+        if reference:
+            request_data["reference"] = reference.isoformat()
+        if metadata:
+            request_data["metadata"] = metadata
+        if entity_types:
+            request_data["entity_types"] = entity_types
+        if excluded_entity_types:
+            request_data["excluded_entity_types"] = excluded_entity_types
+        if edge_types:
+            request_data["edge_types"] = edge_types
+        if edge_type_map:
+            request_data["edge_type_map"] = edge_type_map
+        if previous_episode_uuids:
+            request_data["previous_episode_uuids"] = previous_episode_uuids
+        if max_characters:
+            request_data["max_characters"] = max_characters
+
+        response = self._http.request(
+            "POST",
+            "/api/v1/ingest/extract",
+            json=request_data,
+        )
+
+        # Parse response into ExtractionResults
+        extracted_nodes = [
+            ExtractedNode(**node) for node in response.get("extracted_nodes", [])
+        ]
+        extracted_edges = [
+            ExtractedEdge(**edge) for edge in response.get("extracted_edges", [])
+        ]
+
+        extraction_metadata = None
+        if response.get("metadata"):
+            extraction_metadata = ExtractionMetadata(**response["metadata"])
+
+        return ExtractionResults(
+            source_id=response.get("source_id", ""),
+            extracted_nodes=extracted_nodes,
+            extracted_edges=extracted_edges,
+            chunk_count=response.get("chunk_count", 0),
+            extraction_time=response.get("extraction_time"),
+            metadata=extraction_metadata,
+        )
+
+    def promote_to_graph(
+        self,
+        source_id: str,
+        *,
+        entity_types: dict[str, Any] | None = None,
+        edge_types: dict[str, Any] | None = None,
+        edge_type_map: dict[str, dict[str, Any]] | None = None,
+        previous_episode_uuids: list[str] | None = None,
+        skip_reflexion: bool = False,
+        skip_resolution: bool = False,
+        skip_attributes: bool = False,
+        skip_edge_resolution: bool = False,
+        use_yaml: bool = False,
+    ) -> PromoteToGraphResults:
+        """
+        Promote previously extracted knowledge to the graph.
+
+        This is the second stage of two-stage ingestion. It takes the source_id
+        from extract_to_facts() and promotes the extracted entities and
+        relationships to the knowledge graph.
+
+        Args:
+            source_id: ID of the source to promote (from extract_to_facts).
+            entity_types: Custom entity type definitions.
+            edge_types: Custom edge type definitions.
+            edge_type_map: Mapping of entity pairs to edge types.
+            previous_episode_uuids: UUIDs of previous episodes for context.
+            skip_reflexion: Skip reflexion step for faster processing.
+            skip_resolution: Skip entity resolution (faster but may create duplicates).
+            skip_attributes: Skip attribute extraction.
+            skip_edge_resolution: Skip edge resolution.
+            use_yaml: Whether to use YAML for LLM interchange.
+
+        Returns:
+            PromoteToGraphResults containing resolved nodes, edges, and communities.
+
+        Raises:
+            ValidationError: If source_id is empty.
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error.
+            NotFoundError: If the source_id doesn't exist.
+
+        Example:
+            >>> results = client.promote_to_graph(
+            ...     source_id="episode-123",
+            ...     skip_resolution=True  # Faster but less accurate
+            ... )
+            >>> print(f"Created {len(results.nodes)} entities")
+            >>> print(f"Created {len(results.edges)} relationships")
+        """
+        if not source_id:
+            raise ValidationError(
+                "source_id is required for promotion",
+                field="source_id",
+            )
+
+        request_data: dict[str, Any] = {
+            "source_id": source_id,
+            "skip_reflexion": skip_reflexion,
+            "skip_resolution": skip_resolution,
+            "skip_attributes": skip_attributes,
+            "skip_edge_resolution": skip_edge_resolution,
+            "use_yaml": use_yaml,
+        }
+
+        if entity_types:
+            request_data["entity_types"] = entity_types
+        if edge_types:
+            request_data["edge_types"] = edge_types
+        if edge_type_map:
+            request_data["edge_type_map"] = edge_type_map
+        if previous_episode_uuids:
+            request_data["previous_episode_uuids"] = previous_episode_uuids
+
+        response = self._http.request(
+            "POST",
+            "/api/v1/ingest/promote",
+            json=request_data,
+        )
+
+        # Parse response into PromoteToGraphResults
+        episode = None
+        if response.get("episode"):
+            episode = Node(**response["episode"])
+
+        nodes = [Node(**n) for n in response.get("nodes", [])]
+        edges = [Edge(**e) for e in response.get("edges", [])]
+        episodic_edges = [Edge(**e) for e in response.get("episodic_edges", [])]
+        communities = [Node(**n) for n in response.get("communities", [])]
+        community_edges = [Edge(**e) for e in response.get("community_edges", [])]
+
+        return PromoteToGraphResults(
+            episode=episode,
+            episodic_edges=episodic_edges,
+            nodes=nodes,
+            edges=edges,
+            communities=communities,
+            community_edges=community_edges,
+        )
+
 
 class AsyncPredicatoClient:
     """
@@ -850,4 +1086,196 @@ class AsyncPredicatoClient:
             success=response.get("success", False),
             cleared_groups=group_ids if response.get("success") else [],
             failed_groups=[] if response.get("success") else group_ids,
+        )
+
+    # =========================================================================
+    # Two-Stage Ingestion Methods (Async)
+    # =========================================================================
+
+    async def extract_to_facts(
+        self,
+        name: str,
+        content: str,
+        *,
+        episode_id: str | None = None,
+        source: str = "",
+        group_id: str | None = None,
+        reference: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
+        entity_types: dict[str, Any] | None = None,
+        excluded_entity_types: list[str] | None = None,
+        edge_types: dict[str, Any] | None = None,
+        edge_type_map: dict[str, dict[str, Any]] | None = None,
+        previous_episode_uuids: list[str] | None = None,
+        max_characters: int | None = None,
+        use_yaml: bool = False,
+    ) -> ExtractionResults:
+        """
+        Extract entities and relationships from content without promoting to graph.
+
+        This is the first stage of two-stage ingestion. The extracted knowledge
+        is stored in the fact store and can later be promoted to the graph
+        using promote_to_graph().
+
+        Args:
+            name: Name/title of the episode (max 1024 chars).
+            content: The content to process (max 1MB).
+            episode_id: Optional episode identifier (auto-generated if not provided).
+            source: Source identifier (e.g., "meeting", "document").
+            group_id: Group for data isolation. Uses client default if not provided.
+            reference: Reference timestamp for the content.
+            metadata: Additional metadata to attach to the episode.
+            entity_types: Custom entity type definitions.
+            excluded_entity_types: Entity types to exclude from extraction.
+            edge_types: Custom edge type definitions.
+            edge_type_map: Mapping of entity pairs to edge types.
+            previous_episode_uuids: UUIDs of previous episodes for context.
+            max_characters: Maximum characters per chunk.
+            use_yaml: Whether to use YAML for LLM interchange.
+
+        Returns:
+            ExtractionResults containing the source_id and extracted entities/edges.
+        """
+        resolved_group_id = self._resolve_group_id(group_id)
+
+        if len(content) > 1_048_576:
+            raise ValidationError(
+                f"content exceeds maximum size of 1MB ({len(content)} bytes)",
+                field="content",
+            )
+
+        request_data: dict[str, Any] = {
+            "name": name,
+            "content": content,
+            "source": source,
+            "group_id": resolved_group_id,
+            "use_yaml": use_yaml,
+        }
+
+        if episode_id:
+            request_data["id"] = episode_id
+        if reference:
+            request_data["reference"] = reference.isoformat()
+        if metadata:
+            request_data["metadata"] = metadata
+        if entity_types:
+            request_data["entity_types"] = entity_types
+        if excluded_entity_types:
+            request_data["excluded_entity_types"] = excluded_entity_types
+        if edge_types:
+            request_data["edge_types"] = edge_types
+        if edge_type_map:
+            request_data["edge_type_map"] = edge_type_map
+        if previous_episode_uuids:
+            request_data["previous_episode_uuids"] = previous_episode_uuids
+        if max_characters:
+            request_data["max_characters"] = max_characters
+
+        response = await self._http.request(
+            "POST",
+            "/api/v1/ingest/extract",
+            json=request_data,
+        )
+
+        extracted_nodes = [
+            ExtractedNode(**node) for node in response.get("extracted_nodes", [])
+        ]
+        extracted_edges = [
+            ExtractedEdge(**edge) for edge in response.get("extracted_edges", [])
+        ]
+
+        extraction_metadata = None
+        if response.get("metadata"):
+            extraction_metadata = ExtractionMetadata(**response["metadata"])
+
+        return ExtractionResults(
+            source_id=response.get("source_id", ""),
+            extracted_nodes=extracted_nodes,
+            extracted_edges=extracted_edges,
+            chunk_count=response.get("chunk_count", 0),
+            extraction_time=response.get("extraction_time"),
+            metadata=extraction_metadata,
+        )
+
+    async def promote_to_graph(
+        self,
+        source_id: str,
+        *,
+        entity_types: dict[str, Any] | None = None,
+        edge_types: dict[str, Any] | None = None,
+        edge_type_map: dict[str, dict[str, Any]] | None = None,
+        previous_episode_uuids: list[str] | None = None,
+        skip_reflexion: bool = False,
+        skip_resolution: bool = False,
+        skip_attributes: bool = False,
+        skip_edge_resolution: bool = False,
+        use_yaml: bool = False,
+    ) -> PromoteToGraphResults:
+        """
+        Promote previously extracted knowledge to the graph.
+
+        This is the second stage of two-stage ingestion.
+
+        Args:
+            source_id: ID of the source to promote (from extract_to_facts).
+            entity_types: Custom entity type definitions.
+            edge_types: Custom edge type definitions.
+            edge_type_map: Mapping of entity pairs to edge types.
+            previous_episode_uuids: UUIDs of previous episodes for context.
+            skip_reflexion: Skip reflexion step for faster processing.
+            skip_resolution: Skip entity resolution.
+            skip_attributes: Skip attribute extraction.
+            skip_edge_resolution: Skip edge resolution.
+            use_yaml: Whether to use YAML for LLM interchange.
+
+        Returns:
+            PromoteToGraphResults containing resolved nodes, edges, and communities.
+        """
+        if not source_id:
+            raise ValidationError(
+                "source_id is required for promotion",
+                field="source_id",
+            )
+
+        request_data: dict[str, Any] = {
+            "source_id": source_id,
+            "skip_reflexion": skip_reflexion,
+            "skip_resolution": skip_resolution,
+            "skip_attributes": skip_attributes,
+            "skip_edge_resolution": skip_edge_resolution,
+            "use_yaml": use_yaml,
+        }
+
+        if entity_types:
+            request_data["entity_types"] = entity_types
+        if edge_types:
+            request_data["edge_types"] = edge_types
+        if edge_type_map:
+            request_data["edge_type_map"] = edge_type_map
+        if previous_episode_uuids:
+            request_data["previous_episode_uuids"] = previous_episode_uuids
+
+        response = await self._http.request(
+            "POST",
+            "/api/v1/ingest/promote",
+            json=request_data,
+        )
+
+        episode = None
+        if response.get("episode"):
+            episode = Node(**response["episode"])
+
+        nodes = [Node(**n) for n in response.get("nodes", [])]
+        edges = [Edge(**e) for e in response.get("edges", [])]
+        episodic_edges = [Edge(**e) for e in response.get("episodic_edges", [])]
+        communities = [Node(**n) for n in response.get("communities", [])]
+        community_edges = [Edge(**e) for e in response.get("community_edges", [])]
+
+        return PromoteToGraphResults(
+            episode=episode,
+            episodic_edges=episodic_edges,
+            nodes=nodes,
+            edges=edges,
+            communities=communities,
+            community_edges=community_edges,
         )

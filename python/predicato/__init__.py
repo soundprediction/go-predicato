@@ -37,8 +37,15 @@ from predicato.models import (
     Edge,
     Episode,
     ErrorResponse,
+    ExtractedEdge,
+    ExtractedNode,
+    ExtractEpisodeRequest,
+    ExtractionMetadata,
+    ExtractionResults,
     Message,
     Node,
+    PromoteToGraphRequest,
+    PromoteToGraphResults,
     SearchRequest,
     SearchResults,
 )
@@ -73,4 +80,12 @@ __all__ = [
     "SearchResults",
     "ErrorResponse",
     "ClearDataResponse",
+    # Two-Stage Ingestion Models
+    "ExtractEpisodeRequest",
+    "ExtractedNode",
+    "ExtractedEdge",
+    "ExtractionMetadata",
+    "ExtractionResults",
+    "PromoteToGraphRequest",
+    "PromoteToGraphResults",
 ]

@@ -400,3 +400,234 @@ class ClearDataResponse(BaseModel):
     cleared_groups: list[str] = Field(default_factory=list)
     failed_groups: list[str] = Field(default_factory=list)
     errors: dict[str, str] = Field(default_factory=dict)
+
+
+# =============================================================================
+# Two-Stage Ingestion Models
+# =============================================================================
+
+
+class ExtractEpisodeRequest(BaseModel):
+    """
+    Request to extract entities from an episode without promoting to graph.
+
+    This is the first stage of two-stage ingestion.
+
+    Args:
+        id: Optional episode identifier.
+        name: Name/title of the episode (max 1024 chars).
+        content: The content to process (max 1MB).
+        source: Source identifier for the content.
+        group_id: Group identifier for data isolation.
+        reference: Reference timestamp for the content.
+        metadata: Additional metadata for the episode.
+        entity_types: Custom entity type definitions.
+        excluded_entity_types: Entity types to exclude from extraction.
+        edge_types: Custom edge type definitions.
+        edge_type_map: Mapping of entity pairs to edge types.
+        previous_episode_uuids: UUIDs of previous episodes for context.
+        max_characters: Maximum characters per chunk.
+        use_yaml: Whether to use YAML for LLM interchange.
+
+    Example:
+        >>> request = ExtractEpisodeRequest(
+        ...     name="Meeting Notes",
+        ...     content="Discussed project timeline...",
+        ...     group_id="project-alpha"
+        ... )
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str | None = None
+    name: str = Field(..., max_length=1024)
+    content: str = Field(..., max_length=1_048_576)
+    source: str = Field(default="", max_length=256)
+    group_id: str = Field(..., max_length=256)
+    reference: datetime | None = None
+    metadata: dict[str, Any] | None = None
+    entity_types: dict[str, Any] | None = None
+    excluded_entity_types: list[str] | None = None
+    edge_types: dict[str, Any] | None = None
+    edge_type_map: dict[str, dict[str, Any]] | None = None
+    previous_episode_uuids: list[str] | None = None
+    max_characters: int | None = None
+    use_yaml: bool = False
+
+
+class ExtractedNode(BaseModel):
+    """
+    A raw entity extracted from content, before graph promotion.
+
+    Args:
+        id: Unique identifier for the extracted node.
+        source_id: ID of the source episode.
+        group_id: Group the node belongs to.
+        name: Name of the entity.
+        type: Entity type.
+        description: Description/summary of the entity.
+        chunk_index: Index of the chunk this was extracted from.
+        created_at: When the extraction occurred.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    source_id: str
+    group_id: str
+    name: str
+    type: str
+    description: str = ""
+    chunk_index: int = 0
+    created_at: datetime | None = None
+
+
+class ExtractedEdge(BaseModel):
+    """
+    A raw relationship extracted from content, before graph promotion.
+
+    Args:
+        id: Unique identifier for the extracted edge.
+        source_id: ID of the source episode.
+        group_id: Group the edge belongs to.
+        source_node_name: Name of the source entity.
+        target_node_name: Name of the target entity.
+        relation: Relationship type/name.
+        description: Description of the relationship.
+        weight: Relationship strength/weight.
+        chunk_index: Index of the chunk this was extracted from.
+        created_at: When the extraction occurred.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    source_id: str
+    group_id: str
+    source_node_name: str
+    target_node_name: str
+    relation: str
+    description: str = ""
+    weight: float = 1.0
+    chunk_index: int = 0
+    created_at: datetime | None = None
+
+
+class ExtractionMetadata(BaseModel):
+    """
+    Metadata about the extraction process.
+
+    Args:
+        model_used: NLP model used for extraction.
+        embedding_model: Model used for embeddings.
+        embedding_dimensions: Dimension of embeddings.
+        total_tokens: Estimated token count processed.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    model_used: str | None = None
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = None
+    total_tokens: int | None = None
+
+
+class ExtractionResults(BaseModel):
+    """
+    Results from extracting knowledge from an episode.
+
+    This is returned by extract_to_facts and contains raw extractions
+    before graph modeling.
+
+    Args:
+        source_id: ID of the source episode in the fact store.
+        extracted_nodes: Raw entities before resolution/deduplication.
+        extracted_edges: Raw relationships before resolution.
+        chunk_count: Number of chunks the episode was split into.
+        extraction_time: How long the extraction took.
+        metadata: Additional extraction information.
+
+    Example:
+        >>> results = client.extract_to_facts(episode)
+        >>> print(f"Extracted {len(results.extracted_nodes)} entities")
+        >>> print(f"Source ID for promotion: {results.source_id}")
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_id: str
+    extracted_nodes: list[ExtractedNode] = Field(default_factory=list)
+    extracted_edges: list[ExtractedEdge] = Field(default_factory=list)
+    chunk_count: int = 0
+    extraction_time: str | None = None
+    metadata: ExtractionMetadata | None = None
+
+
+class PromoteToGraphRequest(BaseModel):
+    """
+    Request to promote extracted knowledge to the graph.
+
+    This is the second stage of two-stage ingestion.
+
+    Args:
+        source_id: ID of the source to promote (from extraction).
+        entity_types: Custom entity type definitions.
+        edge_types: Custom edge type definitions.
+        edge_type_map: Mapping of entity pairs to edge types.
+        previous_episode_uuids: UUIDs of previous episodes for context.
+        skip_reflexion: Skip reflexion step for faster processing.
+        skip_resolution: Skip entity resolution.
+        skip_attributes: Skip attribute extraction.
+        skip_edge_resolution: Skip edge resolution.
+        use_yaml: Whether to use YAML for LLM interchange.
+
+    Example:
+        >>> request = PromoteToGraphRequest(
+        ...     source_id="episode-123",
+        ...     skip_resolution=True  # Faster but less accurate
+        ... )
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_id: str
+    entity_types: dict[str, Any] | None = None
+    edge_types: dict[str, Any] | None = None
+    edge_type_map: dict[str, dict[str, Any]] | None = None
+    previous_episode_uuids: list[str] | None = None
+    skip_reflexion: bool = False
+    skip_resolution: bool = False
+    skip_attributes: bool = False
+    skip_edge_resolution: bool = False
+    use_yaml: bool = False
+
+
+class PromoteToGraphResults(BaseModel):
+    """
+    Results from promoting extracted knowledge to the graph.
+
+    This is returned by promote_to_graph and contains the final
+    resolved entities and relationships.
+
+    Args:
+        episode: The created episode node.
+        episodic_edges: Edges from the episode to entities.
+        nodes: Resolved entity nodes.
+        edges: Resolved relationship edges.
+        communities: Community nodes created/updated.
+        community_edges: Community relationship edges.
+
+    Example:
+        >>> results = client.promote_to_graph(source_id)
+        >>> print(f"Created {len(results.nodes)} entities")
+        >>> print(f"Created {len(results.edges)} relationships")
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    episode: Node | None = None
+    episodic_edges: list[Edge] = Field(default_factory=list)
+    nodes: list[Node] = Field(default_factory=list)
+    edges: list[Edge] = Field(default_factory=list)
+    communities: list[Node] = Field(default_factory=list)
+    community_edges: list[Edge] = Field(default_factory=list)
