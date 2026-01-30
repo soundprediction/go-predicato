@@ -44,6 +44,13 @@ dev = [
     "ruff>=0.1",
     "black>=24.0",
 ]
+server = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "gliner2>=0.1.0",
+    "urllib3>=2.0.0",
+    "requests>=2.0.0",
+]
 all = [
     "predicato[crawler]",
 ]

@@ -483,6 +483,11 @@ POST /api/v1/search/facts     # Search fact store (cosine similarity)
 GET  /api/v1/episodes/:id     # Get episodes
 ```
 
+> [!NOTE]
+> **GLiNER2 Support**: Use the `--gliner2` flag to enable the GLiNER2 entity extraction provider.
+> Predicato will automatically start the local GLiNER2 Python service (port 11435) if it is not already running.
+> This requires `uv` or `python3` to be available in your path. Configured models (default `fastino/gliner2-multi-v1`) will be downloaded on first use.
+
 ## Python Client
 
 Predicato includes an official Python client for interacting with the HTTP server.

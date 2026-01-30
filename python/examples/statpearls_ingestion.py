@@ -38,9 +38,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
-import tarfile
 import time
 import urllib.parse
 import urllib.request
@@ -50,6 +48,12 @@ from xml.etree import ElementTree
 
 from predicato import PredicatoClient
 from predicato.exceptions import PredicatoError
+from predicato.statpearls import (
+    _extract_text_from_element,
+    _get_element_text,
+    iter_articles_from_directory,
+    iter_articles_from_tarball,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -62,6 +66,11 @@ NCBI_FTP_URL = "https://ftp.ncbi.nlm.nih.gov/pub/litarch/3d/12/statpearls_NBK430
 
 # StatPearls book ID in NCBI Books database
 STATPEARLS_BOOK_ID = "NBK430685"
+
+
+# =============================================================================
+# Entrez API functions (different XML schema from local NXML files)
+# =============================================================================
 
 
 def search_statpearls_chapters(
@@ -78,7 +87,6 @@ def search_statpearls_chapters(
     Returns:
         List of chapter IDs (NBK IDs)
     """
-    # Build search URL - search for StatPearls chapters in books database
     params = {
         "db": "books",
         "term": "statpearls[book]",
@@ -99,7 +107,6 @@ def search_statpearls_chapters(
 
         root = ElementTree.fromstring(xml_content)
 
-        # Extract IDs from response
         ids = []
         id_list = root.find(".//IdList")
         if id_list is not None:
@@ -107,7 +114,6 @@ def search_statpearls_chapters(
                 if id_elem.text:
                     ids.append(id_elem.text)
 
-        # Get total count
         count_elem = root.find(".//Count")
         total_count = int(count_elem.text) if count_elem is not None and count_elem.text else 0
 
@@ -162,6 +168,9 @@ def parse_entrez_chapter_xml(xml_content: str, chapter_id: str) -> dict[str, str
     """
     Parse NCBI Books XML response and extract article content.
 
+    Note: The Entrez API returns a different XML schema than local NXML files,
+    so this function uses its own parsing logic rather than the shared module.
+
     Args:
         xml_content: Raw XML string from EFetch
         chapter_id: Chapter ID for fallback title
@@ -172,7 +181,6 @@ def parse_entrez_chapter_xml(xml_content: str, chapter_id: str) -> dict[str, str
     try:
         root = ElementTree.fromstring(xml_content)
 
-        # Try to find title
         title = None
         for title_path in [
             ".//book-part-meta/title-group/title",
@@ -190,15 +198,12 @@ def parse_entrez_chapter_xml(xml_content: str, chapter_id: str) -> dict[str, str
         if not title:
             title = f"StatPearls Chapter {chapter_id}"
 
-        # Extract body content
         content_parts: list[str] = []
 
-        # Look for body element
         body = root.find(".//body")
         if body is not None:
             content_parts.extend(_extract_text_from_element(body))
 
-        # Also check for abstract
         abstract = root.find(".//abstract")
         if abstract is not None:
             abstract_text = _extract_text_from_element(abstract)
@@ -240,7 +245,6 @@ def iter_articles_from_entrez(
     Yields:
         Article dictionaries with id, title, and content
     """
-    # Search for chapter IDs
     search_limit = max_articles if max_articles else 1000
     chapter_ids = search_statpearls_chapters(email, search_limit)
 
@@ -265,206 +269,13 @@ def iter_articles_from_entrez(
         else:
             print("Skipped (no content)")
 
-        # Rate limiting - NCBI recommends max 3 requests/second
         if delay > 0:
             time.sleep(delay)
 
 
-def iter_articles_from_tarball(
-    tarball_path: str,
-    max_articles: int | None = None,
-) -> Iterator[dict[str, str]]:
-    """
-    Iterate through articles in a StatPearls tarball without full extraction.
-
-    Args:
-        tarball_path: Path to the .tar.gz file
-        max_articles: Maximum number of articles to yield
-
-    Yields:
-        Article dictionaries with id, title, and content
-    """
-    count = 0
-
-    with tarfile.open(tarball_path, "r:gz") as tar:
-        for member in tar:
-            if max_articles and count >= max_articles:
-                break
-
-            # StatPearls tarball contains .nxml files (NCBI XML format)
-            if not (member.name.endswith(".xml") or member.name.endswith(".nxml")):
-                continue
-
-            try:
-                f = tar.extractfile(member)
-                if f is None:
-                    continue
-
-                xml_content = f.read().decode("utf-8")
-                article = parse_tarball_xml(xml_content, member.name)
-                if article and article.get("content"):
-                    count += 1
-                    yield article
-
-            except Exception as e:
-                print(f"Warning: Could not parse {member.name}: {e}")
-                continue
-
-
-def iter_articles_from_directory(
-    data_dir: str,
-    max_articles: int | None = None,
-) -> Iterator[dict[str, str]]:
-    """
-    Iterate through articles in an extracted StatPearls directory.
-
-    Args:
-        data_dir: Path to extracted StatPearls directory
-        max_articles: Maximum number of articles to yield
-
-    Yields:
-        Article dictionaries with id, title, and content
-    """
-    data_path = Path(data_dir)
-    # Look for both .xml and .nxml files (NCBI uses .nxml format)
-    xml_files = list(data_path.glob("**/*.xml")) + list(data_path.glob("**/*.nxml"))
-
-    if not xml_files:
-        print(f"No XML/NXML files found in {data_dir}")
-        sys.exit(1)
-
-    print(f"Found {len(xml_files)} XML files")
-    count = 0
-
-    for xml_path in sorted(xml_files):
-        if max_articles and count >= max_articles:
-            break
-
-        try:
-            with open(xml_path, encoding="utf-8") as f:
-                xml_content = f.read()
-
-            article = parse_tarball_xml(xml_content, str(xml_path))
-            if article and article.get("content"):
-                count += 1
-                yield article
-
-        except Exception as e:
-            print(f"Warning: Could not parse {xml_path}: {e}")
-            continue
-
-
-def parse_tarball_xml(xml_content: str, source_path: str) -> dict[str, str] | None:
-    """
-    Parse a StatPearls XML file from tarball and extract article content.
-
-    Args:
-        xml_content: Raw XML string
-        source_path: Path for error messages and ID generation
-
-    Returns:
-        Article dictionary or None if parsing fails
-    """
-    try:
-        # Remove XML declaration and doctype for simpler parsing
-        xml_content = re.sub(r'<\?xml[^>]+\?>', '', xml_content)
-        xml_content = re.sub(r'<!DOCTYPE[^>]+>', '', xml_content)
-
-        root = ElementTree.fromstring(xml_content)
-
-        # Extract article ID
-        article_id = Path(source_path).stem
-
-        # Try to find title
-        title = None
-        for title_path in [
-            ".//title-group/title",
-            ".//book-title",
-            ".//article-title",
-            ".//title",
-        ]:
-            title_elem = root.find(title_path)
-            if title_elem is not None and title_elem.text:
-                title = _get_element_text(title_elem)
-                break
-
-        if not title:
-            title = article_id
-
-        # Extract body content
-        content_parts: list[str] = []
-
-        body = root.find(".//body")
-        if body is not None:
-            content_parts.extend(_extract_text_from_element(body))
-
-        abstract = root.find(".//abstract")
-        if abstract is not None:
-            abstract_text = _extract_text_from_element(abstract)
-            if abstract_text:
-                content_parts = ["Abstract:", *abstract_text, "", *content_parts]
-
-        content = "\n\n".join(content_parts)
-
-        if not content:
-            return None
-
-        return {
-            "id": article_id,
-            "title": title,
-            "content": content,
-        }
-
-    except ElementTree.ParseError as e:
-        print(f"XML parse error for {source_path}: {e}")
-        return None
-
-
-def _get_element_text(elem: ElementTree.Element) -> str:
-    """Get all text content from an element, including nested elements."""
-    text_parts: list[str] = []
-    if elem.text:
-        text_parts.append(elem.text.strip())
-    for child in elem:
-        text_parts.append(_get_element_text(child))
-        if child.tail:
-            text_parts.append(child.tail.strip())
-    return " ".join(filter(None, text_parts))
-
-
-def _extract_text_from_element(elem: ElementTree.Element) -> list[str]:
-    """Extract text content from body-like elements, preserving structure."""
-    content: list[str] = []
-
-    for child in elem:
-        tag = child.tag.lower() if isinstance(child.tag, str) else ""
-
-        if tag in ("p", "para"):
-            text = _get_element_text(child)
-            if text:
-                content.append(text)
-
-        elif tag in ("sec", "section"):
-            sec_title = child.find("title")
-            if sec_title is not None:
-                title_text = _get_element_text(sec_title)
-                if title_text:
-                    content.append(f"\n## {title_text}\n")
-            content.extend(_extract_text_from_element(child))
-
-        elif tag == "title":
-            continue
-
-        elif tag in ("list", "def-list"):
-            for item in child.findall(".//list-item") or child.findall(".//def-item"):
-                item_text = _get_element_text(item)
-                if item_text:
-                    content.append(f"- {item_text}")
-
-        else:
-            content.extend(_extract_text_from_element(child))
-
-    return content
+# =============================================================================
+# Loading and ingestion orchestration
+# =============================================================================
 
 
 def load_articles(

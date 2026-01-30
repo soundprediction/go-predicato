@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -14,6 +18,7 @@ import (
 	"github.com/soundprediction/predicato/pkg/driver"
 	"github.com/soundprediction/predicato/pkg/embedder"
 	"github.com/soundprediction/predicato/pkg/factstore"
+	"github.com/soundprediction/predicato/pkg/gliner2"
 	predicatoLogger "github.com/soundprediction/predicato/pkg/logger"
 	"github.com/soundprediction/predicato/pkg/nlp"
 	"github.com/soundprediction/predicato/pkg/rustbert"
@@ -41,6 +46,7 @@ var (
 	serverHost string
 	serverPort int
 	serverMode string
+	useGLiNER2 bool
 )
 
 func init() {
@@ -48,15 +54,23 @@ func init() {
 
 	// Server-specific flags
 	serverCmd.Flags().StringVar(&serverHost, "host", "localhost", "Server host")
-	serverCmd.Flags().IntVar(&serverPort, "port", 8080, "Server port")
+	serverCmd.Flags().IntVar(&serverPort, "port", 19898, "Server port")
 	serverCmd.Flags().StringVar(&serverMode, "mode", "debug", "Server mode (debug, release, test)")
 
 	// Database flags
+	defaultDBPath := "./ladybug_db"
+	if home, err := os.UserHomeDir(); err == nil {
+		defaultDBPath = filepath.Join(home, ".predicato", "ladybug_db")
+	}
 	serverCmd.Flags().String("db-driver", "ladybug", "Database driver (ladybug, neo4j, falkordb)")
-	serverCmd.Flags().String("db-uri", "./ladybug_db", "Database URI/path")
+	serverCmd.Flags().String("db-uri", defaultDBPath, "Database URI/path")
 	serverCmd.Flags().String("db-username", "", "Database username (not used for ladybug)")
 	serverCmd.Flags().String("db-password", "", "Database password (not used for ladybug)")
 	serverCmd.Flags().String("db-database", "", "Database name (not used for ladybug)")
+
+	// GLiNER2 flags
+	serverCmd.Flags().BoolVar(&useGLiNER2, "gliner2", false, "Use GLiNER2 as the NLP provider (requires local GLiNER2 service)")
+	serverCmd.Flags().String("gliner2-endpoint", "http://localhost:11435", "GLiNER2 service endpoint")
 
 	// NLP flags
 	serverCmd.Flags().String("nlp-provider", "openai", "NLP provider")
@@ -91,9 +105,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	// Report the listen address early, before heavy initialization
+	fmt.Printf("Predicato server will listen on http://%s:%d\n", cfg.Server.Host, cfg.Server.Port)
+
 	// Initialize Predicato
 	fmt.Println("Initializing Predicato...")
-	predicatoInstance, err := initializePredicato(cfg)
+	predicatoInstance, err := initializePredicato(cmd, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Predicato: %w", err)
 	}
@@ -157,6 +174,14 @@ func overrideConfigWithFlags(cmd *cobra.Command, cfg *config.Config) {
 	}
 	if cmd.Flags().Changed("db-uri") {
 		cfg.Database.URI, _ = cmd.Flags().GetString("db-uri")
+	} else if cfg.Database.URI == "./ladybug_db" {
+        // If config still has the hardcoded relative default (e.g. from config.Load defaults),
+        // fallback to the flag's default which is smarter (uses home dir).
+        // We only do this if the value equals the old default, preserving explicit config file values.
+		val, _ := cmd.Flags().GetString("db-uri")
+        if val != "" {
+            cfg.Database.URI = val
+        }
 	}
 	if cmd.Flags().Changed("db-username") {
 		cfg.Database.Username, _ = cmd.Flags().GetString("db-username")
@@ -231,7 +256,7 @@ func validateServerConfig(cfg *config.Config) error {
 	return nil
 }
 
-func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
+func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Predicato, error) {
 	// Initialize database driver
 	var graphDriver driver.GraphDriver
 	var err error
@@ -240,6 +265,7 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 	}))
 	switch cfg.Database.Driver {
 	case "ladybug":
+		fmt.Printf("LadybugDB path: %s\n", cfg.Database.URI)
 		graphDriver, err = driver.NewLadybugDriver(cfg.Database.URI, 16)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ladybug driver: %w", err)
@@ -254,8 +280,37 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 
 	// Initialize NLP client
 	var nlProcessor nlp.Client
+
+	if useGLiNER2 {
+		endpoint, _ := cmd.Flags().GetString("gliner2-endpoint")
+		
+		// Check if server is running, if not start it
+		if err := ensureGLiNER2Server(endpoint); err != nil {
+			return nil, fmt.Errorf("failed to ensure GLiNER2 server: %w", err)
+		}
+
+		glinerClient, err := gliner2.NewClient(gliner2.Config{
+			Provider: gliner2.ProviderLocal,
+			Local: &gliner2.LocalConfig{
+				Endpoint: endpoint,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create GLiNER2 client: %w", err)
+		}
+		
+		nlProcessor = glinerClient
+		fmt.Printf("Using GLiNER2 NLP provider at: %s (Verified Healthy)\n", endpoint)
+
+		// Update config to reflect GLiNER2 usage so logging and other components are aware
+		defaultModel := cfg.NLP.Models["default"]
+		defaultModel.Provider = "gliner2"
+		defaultModel.Model = "gliner2-multi-v1" // or prompt for model?
+		cfg.NLP.Models["default"] = defaultModel
+	}
+
 	defaultModel := cfg.NLP.Models["default"]
-	if defaultModel.APIKey != "" {
+	if nlProcessor == nil && defaultModel.APIKey != "" {
 		switch defaultModel.Provider {
 		case "openai":
 			nlpConfig := nlp.Config{
@@ -314,7 +369,7 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 		default:
 			return nil, fmt.Errorf("unsupported NLP provider: %s", defaultModel.Provider)
 		}
-	} else {
+	} else if nlProcessor == nil {
 		// Default to internal RustBert NLP client (no external API required)
 		fmt.Println("Initializing internal RustBert NLP service...")
 		rustbertClient := rustbert.NewClient(rustbert.Config{})
@@ -356,76 +411,54 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 			fmt.Println("Continuing without embedder - semantic search will be unavailable")
 		} else {
 			embedderClient = internalEmbedder
+			cfg.Embedding.Provider = "embedeverything"
+			cfg.Embedding.Model = "qwen/qwen3-embedding-0.6b"
 			fmt.Println("EmbedEverything embedder initialized (internal, no API key required)")
 		}
 	}
 
-	// Initialize FactStore - always configure one
-	// Priority: 1. PostgreSQL connection string, 2. Embedded Dolt
-	var factsDBConfig *factstore.FactStoreConfig
+	// Initialize FactStore
+	// Priority: 1. PostgreSQL connection string (VectorChord), 2. Embedded Dolt
+	var predicatoConfig *predicato.Config
 
 	if cfg.FactStore.ConnectionString != "" {
-		// External PostgreSQL/DoltGres configured
-		factsDBConfig = &factstore.FactStoreConfig{
-			Type:                factstore.FactStoreType(cfg.FactStore.Type),
-			ConnectionString:    cfg.FactStore.ConnectionString,
-			EmbeddingDimensions: cfg.FactStore.EmbeddingDimensions,
+		// External PostgreSQL with VectorChord
+		embDim := cfg.FactStore.EmbeddingDimensions
+		if embDim <= 0 {
+			embDim = 1024 // Default for qwen3-embedding
 		}
-		fmt.Printf("Using external factstore: %s\n", cfg.FactStore.Type)
+		factsDBConfig := &factstore.FactStoreConfig{
+			Type:                factstore.FactStoreTypePostgres,
+			ConnectionString:    cfg.FactStore.ConnectionString,
+			EmbeddingDimensions: embDim,
+		}
+		fmt.Printf("Using PostgreSQL factstore (VectorChord): %s\n", cfg.FactStore.ConnectionString)
+
+		predicatoConfig = &predicato.Config{
+			GroupID:         "default",
+			TimeZone:        time.UTC,
+			FactStoreConfig: factsDBConfig,
+		}
 	} else {
-		// Use embedded Dolt factstore via legacy FactsDBURL path
+		// Default to embedded Dolt
 		dataPath := cfg.FactStore.DataPath
 		if dataPath == "" {
 			dataPath, _ = factstore.DefaultDataPath()
 		}
-
-		// Ensure data directory exists
 		if err := os.MkdirAll(dataPath, 0755); err != nil {
 			return nil, fmt.Errorf("failed to create factstore data directory: %w", err)
 		}
-
-		// Build connection string for embedded Dolt (uses dolt:// protocol, not postgres://)
 		connString := fmt.Sprintf(
 			"file://%s?commitname=predicato&commitemail=predicato@localhost&database=facts",
 			dataPath,
 		)
-
 		fmt.Printf("Using embedded Dolt factstore at: %s\n", dataPath)
 
-		// Use the legacy FactsDBURL path which handles the Dolt driver directly
-		predicatoConfig := &predicato.Config{
+		predicatoConfig = &predicato.Config{
 			GroupID:    "default",
 			TimeZone:   time.UTC,
 			FactsDBURL: connString,
 		}
-
-		// Create and return Predicato client with embedded Dolt
-		client, err := predicato.NewClient(graphDriver, nlProcessor, embedderClient, predicatoConfig, logger)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Predicato client: %w", err)
-		}
-
-		fmt.Printf("Predicato initialized successfully with driver: %s\n", cfg.Database.Driver)
-		if nlProcessor != nil {
-			fmt.Printf("NLP provider: %s, model: %s\n", defaultModel.Provider, defaultModel.Model)
-		}
-		if embedderClient != nil {
-			fmt.Printf("Embedding provider: %s, model: %s\n", cfg.Embedding.Provider, cfg.Embedding.Model)
-		}
-		fmt.Println("FactStore: embedded Dolt (ready)")
-
-		return client, nil
-	}
-
-	if factsDBConfig != nil && factsDBConfig.EmbeddingDimensions <= 0 {
-		factsDBConfig.EmbeddingDimensions = 1024 // Default for qwen3-embedding
-	}
-
-	// Create Predicato client configuration
-	predicatoConfig := &predicato.Config{
-		GroupID:         "default", // Default group ID - could be made configurable
-		TimeZone:        time.UTC,
-		FactStoreConfig: factsDBConfig,
 	}
 
 	// Create and return Predicato client
@@ -441,7 +474,125 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 	if embedderClient != nil {
 		fmt.Printf("Embedding provider: %s, model: %s\n", cfg.Embedding.Provider, cfg.Embedding.Model)
 	}
-	fmt.Println("FactStore: ready")
 
 	return client, nil
+}
+
+func ensureGLiNER2Server(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return err
+	}
+
+	// Check if already running
+	if isServerHealthy(endpoint) {
+		return nil
+	}
+
+	// Only auto-start if localhost
+	hostname := u.Hostname()
+	if hostname != "localhost" && hostname != "127.0.0.1" && hostname != "0.0.0.0" {
+		return fmt.Errorf("GLiNER2 server at %s is not available and cannot be auto-started (remote host)", endpoint)
+	}
+
+	fmt.Println("GLiNER2 server not ready, attempting to start local Python server...")
+
+	// Check if uv is installed
+	uvExec := "uv"
+	if _, err := exec.LookPath("uv"); err != nil {
+		fmt.Println("Warning: uv not found. Falling back to system python3 (auto-start may fail if dependencies are missing).")
+		uvExec = ""
+	}
+
+	var cmd *exec.Cmd
+	cwd, _ := os.Getwd()
+	// Assuming workspace structure: root has predicato/python
+	pythonDir := filepath.Join(cwd, "predicato", "python")
+	
+	// Double check python dir validity
+	if _, err := os.Stat(filepath.Join(pythonDir, "pyproject.toml")); os.IsNotExist(err) {
+		// Try submodule structure (if run from workspace root)
+		pythonDir = filepath.Join(cwd, "python") // try alternate structure
+		if _, err := os.Stat(filepath.Join(pythonDir, "pyproject.toml")); os.IsNotExist(err) {
+             // Fallback to original guess if neither work (error will happen later)
+             pythonDir = filepath.Join(cwd, "predicato", "python")
+        }
+	}
+
+	if uvExec != "" {
+		// Use uv run
+        // We need to run inside the python directory where pyproject.toml and .venv are
+		fmt.Printf("Starting GLiNER2 server using uv at %s\n", pythonDir)
+		cmd = exec.Command(uvExec, "run", "python", "-m", "predicato.server")
+		cmd.Dir = pythonDir
+	} else {
+        // Fallback to direct python execution (previous logic simplified)
+        pythonExec := "python3"
+        if _, err := exec.LookPath("python"); err == nil {
+            pythonExec = "python"
+        }
+        
+        // We still need to find paths for PYTHONPATH if not using uv
+        glinerLibPath := filepath.Join(cwd, "GLiNER2")
+        if _, err := os.Stat(glinerLibPath); os.IsNotExist(err) {
+            glinerLibPath = filepath.Join(filepath.Dir(cwd), "GLiNER2")
+        }
+        
+        cmd = exec.Command(pythonExec, "-m", "predicato.server")
+        
+        // Set PYTHONPATH
+        env := os.Environ()
+        newPythonPath := fmt.Sprintf("PYTHONPATH=%s:%s", pythonDir, glinerLibPath)
+        if existingPP := os.Getenv("PYTHONPATH"); existingPP != "" {
+            newPythonPath = fmt.Sprintf("%s:%s", newPythonPath, existingPP)
+        }
+        cmd.Env = append(env, newPythonPath)
+	}
+	
+	// Pass port configuration
+	port := u.Port()
+	if port == "" {
+		port = "11435"
+	}
+	// Add environment variables (cmd.Env is nil for uv branch normally, exec.Command uses os.Environ() by default for nil)
+    if cmd.Env == nil {
+        cmd.Env = os.Environ()
+    }
+	cmd.Env = append(cmd.Env, fmt.Sprintf("PORT=%s", port))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("HOST=%s", hostname))
+	
+	// Redirect output to stdout/stderr
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start server process: %w", err)
+	}
+
+	fmt.Printf("Started GLiNER2 server (PID: %d). Waiting for health check...\n", cmd.Process.Pid)
+
+	// Wait for up to 60 seconds (model loading might take time)
+	for i := 0; i < 60; i++ {
+		if isServerHealthy(endpoint) {
+			fmt.Println("GLiNER2 server is ready!")
+			return nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+	
+	// Cleanup if failed
+	cmd.Process.Kill()
+	return fmt.Errorf("timed out waiting for GLiNER2 server to start")
+}
+
+func isServerHealthy(endpoint string) bool {
+	// Simple HTTP health check
+	healthURL := fmt.Sprintf("%s/health", endpoint)
+	client := http.Client{Timeout: 1 * time.Second}
+	resp, err := client.Get(healthURL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }

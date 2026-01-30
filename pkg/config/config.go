@@ -121,12 +121,11 @@ type EmbeddingConfig struct {
 
 // FactStoreConfig holds factstore configuration
 type FactStoreConfig struct {
-	// Type is the backend type: "postgres" or "dolt" (default: "dolt" for embedded)
+	// Type is the backend type: "postgres" for PostgreSQL/VectorChord, or empty for embedded Dolt
 	Type string `mapstructure:"type" json:"type"`
-	// ConnectionString for PostgreSQL/DoltGres (e.g., "postgres://user:pass@host:5432/db")
-	// For embedded Dolt, this is the path to the database directory
+	// ConnectionString for PostgreSQL (e.g., "postgres://user:pass@host:5432/db")
 	ConnectionString string `mapstructure:"connection_string" json:"connection_string"`
-	// DataPath is the path to the embedded Dolt database directory (when Type is "dolt")
+	// DataPath is the directory for embedded Dolt database files (default: ~/.predicato/factstore)
 	DataPath string `mapstructure:"data_path" json:"data_path"`
 	// EmbeddingDimensions is the vector dimension (e.g., 1024 for qwen3-embedding)
 	EmbeddingDimensions int `mapstructure:"embedding_dimensions" json:"embedding_dimensions"`
@@ -156,7 +155,7 @@ func setDefaults() {
 
 	// Server defaults
 	viper.SetDefault("server.host", "localhost")
-	viper.SetDefault("server.port", 8080)
+	viper.SetDefault("server.port", 19898)
 	viper.SetDefault("server.mode", "debug")
 
 	// Database defaults
