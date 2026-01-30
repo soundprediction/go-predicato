@@ -1,5 +1,3 @@
-//go:generate sh -c "cd $(go env GOWORK | xargs dirname)/go-rust-bert && git lfs pull"
-
 package rustbert
 
 import (
