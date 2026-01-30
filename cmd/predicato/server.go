@@ -58,8 +58,12 @@ func init() {
 	serverCmd.Flags().StringVar(&serverMode, "mode", "debug", "Server mode (debug, release, test)")
 
 	// Database flags
+	defaultDBPath := "./ladybug_db"
+	if home, err := os.UserHomeDir(); err == nil {
+		defaultDBPath = filepath.Join(home, ".predicato", "ladybug_db")
+	}
 	serverCmd.Flags().String("db-driver", "ladybug", "Database driver (ladybug, neo4j, falkordb)")
-	serverCmd.Flags().String("db-uri", "./ladybug_db", "Database URI/path")
+	serverCmd.Flags().String("db-uri", defaultDBPath, "Database URI/path")
 	serverCmd.Flags().String("db-username", "", "Database username (not used for ladybug)")
 	serverCmd.Flags().String("db-password", "", "Database password (not used for ladybug)")
 	serverCmd.Flags().String("db-database", "", "Database name (not used for ladybug)")
@@ -170,6 +174,14 @@ func overrideConfigWithFlags(cmd *cobra.Command, cfg *config.Config) {
 	}
 	if cmd.Flags().Changed("db-uri") {
 		cfg.Database.URI, _ = cmd.Flags().GetString("db-uri")
+	} else if cfg.Database.URI == "./ladybug_db" {
+        // If config still has the hardcoded relative default (e.g. from config.Load defaults),
+        // fallback to the flag's default which is smarter (uses home dir).
+        // We only do this if the value equals the old default, preserving explicit config file values.
+		val, _ := cmd.Flags().GetString("db-uri")
+        if val != "" {
+            cfg.Database.URI = val
+        }
 	}
 	if cmd.Flags().Changed("db-username") {
 		cfg.Database.Username, _ = cmd.Flags().GetString("db-username")
@@ -293,7 +305,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 		// Update config to reflect GLiNER2 usage so logging and other components are aware
 		defaultModel := cfg.NLP.Models["default"]
 		defaultModel.Provider = "gliner2"
-		defaultModel.Model = "gliner2-base" // or prompt for model?
+		defaultModel.Model = "gliner2-multi-v1" // or prompt for model?
 		cfg.NLP.Models["default"] = defaultModel
 	}
 
