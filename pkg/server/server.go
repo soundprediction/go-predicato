@@ -114,7 +114,7 @@ func (s *Server) setupRoutes() {
 
 // Start starts the server
 func (s *Server) Start() error {
-	log.Printf("Starting server on %s\n", s.server.Addr)
+	log.Printf("Predicato server listening on http://%s\n", s.server.Addr)
 	return s.server.ListenAndServe()
 }
 

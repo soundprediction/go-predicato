@@ -48,7 +48,7 @@ func init() {
 
 	// Server-specific flags
 	serverCmd.Flags().StringVar(&serverHost, "host", "localhost", "Server host")
-	serverCmd.Flags().IntVar(&serverPort, "port", 8080, "Server port")
+	serverCmd.Flags().IntVar(&serverPort, "port", 19898, "Server port")
 	serverCmd.Flags().StringVar(&serverMode, "mode", "debug", "Server mode (debug, release, test)")
 
 	// Database flags
@@ -90,6 +90,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if err := validateServerConfig(cfg); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
+
+	// Report the listen address early, before heavy initialization
+	fmt.Printf("Predicato server will listen on http://%s:%d\n", cfg.Server.Host, cfg.Server.Port)
 
 	// Initialize Predicato
 	fmt.Println("Initializing Predicato...")
@@ -240,6 +243,7 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 	}))
 	switch cfg.Database.Driver {
 	case "ladybug":
+		fmt.Printf("LadybugDB path: %s\n", cfg.Database.URI)
 		graphDriver, err = driver.NewLadybugDriver(cfg.Database.URI, 16)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ladybug driver: %w", err)
@@ -356,76 +360,54 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 			fmt.Println("Continuing without embedder - semantic search will be unavailable")
 		} else {
 			embedderClient = internalEmbedder
+			cfg.Embedding.Provider = "embedeverything"
+			cfg.Embedding.Model = "qwen/qwen3-embedding-0.6b"
 			fmt.Println("EmbedEverything embedder initialized (internal, no API key required)")
 		}
 	}
 
-	// Initialize FactStore - always configure one
-	// Priority: 1. PostgreSQL connection string, 2. Embedded Dolt
-	var factsDBConfig *factstore.FactStoreConfig
+	// Initialize FactStore
+	// Priority: 1. PostgreSQL connection string (VectorChord), 2. Embedded Dolt
+	var predicatoConfig *predicato.Config
 
 	if cfg.FactStore.ConnectionString != "" {
-		// External PostgreSQL/DoltGres configured
-		factsDBConfig = &factstore.FactStoreConfig{
-			Type:                factstore.FactStoreType(cfg.FactStore.Type),
-			ConnectionString:    cfg.FactStore.ConnectionString,
-			EmbeddingDimensions: cfg.FactStore.EmbeddingDimensions,
+		// External PostgreSQL with VectorChord
+		embDim := cfg.FactStore.EmbeddingDimensions
+		if embDim <= 0 {
+			embDim = 1024 // Default for qwen3-embedding
 		}
-		fmt.Printf("Using external factstore: %s\n", cfg.FactStore.Type)
+		factsDBConfig := &factstore.FactStoreConfig{
+			Type:                factstore.FactStoreTypePostgres,
+			ConnectionString:    cfg.FactStore.ConnectionString,
+			EmbeddingDimensions: embDim,
+		}
+		fmt.Printf("Using PostgreSQL factstore (VectorChord): %s\n", cfg.FactStore.ConnectionString)
+
+		predicatoConfig = &predicato.Config{
+			GroupID:         "default",
+			TimeZone:        time.UTC,
+			FactStoreConfig: factsDBConfig,
+		}
 	} else {
-		// Use embedded Dolt factstore via legacy FactsDBURL path
+		// Default to embedded Dolt
 		dataPath := cfg.FactStore.DataPath
 		if dataPath == "" {
 			dataPath, _ = factstore.DefaultDataPath()
 		}
-
-		// Ensure data directory exists
 		if err := os.MkdirAll(dataPath, 0755); err != nil {
 			return nil, fmt.Errorf("failed to create factstore data directory: %w", err)
 		}
-
-		// Build connection string for embedded Dolt (uses dolt:// protocol, not postgres://)
 		connString := fmt.Sprintf(
 			"file://%s?commitname=predicato&commitemail=predicato@localhost&database=facts",
 			dataPath,
 		)
-
 		fmt.Printf("Using embedded Dolt factstore at: %s\n", dataPath)
 
-		// Use the legacy FactsDBURL path which handles the Dolt driver directly
-		predicatoConfig := &predicato.Config{
+		predicatoConfig = &predicato.Config{
 			GroupID:    "default",
 			TimeZone:   time.UTC,
 			FactsDBURL: connString,
 		}
-
-		// Create and return Predicato client with embedded Dolt
-		client, err := predicato.NewClient(graphDriver, nlProcessor, embedderClient, predicatoConfig, logger)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Predicato client: %w", err)
-		}
-
-		fmt.Printf("Predicato initialized successfully with driver: %s\n", cfg.Database.Driver)
-		if nlProcessor != nil {
-			fmt.Printf("NLP provider: %s, model: %s\n", defaultModel.Provider, defaultModel.Model)
-		}
-		if embedderClient != nil {
-			fmt.Printf("Embedding provider: %s, model: %s\n", cfg.Embedding.Provider, cfg.Embedding.Model)
-		}
-		fmt.Println("FactStore: embedded Dolt (ready)")
-
-		return client, nil
-	}
-
-	if factsDBConfig != nil && factsDBConfig.EmbeddingDimensions <= 0 {
-		factsDBConfig.EmbeddingDimensions = 1024 // Default for qwen3-embedding
-	}
-
-	// Create Predicato client configuration
-	predicatoConfig := &predicato.Config{
-		GroupID:         "default", // Default group ID - could be made configurable
-		TimeZone:        time.UTC,
-		FactStoreConfig: factsDBConfig,
 	}
 
 	// Create and return Predicato client
@@ -441,7 +423,6 @@ func initializePredicato(cfg *config.Config) (predicato.Predicato, error) {
 	if embedderClient != nil {
 		fmt.Printf("Embedding provider: %s, model: %s\n", cfg.Embedding.Provider, cfg.Embedding.Model)
 	}
-	fmt.Println("FactStore: ready")
 
 	return client, nil
 }

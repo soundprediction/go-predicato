@@ -48,3 +48,6 @@ dmypy.json
 
 # Ruff
 .ruff_cache/
+
+# Test fixtures (large data files, not committed)
+tests/fixtures/statpearls/
