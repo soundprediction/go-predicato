@@ -144,17 +144,7 @@ func (c *TokenTrackingClient) Chat(ctx context.Context, messages []types.Message
 		return nil, err
 	}
 
-	if resp.TokensUsed != nil {
-		// Use model from response if available
-		model := resp.Model
-		if model == "" {
-			model = "unknown"
-		}
-
-		if err := c.tracker.AddUsage(ctx, resp.TokensUsed, model); err != nil {
-			fmt.Printf("Warning: Failed to log token usage: %v\n", err)
-		}
-	}
+	c.trackUsage(ctx, resp)
 
 	return resp, nil
 }
@@ -166,19 +156,45 @@ func (c *TokenTrackingClient) ChatWithStructuredOutput(ctx context.Context, mess
 		return nil, err
 	}
 
-	if resp.TokensUsed != nil {
-		// Use model from response if available
-		model := resp.Model
-		if model == "" {
-			model = "unknown"
-		}
-
-		if err := c.tracker.AddUsage(ctx, resp.TokensUsed, model); err != nil {
-			fmt.Printf("Warning: Failed to log token usage: %v\n", err)
-		}
-	}
+	c.trackUsage(ctx, resp)
 
 	return resp, nil
+}
+
+// ExtractEntities implements Client
+func (c *TokenTrackingClient) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]ExtractedEntity, error) {
+	return c.client.ExtractEntities(ctx, text, entityTypes)
+}
+
+// ExtractRelations implements Client
+func (c *TokenTrackingClient) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error) {
+	return c.client.ExtractRelations(ctx, text, relationTypes)
+}
+
+// Summarize implements Client
+func (c *TokenTrackingClient) Summarize(ctx context.Context, text string) (string, error) {
+	return c.client.Summarize(ctx, text)
+}
+
+// GenerateText implements Client
+func (c *TokenTrackingClient) GenerateText(ctx context.Context, prompt string) (string, error) {
+	return c.client.GenerateText(ctx, prompt)
+}
+
+func (c *TokenTrackingClient) trackUsage(ctx context.Context, resp *types.Response) {
+	if resp == nil || resp.TokensUsed == nil {
+		return
+	}
+
+	// Use model from response if available
+	model := resp.Model
+	if model == "" {
+		model = "unknown"
+	}
+
+	if err := c.tracker.AddUsage(ctx, resp.TokensUsed, model); err != nil {
+		fmt.Printf("Warning: Failed to log token usage: %v\n", err)
+	}
 }
 
 // Close implements Client

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/soundprediction/predicato/pkg/gliner2"
+	"github.com/soundprediction/predicato/pkg/nlp"
 )
 
 func main() {
@@ -115,7 +116,7 @@ func handleGLInER2Request(client *gliner2.Client) gin.HandlerFunc {
 		case "extract_relations":
 			// GLInER2 calls relation extraction for facts
 			schema := convertToStringArray(request.Schema)
-			facts, extractErr := client.ExtractFacts(ctx, request.Text, schema)
+			facts, extractErr := client.ExtractRelations(ctx, request.Text, schema)
 			if extractErr != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": extractErr.Error()})
 				return
@@ -159,18 +160,18 @@ func convertToStringArray(schema interface{}) []string {
 	}
 }
 
-func formatEntitiesForResponse(entities []gliner2.Entity) map[string][]map[string]interface{} {
+func formatEntitiesForResponse(entities []nlp.ExtractedEntity) map[string][]map[string]interface{} {
 	formatted := make(map[string][]map[string]interface{})
 
 	// Group by label
-	labelToEntities := make(map[string][]gliner2.Entity)
+	labelToEntities := make(map[string][]nlp.ExtractedEntity)
 	for _, entity := range entities {
 		labelToEntities[entity.Label] = append(labelToEntities[entity.Label], entity)
 	}
 
 	// Convert to GLInER2 API format
 	for label, entityList := range labelToEntities {
-		formattedList := make([]map[string]interface{}, len(entityList))
+		formattedList := make([]map[string]interface{}, 0, len(entityList))
 		for _, entity := range entityList {
 			entityMap := map[string]interface{}{
 				"text": entity.Text,
@@ -191,26 +192,22 @@ func formatEntitiesForResponse(entities []gliner2.Entity) map[string][]map[strin
 	return formatted
 }
 
-func formatFactsForResponse(facts []gliner2.Fact) map[string][]map[string]interface{} {
+func formatFactsForResponse(facts []nlp.ExtractedRelation) map[string][]map[string]interface{} {
 	formatted := make(map[string][]map[string]interface{})
-	relationMap := make(map[string][]gliner2.RelationTuple)
+	relationMap := make(map[string][]nlp.ExtractedRelation)
 
 	// Group facts by relation type
 	for _, fact := range facts {
-		tuple := gliner2.RelationTuple{
-			Head: fact.Source,
-			Tail: fact.Target,
-		}
-		relationMap[fact.Type] = append(relationMap[fact.Type], tuple)
+		relationMap[fact.Type] = append(relationMap[fact.Type], fact)
 	}
 
 	// Convert to GLInER2 format
 	for relationType, tuples := range relationMap {
-		formattedTuples := make([]map[string]interface{}, len(tuples))
+		formattedTuples := make([]map[string]interface{}, 0, len(tuples))
 		for _, tuple := range tuples {
 			tupleMap := map[string]interface{}{
-				"head": tuple.Head,
-				"tail": tuple.Tail,
+				"head": tuple.Source,
+				"tail": tuple.Target,
 			}
 			formattedTuples = append(formattedTuples, tupleMap)
 		}
