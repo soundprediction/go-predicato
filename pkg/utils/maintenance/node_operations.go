@@ -89,205 +89,75 @@ func (no *NodeOperations) getAttributeNLP() nlp.Client {
 	return no.nlProcessor
 }
 
-// ExtractNodes extracts entity nodes from episode content using LLM
+// ExtractNodes extracts entity nodes from episode content using NLP client
 func (no *NodeOperations) ExtractNodes(ctx context.Context, episode *types.Node, previousEpisodes []*types.Node, entityTypes map[string]interface{}, excludedEntityTypes []string) ([]*types.Node, error) {
 	start := time.Now()
 
-	// Prepare entity types context
-	entityTypesContext := []map[string]interface{}{
-		{
-			"entity_type_id":          0,
-			"entity_type_name":        "Entity",
-			"entity_type_description": "Default classification. Use this entity type if the entity is not one of the other listed types.",
-		},
+	// content to extract from
+	content := episode.Content
+	if episode.Summary != "" {
+		// Use summary if content is empty? Or append?
+		// Usually we extract from Content.
 	}
 
+	// Prepare entity types list
+	var typesList []string
 	if entityTypes != nil {
-		id := 1
 		for typeName := range entityTypes {
-			entityTypesContext = append(entityTypesContext, map[string]interface{}{
-				"entity_type_id":          id,
-				"entity_type_name":        typeName,
-				"entity_type_description": fmt.Sprintf("custom type: %s", typeName),
-			})
-			id++
+			typesList = append(typesList, typeName)
 		}
 	}
 
-	// Prepare previous episodes content
-	previousEpisodeContents := make([]string, len(previousEpisodes))
-	for i, ep := range previousEpisodes {
-		previousEpisodeContents[i] = ep.Summary
+	// Use the specialized extraction client
+	client := no.getExtractionNLP()
+	
+	extractedEntities, err := client.ExtractEntities(ctx, content, typesList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract entities: %w", err)
 	}
 
-	// Prepare context for LLM
-	// Note: entity_types is passed as a slice for TSV formatting in prompts
-	promptContext := map[string]interface{}{
-		"episode_content":    episode.Content,
-		"episode_timestamp":  episode.ValidFrom.Format(time.RFC3339),
-		"previous_episodes":  previousEpisodeContents,
-		"custom_prompt":      "",
-		"entity_types":       entityTypesContext,
-		"source_description": string(episode.EpisodeType),
-		"ensure_ascii":       true,
-		"logger":             no.logger,
-		"use_yaml":           no.UseYAML,
-	}
-
-	// Extract entities with reflexion
-	entitiesMissed := true
-	reflexionIterations := 0
-	maxReflexionIterations := utils.GetMaxReflexionIterations()
-
-	var extractedEntities prompts.ExtractedEntities
-
-	for entitiesMissed && reflexionIterations <= maxReflexionIterations {
-		// Choose the appropriate extraction method based on episode source
-		var messages []types.Message
-		var err error
-
-		switch strings.ToLower(string(episode.EpisodeType)) {
-		case "message":
-			messages, err = no.prompts.ExtractNodes().ExtractMessage().Call(promptContext)
-		case "text":
-			messages, err = no.prompts.ExtractNodes().ExtractText().Call(promptContext)
-		case "json":
-			messages, err = no.prompts.ExtractNodes().ExtractJSON().Call(promptContext)
-		default:
-			messages, err = no.prompts.ExtractNodes().ExtractText().Call(promptContext)
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to create extraction prompt: %w", err)
-		}
-
-		var extractedEntitySlice []prompts.ExtractedEntity
-		var badResp *types.BadLlmCsvResponse
-
-		if no.UseYAML {
-			// Create YAML parser function for ExtractedEntity
-			yamlParser := func(yamlContent string) ([]*prompts.ExtractedEntity, error) {
-				return utils.UnmarshalYAML[prompts.ExtractedEntity](yamlContent)
-			}
-
-			// Use GenerateYAMLResponse
-			extractedEntitySlice, badResp, err = nlp.GenerateYAMLResponse[prompts.ExtractedEntity](
-				ctx,
-				no.getExtractionNLP(),
-				no.logger,
-				messages,
-				yamlParser,
-				3, // maxRetries
-			)
-		} else {
-			// Create CSV parser function for ExtractedEntity
-			csvParser := func(csvContent string) ([]*prompts.ExtractedEntity, error) {
-				return utils.UnmarshalCSV[prompts.ExtractedEntity](csvContent, '\t')
-			}
-
-			// Use GenerateCSVResponse for robust CSV parsing with retries
-			extractedEntitySlice, badResp, err = nlp.GenerateCSVResponse[prompts.ExtractedEntity](
-				ctx,
-				no.getExtractionNLP(),
-				no.logger,
-				messages,
-				csvParser,
-				3, // maxRetries
-			)
-		}
-
-		if err != nil {
-			// Log detailed error information
-			if badResp != nil {
-				no.logger.Error("Failed to extract entities from CSV",
-					"error", badResp.Error,
-					"response_length", len(badResp.Response),
-					"num_messages", len(badResp.Messages))
-				if badResp.Response != "" {
-					fmt.Printf("\nFailed LLM response:\n%v\n\n", badResp.Response)
-				}
-			}
-			return nil, fmt.Errorf("failed to extract entities from csv: %w", err)
-		}
-
-		// Convert to ExtractedEntities struct
-		extractedEntities.ExtractedEntities = extractedEntitySlice
-
-		reflexionIterations++
-		if !no.SkipReflexion && reflexionIterations < maxReflexionIterations {
-			// Run reflexion to check for missed entities
-			missedEntities, err := no.extractNodesReflexion(ctx, episode, previousEpisodes, extractedEntities)
-			if err != nil {
-				log.Printf("Warning: reflexion failed: %v", err)
-				break
-			}
-
-			entitiesMissed = len(missedEntities) > 0
-			if entitiesMissed {
-				customPrompt := "Make sure that the following entities are extracted:"
-				for _, entity := range missedEntities {
-					customPrompt += fmt.Sprintf("\n%s,", entity)
-				}
-				promptContext["custom_prompt"] = customPrompt
-			}
-		} else {
-			entitiesMissed = false
-		}
-	}
-
-	// Filter out empty entity names
-	var filteredEntities []prompts.ExtractedEntity
-	for _, entity := range extractedEntities.ExtractedEntities {
-		if strings.TrimSpace(entity.Name) != "" {
-			filteredEntities = append(filteredEntities, entity)
-		}
-	}
-
-	log.Printf("Extracted %d entities in %v", len(filteredEntities), time.Since(start))
-
-	// Convert to Node objects
+	// Filter and convert
 	var extractedNodes []*types.Node
-	for _, extractedEntity := range filteredEntities {
-		// Determine entity type
-		var entityTypeName string
-		if extractedEntity.EntityTypeID >= 0 && extractedEntity.EntityTypeID < len(entityTypesContext) {
-			entityTypeName = entityTypesContext[extractedEntity.EntityTypeID]["entity_type_name"].(string)
-		} else {
-			entityTypeName = "Entity"
+	for _, entity := range extractedEntities {
+		// Filter out empty names
+		if strings.TrimSpace(entity.Text) == "" {
+			continue
 		}
 
-		// Check if this entity type should be excluded
+		// Check exclusion
+		excluded := false
 		if len(excludedEntityTypes) > 0 {
-			excluded := false
 			for _, excludedType := range excludedEntityTypes {
-				if entityTypeName == excludedType {
+				if entity.Label == excludedType {
 					excluded = true
 					break
 				}
 			}
-			if excluded {
-				log.Printf("Excluding entity %s of type %s", extractedEntity.Name, entityTypeName)
-				continue
-			}
+		}
+		if excluded {
+			continue
 		}
 
 		node := &types.Node{
 			Uuid:       utils.GenerateUUID(),
 			Type:       types.EntityNodeType,
 			GroupID:    episode.GroupID,
-			Name:       extractedEntity.Name,
-			Summary:    extractedEntity.Name,
+			Name:       entity.Text,
+			Summary:    entity.Text, // Initial summary is the name
 			CreatedAt:  time.Now().UTC(),
 			UpdatedAt:  time.Now().UTC(),
 			ValidFrom:  episode.ValidFrom,
-			EntityType: entityTypeName,
-			Metadata:   make(map[string]interface{}),
+			EntityType: entity.Label,
+			Metadata: map[string]interface{}{
+				"confidence": entity.Confidence,
+				"start":      entity.Start,
+				"end":        entity.End,
+			},
 		}
-
 		extractedNodes = append(extractedNodes, node)
-		// log.Printf("Created entity node: %s of type: %s (UUID: %s)", node.Name, node.EntityType, node.ID)
 	}
 
+	log.Printf("Extracted %d entities in %v", len(extractedNodes), time.Since(start))
 	return extractedNodes, nil
 }
 

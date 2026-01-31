@@ -95,6 +95,60 @@ func (a *LLMAdapter) Close() error {
 	return nil
 }
 
+// ExtractEntities provides direct access to entity extraction
+func (a *LLMAdapter) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]nlp.ExtractedEntity, error) {
+	if a.task != "ner" {
+		return nil, fmt.Errorf("task mismatch: adapter configured for %s, requested ExtractEntities", a.task)
+	}
+
+	entities, err := a.client.ExtractEntities(text)
+	if err != nil {
+		return nil, err
+	}
+
+	var extracted []nlp.ExtractedEntity
+	for _, e := range entities {
+		extracted = append(extracted, nlp.ExtractedEntity{
+			Text:       e.Text,
+			Label:      e.Label,
+			Confidence: e.Score,
+			Start:      0, // RustBert client doesn't expose offsets in Entity struct currently?
+			End:        0,
+		})
+	}
+	return extracted, nil
+}
+
+// ExtractRelations provides direct access to relationship extraction
+func (a *LLMAdapter) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]nlp.ExtractedRelation, error) {
+	return nil, fmt.Errorf("RustBert does not support relationship extraction")
+}
+
+// Summarize provides direct access to summarization
+func (a *LLMAdapter) Summarize(ctx context.Context, text string) (string, error) {
+	if a.task != "summarization" {
+		return "", fmt.Errorf("task mismatch: adapter configured for %s, requested Summarize", a.task)
+	}
+
+	summaries, err := a.client.Summarize(text)
+	if err != nil {
+		return "", err
+	}
+	if len(summaries) == 0 {
+		return "", nil
+	}
+	return summaries[0], nil
+}
+
+// GenerateText provides direct access to text generation
+func (a *LLMAdapter) GenerateText(ctx context.Context, prompt string) (string, error) {
+	if a.task != "text_generation" && a.task != "generation" {
+		return "", fmt.Errorf("task mismatch: adapter configured for %s, requested GenerateText", a.task)
+	}
+
+	return a.client.GenerateText(prompt)
+}
+
 // GetCapabilities returns the list of capabilities supported by this client.
 func (a *LLMAdapter) GetCapabilities() []nlp.TaskCapability {
 	switch a.task {

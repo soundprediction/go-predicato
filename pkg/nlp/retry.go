@@ -162,6 +162,114 @@ func (r *RetryClient) ChatWithStructuredOutput(ctx context.Context, messages []t
 	return nil, fmt.Errorf("failed after %d retries: %w", r.config.MaxRetries, lastErr)
 }
 
+// ExtractEntities implements the Client interface with retry logic
+func (r *RetryClient) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]ExtractedEntity, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= r.config.MaxRetries; attempt++ {
+		if attempt > 0 {
+			delay := r.calculateDelay(attempt)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
+			}
+		}
+
+		result, err := r.client.ExtractEntities(ctx, text, entityTypes)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+
+		if !isRetryableError(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("failed after %d retries: %w", r.config.MaxRetries, lastErr)
+}
+
+// ExtractRelations implements the Client interface with retry logic
+func (r *RetryClient) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= r.config.MaxRetries; attempt++ {
+		if attempt > 0 {
+			delay := r.calculateDelay(attempt)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
+			}
+		}
+
+		result, err := r.client.ExtractRelations(ctx, text, relationTypes)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+
+		if !isRetryableError(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("failed after %d retries: %w", r.config.MaxRetries, lastErr)
+}
+
+// Summarize implements the Client interface with retry logic
+func (r *RetryClient) Summarize(ctx context.Context, text string) (string, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= r.config.MaxRetries; attempt++ {
+		if attempt > 0 {
+			delay := r.calculateDelay(attempt)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return "", fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
+			}
+		}
+
+		result, err := r.client.Summarize(ctx, text)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+
+		if !isRetryableError(err) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("failed after %d retries: %w", r.config.MaxRetries, lastErr)
+}
+
+// GenerateText implements the Client interface with retry logic
+func (r *RetryClient) GenerateText(ctx context.Context, prompt string) (string, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= r.config.MaxRetries; attempt++ {
+		if attempt > 0 {
+			delay := r.calculateDelay(attempt)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return "", fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
+			}
+		}
+
+		result, err := r.client.GenerateText(ctx, prompt)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+
+		if !isRetryableError(err) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("failed after %d retries: %w", r.config.MaxRetries, lastErr)
+}
+
 // Close implements the Client interface
 func (r *RetryClient) Close() error {
 	return r.client.Close()

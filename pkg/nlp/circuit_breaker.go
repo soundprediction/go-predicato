@@ -82,6 +82,54 @@ func (c *CircuitBreakerClient) Close() error {
 	return c.client.Close()
 }
 
+// ExtractEntities implements Client
+func (c *CircuitBreakerClient) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]ExtractedEntity, error) {
+	resp, err := c.cb.Execute(func() (interface{}, error) {
+		return c.client.ExtractEntities(ctx, text, entityTypes)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return resp.([]ExtractedEntity), nil
+}
+
+// ExtractRelations implements Client
+func (c *CircuitBreakerClient) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error) {
+	resp, err := c.cb.Execute(func() (interface{}, error) {
+		return c.client.ExtractRelations(ctx, text, relationTypes)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return resp.([]ExtractedRelation), nil
+}
+
+// Summarize implements Client
+func (c *CircuitBreakerClient) Summarize(ctx context.Context, text string) (string, error) {
+	resp, err := c.cb.Execute(func() (interface{}, error) {
+		return c.client.Summarize(ctx, text)
+	})
+
+	if err != nil {
+		return "", err
+	}
+	return resp.(string), nil
+}
+
+// GenerateText implements Client
+func (c *CircuitBreakerClient) GenerateText(ctx context.Context, prompt string) (string, error) {
+	resp, err := c.cb.Execute(func() (interface{}, error) {
+		return c.client.GenerateText(ctx, prompt)
+	})
+
+	if err != nil {
+		return "", err
+	}
+	return resp.(string), nil
+}
+
 // GetCapabilities returns the list of capabilities supported by this client.
 func (c *CircuitBreakerClient) GetCapabilities() []TaskCapability {
 	return c.client.GetCapabilities()

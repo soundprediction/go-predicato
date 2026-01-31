@@ -124,7 +124,7 @@ func (eo *EdgeOperations) BuildDuplicateOfEdges(ctx context.Context, episode *ty
 	return duplicateEdges, nil
 }
 
-// ExtractEdges extracts relationship edges from episode content using LLM
+// ExtractEdges extracts relationship edges from episode content using NLP client
 func (eo *EdgeOperations) ExtractEdges(ctx context.Context, episode *types.Node, nodes []*types.Node, previousEpisodes []*types.Node, edgeTypeMap map[string][][]string, edgeTypes map[string]interface{}, groupID string) ([]*types.Edge, error) {
 	start := time.Now()
 
@@ -132,204 +132,77 @@ func (eo *EdgeOperations) ExtractEdges(ctx context.Context, episode *types.Node,
 		return []*types.Edge{}, nil
 	}
 
-	// Batch processing for large node sets to avoid overwhelming the LLM
-	const batchSize = 15
-	if len(nodes) > batchSize {
-		eo.logger.Info("Batching edge extraction",
-			"total_nodes", len(nodes),
-			"batch_size", batchSize,
-			"num_batches", (len(nodes)+batchSize-1)/batchSize)
-
-		var allEdges []*types.Edge
-		for i := 0; i < len(nodes); i += batchSize {
-			end := i + batchSize
-			if end > len(nodes) {
-				end = len(nodes)
-			}
-			batch := nodes[i:end]
-
-			eo.logger.Debug("Processing edge extraction batch",
-				"batch_start", i,
-				"batch_end", end,
-				"batch_nodes", len(batch))
-
-			batchEdges, err := eo.extractEdgesBatch(ctx, episode, batch, nodes, previousEpisodes, edgeTypeMap, edgeTypes, groupID, i)
-			if err != nil {
-				return nil, fmt.Errorf("failed to extract edges from batch %d-%d: %w", i, end, err)
-			}
-			allEdges = append(allEdges, batchEdges...)
-		}
-
-		eo.logger.Info("Completed batched edge extraction",
-			"total_nodes", len(nodes),
-			"total_edges", len(allEdges),
-			"duration", time.Since(start))
-
-		return allEdges, nil
-	}
-
-	// For small node sets, process directly
-	return eo.extractEdgesBatch(ctx, episode, nodes, nodes, previousEpisodes, edgeTypeMap, edgeTypes, groupID, 0)
-}
-
-// extractEdgesBatch extracts edges for a batch of nodes
-func (eo *EdgeOperations) extractEdgesBatch(ctx context.Context, episode *types.Node, batchNodes []*types.Node, allNodes []*types.Node, previousEpisodes []*types.Node, edgeTypeMap map[string][][]string, edgeTypes map[string]interface{}, groupID string, batchOffset int) ([]*types.Edge, error) {
-	start := time.Now()
-
-	if len(batchNodes) == 0 {
-		return []*types.Edge{}, nil
-	}
-
-	// Prepare edge types context as a slice for TSV formatting
-	edgeTypesContext := []map[string]interface{}{}
-	if edgeTypeMap != nil {
+	// Prepare relation types
+	var relationTypes []string
+	if edgeTypes != nil {
 		for typeName := range edgeTypes {
-			edgeTypesContext = append(edgeTypesContext, map[string]interface{}{
-				"fact_type_name":        typeName,
-				"fact_type_description": fmt.Sprintf("custom type: %s", typeName),
-				"fact_type_signature":   edgeTypeMap[typeName], // Include the signature for source/target entity types
-			})
+			relationTypes = append(relationTypes, typeName)
 		}
 	}
 
-	// Prepare context for LLM using batch nodes
-	// Note: Data is passed as slices for TSV formatting in prompts
-	nodeContexts := make([]map[string]interface{}, len(batchNodes))
-	for i, node := range batchNodes {
-		nodeContexts[i] = map[string]interface{}{
-			"id":           i,
-			"name":         node.Name,
-			"entity_types": []string{string(node.EntityType)}, // Simplified for now
-		}
-	}
-
-	previousEpisodeContents := make([]string, len(previousEpisodes))
-	for i, ep := range previousEpisodes {
-		previousEpisodeContents[i] = ep.Summary
-	}
-
-	promptContext := map[string]interface{}{
-		"episode_content":   episode.Content,
-		"nodes":             nodeContexts,
-		"previous_episodes": previousEpisodeContents,
-		"reference_time":    episode.ValidFrom,
-		"edge_types":        edgeTypesContext,
-		"custom_prompt":     "",
-		"ensure_ascii":      true,
-		"logger":            eo.logger,
-	}
-
-	// Extract edges using LLM
-	messages, err := eo.prompts.ExtractEdges().Edge().Call(promptContext)
+	// Use the specialized extraction client
+	client := eo.getExtractionNLP()
+	
+	// We extract relations from the WHOLE text usually, but ExtractEdges was doing it batch-wise on nodes context?
+	// The original implementation passed batch nodes context to LLM.
+	// But GLiNER extracts from text.
+	// If we use ExtractRelations(text), we get all relations.
+	// We then need to map them back to nodes we know about.
+	
+	extractedRelations, err := client.ExtractRelations(ctx, episode.Content, relationTypes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create prompt: %w", err)
+		// Fallback or error?
+		// If the client doesn't support ExtractRelations (e.g. OpenAI old way), it should have been implemented in client.
+		// We implemented it in OpenAI generic client.
+		return nil, fmt.Errorf("failed to extract relations: %w", err)
 	}
 
-	// Create CSV parser function for ExtractedEdge
-	csvParser := func(csvContent string) ([]*prompts.ExtractedEdge, error) {
-		return utils.UnmarshalCSV[prompts.ExtractedEdge](csvContent, '\t')
+	// Map text to Node UUIDs from the 'nodes' slice
+	// This is fuzzy. GLiNER returns text spans.
+	// We need to match those text spans to the nodes provided in 'nodes'.
+	// Create lookup map
+	nodeMap := make(map[string]*types.Node)
+	for _, node := range nodes {
+		nodeMap[strings.ToLower(node.Name)] = node
 	}
 
-	// Use GenerateCSVResponse for robust CSV parsing with retries
-	extractedEdgeSlice, badResp, err := nlp.GenerateCSVResponse[prompts.ExtractedEdge](
-		ctx,
-		eo.getExtractionNLP(),
-		eo.logger,
-		messages,
-		csvParser,
-		0, // maxRetries (use default of 8)
-	)
+	var edges []*types.Edge
+	for _, rel := range extractedRelations {
+		sourceNode, okSource := nodeMap[strings.ToLower(rel.Source)]
+		targetNode, okTarget := nodeMap[strings.ToLower(rel.Target)]
 
-	if err != nil {
-		// Log detailed error information
-		if badResp != nil {
-			eo.logger.Error("Failed to extract edges from CSV",
-				"error", badResp.Error,
-				"response_length", len(badResp.Response),
-				"num_messages", len(badResp.Messages))
-			if badResp.Response != "" {
-				fmt.Printf("\nFailed LLM edge extraction response:\n%v\n\n", badResp.Response)
-			}
+		if okSource && okTarget {
+			// Create edge
+			edge := types.NewEntityEdge(
+				utils.GenerateUUID(),
+				sourceNode.Uuid,
+				targetNode.Uuid,
+				groupID,
+				rel.Type,
+				types.EntityEdgeType,
+			)
+			edge.Fact = fmt.Sprintf("%s %s %s", rel.Source, rel.Type, rel.Target)
+			edge.Summary = edge.Fact
+			edge.UpdatedAt = time.Now().UTC()
+			edge.ValidFrom = episode.ValidFrom
+			edge.SourceIDs = []string{episode.Uuid}
+
+			edges = append(edges, edge)
+			log.Printf("Created edge: %s from %s to %s", edge.Name, sourceNode.Name, targetNode.Name)
 		}
-		return []*types.Edge{}, fmt.Errorf("failed to unmarshal extracted edges: %w", err)
 	}
 
-	// Convert to ExtractedEdges struct
-	var extractedEdges prompts.ExtractedEdges
-	extractedEdges.Edges = extractedEdgeSlice
-
-	log.Printf("Extracted %d edges in %v", len(extractedEdges.Edges), time.Since(start))
-
-	if len(extractedEdges.Edges) == 0 {
-		return []*types.Edge{}, nil
-	}
-
-	// Convert to Edge objects
-	edges := make([]*types.Edge, 0, len(extractedEdges.Edges))
-	for _, edgeData := range extractedEdges.Edges {
-		// Validate node indices (relative to batch)
-		if edgeData.SourceID < 0 || edgeData.SourceID >= len(batchNodes) ||
-			edgeData.TargetID < 0 || edgeData.TargetID >= len(batchNodes) {
-			log.Printf("Warning: invalid node indices for edge %s (batch has %d nodes)", edgeData.Name, len(batchNodes))
-			continue
-		}
-
-		sourceNode := batchNodes[edgeData.SourceID]
-		targetNode := batchNodes[edgeData.TargetID]
-
-		// Parse temporal information
-		var validAt time.Time
-		var validTo *time.Time
-
-		if edgeData.ValidAt != "" {
-			// Strip any surrounding quotes (can happen with double JSON encoding)
-			cleanValidAt := strings.Trim(edgeData.ValidAt, "\"")
-			if parsed, err := time.Parse(time.RFC3339, strings.ReplaceAll(cleanValidAt, "Z", "+00:00")); err == nil {
-				validAt = parsed.UTC()
-			} else if cleanValidAt == "null" {
-				validAt = episode.ValidFrom
-			} else {
-				log.Printf("Warning: failed to parse valid_at date '%s': %v", cleanValidAt, err)
-				validAt = episode.ValidFrom
-			}
-		} else {
-			validAt = episode.ValidFrom
-		}
-
-		if edgeData.InvalidAt != "" {
-			// Strip any surrounding quotes (can happen with double JSON encoding)
-			cleanInvalidAt := strings.Trim(edgeData.InvalidAt, "\"")
-			if parsed, err := time.Parse(time.RFC3339, strings.ReplaceAll(cleanInvalidAt, "Z", "+00:00")); err == nil {
-				parsedUTC := parsed.UTC()
-				validTo = &parsedUTC
-			} else if cleanInvalidAt == "null" {
-				validTo = nil
-			} else {
-				log.Printf("Warning: failed to parse invalid_at date '%s': %v", cleanInvalidAt, err)
-			}
-		}
-
-		edge := types.NewEntityEdge(
-			utils.GenerateUUID(),
-			sourceNode.Uuid,
-			targetNode.Uuid,
-			groupID,
-			edgeData.Name,
-			types.EntityEdgeType,
-		)
-		edge.Summary = edgeData.Summary
-		edge.Fact = edgeData.Fact
-		edge.UpdatedAt = time.Now().UTC()
-		edge.ValidFrom = validAt
-		edge.ValidTo = validTo
-		edge.SourceIDs = []string{episode.Uuid}
-
-		edges = append(edges, edge)
-		log.Printf("Created edge: %s from %s to %s", edge.Name, sourceNode.Name, targetNode.Name)
-	}
-
+	log.Printf("Extracted %d edges in %v", len(edges), time.Since(start))
 	return edges, nil
 }
+
+// extractEdgesBatch is no longer needed with new interface but keeping signature if referenced elsewhere (it's private so we can remove)
+// We will simply remove it by not including it in replacement or replace it with empty if strictly needed (but replacement covers the function it calls usually)
+// Wait, ExtractEdges calls extractEdgesBatch.
+// I am replacing ExtractEdges AND extractEdgesBatch (if I can span both).
+// My StartLine/EndLine 128-332 covers both ExtractEdges and extractEdgesBatch.
+
+
 
 // GetBetweenNodes retrieves edges between two specific nodes using the proper Ladybug query pattern
 func (eo *EdgeOperations) GetBetweenNodes(ctx context.Context, sourceNodeID, targetNodeID string) ([]*types.Edge, error) {

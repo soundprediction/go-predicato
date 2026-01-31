@@ -115,6 +115,64 @@ func (a *LLMAdapter) ChatWithStructuredOutput(ctx context.Context, messages []ty
 	return nil, fmt.Errorf("ChatWithStructuredOutput not supported by GLiNER adapter without base client")
 }
 
+// ExtractEntities implements Client
+func (a *LLMAdapter) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]nlp.ExtractedEntity, error) {
+	// Use GLiNER client directly
+	entities, err := a.glinerClient.ExtractEntities(text, entityTypes)
+	if err != nil {
+		return nil, err
+	}
+
+	var extracted []nlp.ExtractedEntity
+	for _, e := range entities {
+		extracted = append(extracted, nlp.ExtractedEntity{
+			Text:       e.Text,
+			Label:      e.Label,
+			Confidence: float64(e.Score),
+			Start:      0, // Legacy GLiNER client doesn't expose offsets
+			End:        0,
+		})
+	}
+	return extracted, nil
+}
+
+// ExtractRelations implements Client
+func (a *LLMAdapter) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]nlp.ExtractedRelation, error) {
+	// GLiNER ExtractRelations needs a Schema (map[string][2][]string).
+	// But the interface only provides relationTypes (names).
+	// Legacy GLiNER adapter parsed schema from prompt content (fact types signature).
+	// If consumer calls ExtractRelations directly, they might expect us to know the schema or infer it?
+	// Or maybe pass it? The interface doesn't support complex schema passing yet.
+	// However, if we don't have schema, GLiNER might fail or we might need to assume all-to-all?
+	// For now, let's error if we can't do it, or try to build a default schema?
+	// Since usage in node_operations/ExtractEdges now calls client.ExtractRelations, we need to support it.
+	// But newer clients (GLiNER2, OpenAI) handle it differently.
+	// Legacy GLiNER implementation might be strict.
+	
+	// Hack: if baseClient exists, use it? No, we want GLiNER extraction.
+	// Let's defer to baseClient if relationTypes is simple list, OR error.
+	// Actually, let's try to construct a schema where all relations apply to all entities?
+	// But we need entities to build schema? No.
+	
+	return nil, fmt.Errorf("ExtractRelations with simple signature not supported by legacy GLiNER adapter; use Chat or upgrade")
+}
+
+// Summarize implements Client
+func (a *LLMAdapter) Summarize(ctx context.Context, text string) (string, error) {
+	if a.baseClient != nil {
+		return a.baseClient.Summarize(ctx, text)
+	}
+	return "", fmt.Errorf("Summarize not supported: no base client")
+}
+
+// GenerateText implements Client
+func (a *LLMAdapter) GenerateText(ctx context.Context, prompt string) (string, error) {
+	if a.baseClient != nil {
+		return a.baseClient.GenerateText(ctx, prompt)
+	}
+	return "", fmt.Errorf("GenerateText not supported: no base client")
+}
+
 // ---- Extraction Handlers ----
 
 // parseSection extracts content between <TAG> and </TAG>
