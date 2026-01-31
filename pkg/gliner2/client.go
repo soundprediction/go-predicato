@@ -64,56 +64,24 @@ func (c *Client) GetCapabilities() []nlp.TaskCapability {
 }
 
 func (c *Client) Chat(ctx context.Context, messages []types.Message) (*types.Response, error) {
-	if len(messages) == 0 {
-		return &types.Response{Content: ""}, nil
-	}
-
-	// Find system message for task detection
-	systemMsg := ""
-	lastUserMsg := ""
-	for _, m := range messages {
-		if m.Role == "system" {
-			systemMsg = m.Content
-		}
-		if m.Role == "user" {
-			lastUserMsg = m.Content
-		}
-	}
-
-	// ENTITY EXTRACTION DETECTION
-	if strings.Contains(systemMsg, "extracts entity nodes") || strings.Contains(systemMsg, "extracts entity nodes from") {
-		return c.handleNodeExtraction(ctx, lastUserMsg)
-	}
-
-	// EDGE/FACT EXTRACTION DETECTION
-	if strings.Contains(systemMsg, "expert fact extractor") || strings.Contains(systemMsg, "extracts fact triples") {
-		return c.handleFactExtraction(ctx, lastUserMsg)
-	}
-
-	// TEXT CLASSIFICATION DETECTION
-	if strings.Contains(systemMsg, "text classifier") || strings.Contains(systemMsg, "classify text") {
-		return c.handleTextClassification(ctx, lastUserMsg)
-	}
-
-	return nil, fmt.Errorf("GLInER2: unsupported prompt type")
+	return nil, fmt.Errorf("GLInER2 does not support general Chat interface; use specific methods like ExtractEntities")
 }
 
 func (c *Client) ChatWithStructuredOutput(ctx context.Context, messages []types.Message, schema any) (*types.Response, error) {
-	// GLInER2 supports structured output via extract_json
-	if len(messages) == 0 {
-		return &types.Response{Content: "{}"}, nil
-	}
-
-	// For now, delegate to Chat since structured output detection would need more complex parsing
-	return c.Chat(ctx, messages)
+	return nil, fmt.Errorf("GLInER2 does not support ChatWithStructuredOutput; use specific methods")
 }
 
+
 // ExtractEntities provides direct access to entity extraction
-func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]Entity, error) {
+func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]nlp.ExtractedEntity, error) {
 	switch c.provider {
 	case ProviderNative:
-		_, err := c.nativeClient.ExtractEntitiesDirect(ctx, text, entityTypes)
-		return nil, err
+		// TODO: specific mapping for native client if types differ
+		// Assuming native client returns something standard we can map
+		// Return type mismatch needs handling if nativeClient.ExtractEntitiesDirect returns local Entity type
+		// For now, let's error or assume we map it here.
+		// Since nativeClient is "future", let's focus on HTTP part which is verified.
+		return nil, fmt.Errorf("native provider not yet implemented for standard interface")
 	case ProviderLocal, ProviderFastino:
 		if c.httpClient == nil {
 			return nil, fmt.Errorf("HTTP client not available")
@@ -124,10 +92,10 @@ func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes [
 			return nil, err
 		}
 
-		var entities []Entity
+		var entities []nlp.ExtractedEntity
 		for label, entityList := range result.Entities {
 			for _, entity := range entityList {
-				entities = append(entities, Entity{
+				entities = append(entities, nlp.ExtractedEntity{
 					Text:       entity.Text,
 					Label:      label,
 					Confidence: entity.Confidence,
@@ -142,28 +110,61 @@ func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes [
 	}
 }
 
-// ExtractFacts provides direct access to fact extraction (GLInER2 relations)
-func (c *Client) ExtractFacts(ctx context.Context, text string, relationTypes []string) ([]Fact, error) {
+// ExtractRelations provides direct access to relationship extraction (GLInER2 relations)
+func (c *Client) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]nlp.ExtractedRelation, error) {
 	switch c.provider {
 	case ProviderNative:
-		_, err := c.nativeClient.ExtractFactsDirect(ctx, text, relationTypes)
-		return nil, err
+		return nil, fmt.Errorf("native provider not yet implemented for standard interface")
 	case ProviderLocal, ProviderFastino:
 		if c.httpClient == nil {
 			return nil, fmt.Errorf("HTTP client not available")
 		}
 
-		// Convert simple relation types to GLInER2 schema format
 		schema := relationTypes
-		facts, err := c.httpClient.ExtractFacts(ctx, text, schema, 0.5)
+		// Check if we have ExtractRelations on httpClient or if we reuse ExtractFacts logic
+		// http_client.go has ExtractRelations.
+		// But it returns *RelationResult.
+		// We need to map to []nlp.ExtractedRelation.
+
+		// Let's use ExtractFacts logic from `http_client.go` effectively or call it directly?
+		// Logic in `handleFactExtraction` calls `c.ExtractFacts`.
+		// `ExtractFacts` in `client.go` (OLD) called `httpClient.ExtractFacts`.
+		// Let's replace `ExtractFacts` with `ExtractRelations` implementing the interface.
+
+		rels, err := c.httpClient.ExtractRelations(ctx, text, schema, 0.5)
 		if err != nil {
 			return nil, err
 		}
 
-		return facts, nil
+		var relations []nlp.ExtractedRelation
+		// RelationResult struct needs checking. From http_client.go:
+		// type RelationResult struct { RelationExtraction map[string][]RelationTuple ... }
+		// type RelationTuple struct { Head, Tail string ... }
+
+		for relType, tuples := range rels.RelationExtraction {
+			for _, tuple := range tuples {
+				relations = append(relations, nlp.ExtractedRelation{
+					Source:     tuple.Head,
+					Target:     tuple.Tail,
+					Type:       relType,
+					Confidence: 1.0, // GLInER2 doesn't always provide confidence per relation yet
+				})
+			}
+		}
+		return relations, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider: %v", c.provider)
 	}
+}
+
+// Summarize is not supported by GLiNER2 models
+func (c *Client) Summarize(ctx context.Context, text string) (string, error) {
+	return "", fmt.Errorf("GLiNER2 does not support summarization")
+}
+
+// GenerateText is not supported by GLiNER2 models
+func (c *Client) GenerateText(ctx context.Context, prompt string) (string, error) {
+	return "", fmt.Errorf("GLiNER2 does not support text generation")
 }
 
 // ClassifyText provides direct access to text classification
@@ -281,7 +282,7 @@ func (c *Client) handleFactExtraction(ctx context.Context, userMsg string) (*typ
 	}
 
 	// Run fact extraction using GLInER2 relations
-	facts, err := c.ExtractFacts(ctx, text, relationTypes)
+	facts, err := c.ExtractRelations(ctx, text, relationTypes)
 	if err != nil {
 		return nil, fmt.Errorf("GLInER2 fact extraction failed: %w", err)
 	}

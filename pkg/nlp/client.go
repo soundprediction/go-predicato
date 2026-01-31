@@ -14,6 +14,19 @@ type Client interface {
 	// ChatWithStructuredOutput sends a chat completion request with structured output.
 	ChatWithStructuredOutput(ctx context.Context, messages []types.Message, schema any) (*types.Response, error)
 
+	// ExtractEntities extracts named entities from the given text.
+	ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]ExtractedEntity, error)
+
+	// ExtractRelations extracts relationships between entities from the given text.
+	// relationTypes is a list of relationship labels to consider.
+	ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error)
+
+	// Summarize generates a summary of the provided text.
+	Summarize(ctx context.Context, text string) (string, error)
+
+	// GenerateText generates text based on the provided prompt.
+	GenerateText(ctx context.Context, prompt string) (string, error)
+
 	// GetCapabilities returns the list of capabilities supported by this client.
 	GetCapabilities() []TaskCapability
 
@@ -54,6 +67,7 @@ type Config struct {
 	MinP        *float32 `json:"min_p,omitempty"`
 	Stop        []string `json:"stop,omitempty"`
 	BaseURL     string   `json:"base_url,omitempty"` // Custom base URL for OpenAI-compatible services
+	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`
 }
 
 // NewMessage creates a new message with the specified role and content.
