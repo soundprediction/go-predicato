@@ -109,11 +109,11 @@ func (a *LLMAdapter) ExtractEntities(ctx context.Context, text string, entityTyp
 	var extracted []nlp.ExtractedEntity
 	for _, e := range entities {
 		extracted = append(extracted, nlp.ExtractedEntity{
-			Text:       e.String,
-			Label:      e.Tag,
+			Text:       e.Text,
+			Label:      e.Label,
 			Confidence: e.Score,
-			Start:      e.Start,
-			End:        e.End,
+			Start:      0, // RustBert client doesn't expose offsets in Entity struct currently?
+			End:        0,
 		})
 	}
 	return extracted, nil

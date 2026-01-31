@@ -3,7 +3,6 @@ package gliner2
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/soundprediction/predicato/pkg/nlp"
 	"github.com/soundprediction/predicato/pkg/types"
@@ -182,131 +181,9 @@ func (c *Client) ClassifyText(ctx context.Context, text string, schema interface
 	}
 }
 
-func (c *Client) handleNodeExtraction(ctx context.Context, userMsg string) (*types.Response, error) {
-	entityTypesTSV := parseSection(userMsg, "ENTITY TYPES")
-	text := parseSection(userMsg, "TEXT")
-	if text == "" {
-		text = parseSection(userMsg, "CURRENT MESSAGE")
-	}
-	if text == "" {
-		text = parseSection(userMsg, "JSON")
-	}
+// Methods handleNodeExtraction and handleFactExtraction removed as they are no longer used.
+// Direct extraction via ExtractEntities and ExtractRelations is now enforced.
 
-	// Parse Entity Types to map Name -> ID
-	typesRecords := parseTSV(entityTypesTSV)
-	labelToID := make(map[string]string)
-	var labels []string
-
-	// Skip header if present
-	startIndex := 0
-	if len(typesRecords) > 0 && (strings.Contains(typesRecords[0][0], "entity_type_id") || strings.Contains(typesRecords[0][1], "entity_type_name")) {
-		startIndex = 1
-	}
-
-	for i := startIndex; i < len(typesRecords); i++ {
-		row := typesRecords[i]
-		if len(row) < 2 {
-			continue
-		}
-		id := row[0]
-		name := row[1]
-		labelToID[name] = id
-		labels = append(labels, name)
-	}
-
-	// Run entity extraction
-	entities, err := c.ExtractEntities(ctx, text, labels)
-	if err != nil {
-		return nil, fmt.Errorf("GLInER2 node extraction failed: %w", err)
-	}
-
-	// Format Output as TSV (like existing GLInER adapter)
-	var sb strings.Builder
-	sb.WriteString("entity\tentity_type_id\n")
-
-	for _, e := range entities {
-		id, ok := labelToID[e.Label]
-		if !ok {
-			id = "-1"
-		}
-		sb.WriteString(fmt.Sprintf("%s\t%s\n", e.Text, id))
-	}
-
-	return &types.Response{
-		Content: sb.String(),
-	}, nil
-}
-
-func (c *Client) handleFactExtraction(ctx context.Context, userMsg string) (*types.Response, error) {
-	factTypesTSV := parseSection(userMsg, "FACT TYPES")
-	extractedEntitiesTSV := parseSection(userMsg, "ENTITIES")
-	text := parseSection(userMsg, "CURRENT_MESSAGE")
-	if text == "" {
-		text = parseSection(userMsg, "CURRENT MESSAGE")
-	}
-
-	// Parse Entities to map Text -> ID
-	entitiesRecords := parseTSV(extractedEntitiesTSV)
-	nameToID := make(map[string]string)
-
-	// Skip header
-	startIndex := 0
-	if len(entitiesRecords) > 0 && (strings.Contains(entitiesRecords[0][0], "id") || strings.Contains(entitiesRecords[0][1], "name")) {
-		startIndex = 1
-	}
-
-	for i := startIndex; i < len(entitiesRecords); i++ {
-		row := entitiesRecords[i]
-		if len(row) < 2 {
-			continue
-		}
-		id := row[0]
-		name := row[1]
-		nameToID[name] = id
-	}
-
-	// Parse Fact Types (Relation Types)
-	factTypesRecords := parseTSV(factTypesTSV)
-	var relationTypes []string
-
-	startFact := 0
-	if len(factTypesRecords) > 0 && strings.Contains(factTypesRecords[0][0], "relation_type") {
-		startFact = 1
-	}
-
-	for i := startFact; i < len(factTypesRecords); i++ {
-		row := factTypesRecords[i]
-		if len(row) > 0 {
-			relationTypes = append(relationTypes, row[0])
-		}
-	}
-
-	// Run fact extraction using GLInER2 relations
-	facts, err := c.ExtractRelations(ctx, text, relationTypes)
-	if err != nil {
-		return nil, fmt.Errorf("GLInER2 fact extraction failed: %w", err)
-	}
-
-	// Format Output as TSV (like existing GLInER adapter)
-	var sb strings.Builder
-	sb.WriteString("source_id\trelation_type\ttarget_id\tfact\tsummary\tvalid_at\tinvalid_at\n")
-
-	for _, f := range facts {
-		srcID, okSrc := nameToID[f.Source]
-		tgtID, okTgt := nameToID[f.Target]
-
-		// Only emit if we can map back to IDs
-		if okSrc && okTgt {
-			fact := fmt.Sprintf("%s %s %s", f.Source, f.Type, f.Target)
-			sb.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				srcID, f.Type, tgtID, fact, "", "null", "null"))
-		}
-	}
-
-	return &types.Response{
-		Content: sb.String(),
-	}, nil
-}
 
 func (c *Client) handleTextClassification(ctx context.Context, userMsg string) (*types.Response, error) {
 	// Extract schema from the system message

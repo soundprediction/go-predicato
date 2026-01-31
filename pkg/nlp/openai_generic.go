@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/sashabaranov/go-openai"
 	"github.com/soundprediction/predicato/pkg/types"
