@@ -50,6 +50,9 @@ type LLMConfig struct {
 
 	// SmallModel is the model to use for simpler prompts
 	SmallModel string `json:"small_model,omitempty"`
+
+	// InsecureSkipVerify disables TLS certificate verification (useful for local self-signed certs)
+	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`
 }
 
 // NewLLMConfig creates a new LLMConfig with default values

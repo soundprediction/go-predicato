@@ -2,8 +2,10 @@ package nlp
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net/http"
 
 	"github.com/sashabaranov/go-openai"
 	"github.com/soundprediction/predicato/pkg/types"
@@ -76,6 +78,7 @@ func NewOpenAIGenericClient(args ...interface{}) (*OpenAIGenericClient, error) {
 	baseClient := NewBaseOpenAIClient(llmConfig, DefaultReasoning, DefaultVerbosity)
 	baseClient.maxRetries = llmConfig.MaxRetries
 	var client *openai.Client
+
 	if llmConfig.BaseURL != "" {
 		// Validate and configure custom base URL for OpenAI-compatible services
 		if err := validateBaseURL(llmConfig.BaseURL); err != nil {
@@ -89,6 +92,14 @@ func NewOpenAIGenericClient(args ...interface{}) (*OpenAIGenericClient, error) {
 		// Handle common base URL patterns
 		if !hasAPIPath(llmConfig.BaseURL) {
 			clientConfig.BaseURL = llmConfig.BaseURL + "/v1"
+		}
+
+		// Handle TLS skip verify
+		if llmConfig.InsecureSkipVerify {
+			tr := &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			}
+			clientConfig.HTTPClient = &http.Client{Transport: tr}
 		}
 
 		client = openai.NewClientWithConfig(clientConfig)
