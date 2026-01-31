@@ -148,12 +148,12 @@ func (a *LLMAdapter) ExtractRelations(ctx context.Context, text string, relation
 	// Since usage in node_operations/ExtractEdges now calls client.ExtractRelations, we need to support it.
 	// But newer clients (GLiNER2, OpenAI) handle it differently.
 	// Legacy GLiNER implementation might be strict.
-	
+
 	// Hack: if baseClient exists, use it? No, we want GLiNER extraction.
 	// Let's defer to baseClient if relationTypes is simple list, OR error.
 	// Actually, let's try to construct a schema where all relations apply to all entities?
 	// But we need entities to build schema? No.
-	
+
 	return nil, fmt.Errorf("ExtractRelations with simple signature not supported by legacy GLiNER adapter; use Chat or upgrade")
 }
 

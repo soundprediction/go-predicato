@@ -110,7 +110,7 @@ func (no *NodeOperations) ExtractNodes(ctx context.Context, episode *types.Node,
 
 	// Use the specialized extraction client
 	client := no.getExtractionNLP()
-	
+
 	extractedEntities, err := client.ExtractEntities(ctx, content, typesList)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract entities: %w", err)

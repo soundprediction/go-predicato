@@ -59,15 +59,15 @@ const (
 //
 // Config is kept for backward compatibility but will be removed in v2.0.
 type Config struct {
-	Model       string   `json:"model"`
-	Temperature *float32 `json:"temperature,omitempty"`
-	MaxTokens   *int     `json:"max_tokens,omitempty"`
-	TopP        *float32 `json:"top_p,omitempty"`
-	TopK        *int     `json:"top_k,omitempty"`
-	MinP        *float32 `json:"min_p,omitempty"`
-	Stop        []string `json:"stop,omitempty"`
-	BaseURL     string   `json:"base_url,omitempty"` // Custom base URL for OpenAI-compatible services
-	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`
+	Model              string   `json:"model"`
+	Temperature        *float32 `json:"temperature,omitempty"`
+	MaxTokens          *int     `json:"max_tokens,omitempty"`
+	TopP               *float32 `json:"top_p,omitempty"`
+	TopK               *int     `json:"top_k,omitempty"`
+	MinP               *float32 `json:"min_p,omitempty"`
+	Stop               []string `json:"stop,omitempty"`
+	BaseURL            string   `json:"base_url,omitempty"` // Custom base URL for OpenAI-compatible services
+	InsecureSkipVerify bool     `json:"insecure_skip_verify,omitempty"`
 }
 
 // NewMessage creates a new message with the specified role and content.

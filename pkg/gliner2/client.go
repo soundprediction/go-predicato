@@ -70,7 +70,6 @@ func (c *Client) ChatWithStructuredOutput(ctx context.Context, messages []types.
 	return nil, fmt.Errorf("GLInER2 does not support ChatWithStructuredOutput; use specific methods")
 }
 
-
 // ExtractEntities provides direct access to entity extraction
 func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]nlp.ExtractedEntity, error) {
 	switch c.provider {
@@ -183,7 +182,6 @@ func (c *Client) ClassifyText(ctx context.Context, text string, schema interface
 
 // Methods handleNodeExtraction and handleFactExtraction removed as they are no longer used.
 // Direct extraction via ExtractEntities and ExtractRelations is now enforced.
-
 
 func (c *Client) handleTextClassification(ctx context.Context, userMsg string) (*types.Response, error) {
 	// Extract schema from the system message

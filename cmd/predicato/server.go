@@ -175,13 +175,13 @@ func overrideConfigWithFlags(cmd *cobra.Command, cfg *config.Config) {
 	if cmd.Flags().Changed("db-uri") {
 		cfg.Database.URI, _ = cmd.Flags().GetString("db-uri")
 	} else if cfg.Database.URI == "./ladybug_db" {
-        // If config still has the hardcoded relative default (e.g. from config.Load defaults),
-        // fallback to the flag's default which is smarter (uses home dir).
-        // We only do this if the value equals the old default, preserving explicit config file values.
+		// If config still has the hardcoded relative default (e.g. from config.Load defaults),
+		// fallback to the flag's default which is smarter (uses home dir).
+		// We only do this if the value equals the old default, preserving explicit config file values.
 		val, _ := cmd.Flags().GetString("db-uri")
-        if val != "" {
-            cfg.Database.URI = val
-        }
+		if val != "" {
+			cfg.Database.URI = val
+		}
 	}
 	if cmd.Flags().Changed("db-username") {
 		cfg.Database.Username, _ = cmd.Flags().GetString("db-username")
@@ -283,7 +283,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 
 	if useGLiNER2 {
 		endpoint, _ := cmd.Flags().GetString("gliner2-endpoint")
-		
+
 		// Check if server is running, if not start it
 		if err := ensureGLiNER2Server(endpoint); err != nil {
 			return nil, fmt.Errorf("failed to ensure GLiNER2 server: %w", err)
@@ -298,7 +298,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 		if err != nil {
 			return nil, fmt.Errorf("failed to create GLiNER2 client: %w", err)
 		}
-		
+
 		nlProcessor = glinerClient
 		fmt.Printf("Using GLiNER2 NLP provider at: %s (Verified Healthy)\n", endpoint)
 
@@ -508,59 +508,59 @@ func ensureGLiNER2Server(endpoint string) error {
 	cwd, _ := os.Getwd()
 	// Assuming workspace structure: root has predicato/python
 	pythonDir := filepath.Join(cwd, "predicato", "python")
-	
+
 	// Double check python dir validity
 	if _, err := os.Stat(filepath.Join(pythonDir, "pyproject.toml")); os.IsNotExist(err) {
 		// Try submodule structure (if run from workspace root)
 		pythonDir = filepath.Join(cwd, "python") // try alternate structure
 		if _, err := os.Stat(filepath.Join(pythonDir, "pyproject.toml")); os.IsNotExist(err) {
-             // Fallback to original guess if neither work (error will happen later)
-             pythonDir = filepath.Join(cwd, "predicato", "python")
-        }
+			// Fallback to original guess if neither work (error will happen later)
+			pythonDir = filepath.Join(cwd, "predicato", "python")
+		}
 	}
 
 	if uvExec != "" {
 		// Use uv run
-        // We need to run inside the python directory where pyproject.toml and .venv are
+		// We need to run inside the python directory where pyproject.toml and .venv are
 		fmt.Printf("Starting GLiNER2 server using uv at %s\n", pythonDir)
 		cmd = exec.Command(uvExec, "run", "python", "-m", "predicato.server")
 		cmd.Dir = pythonDir
 	} else {
-        // Fallback to direct python execution (previous logic simplified)
-        pythonExec := "python3"
-        if _, err := exec.LookPath("python"); err == nil {
-            pythonExec = "python"
-        }
-        
-        // We still need to find paths for PYTHONPATH if not using uv
-        glinerLibPath := filepath.Join(cwd, "GLiNER2")
-        if _, err := os.Stat(glinerLibPath); os.IsNotExist(err) {
-            glinerLibPath = filepath.Join(filepath.Dir(cwd), "GLiNER2")
-        }
-        
-        cmd = exec.Command(pythonExec, "-m", "predicato.server")
-        
-        // Set PYTHONPATH
-        env := os.Environ()
-        newPythonPath := fmt.Sprintf("PYTHONPATH=%s:%s", pythonDir, glinerLibPath)
-        if existingPP := os.Getenv("PYTHONPATH"); existingPP != "" {
-            newPythonPath = fmt.Sprintf("%s:%s", newPythonPath, existingPP)
-        }
-        cmd.Env = append(env, newPythonPath)
+		// Fallback to direct python execution (previous logic simplified)
+		pythonExec := "python3"
+		if _, err := exec.LookPath("python"); err == nil {
+			pythonExec = "python"
+		}
+
+		// We still need to find paths for PYTHONPATH if not using uv
+		glinerLibPath := filepath.Join(cwd, "GLiNER2")
+		if _, err := os.Stat(glinerLibPath); os.IsNotExist(err) {
+			glinerLibPath = filepath.Join(filepath.Dir(cwd), "GLiNER2")
+		}
+
+		cmd = exec.Command(pythonExec, "-m", "predicato.server")
+
+		// Set PYTHONPATH
+		env := os.Environ()
+		newPythonPath := fmt.Sprintf("PYTHONPATH=%s:%s", pythonDir, glinerLibPath)
+		if existingPP := os.Getenv("PYTHONPATH"); existingPP != "" {
+			newPythonPath = fmt.Sprintf("%s:%s", newPythonPath, existingPP)
+		}
+		cmd.Env = append(env, newPythonPath)
 	}
-	
+
 	// Pass port configuration
 	port := u.Port()
 	if port == "" {
 		port = "11435"
 	}
 	// Add environment variables (cmd.Env is nil for uv branch normally, exec.Command uses os.Environ() by default for nil)
-    if cmd.Env == nil {
-        cmd.Env = os.Environ()
-    }
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
 	cmd.Env = append(cmd.Env, fmt.Sprintf("PORT=%s", port))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("HOST=%s", hostname))
-	
+
 	// Redirect output to stdout/stderr
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -579,7 +579,7 @@ func ensureGLiNER2Server(endpoint string) error {
 		}
 		time.Sleep(1 * time.Second)
 	}
-	
+
 	// Cleanup if failed
 	cmd.Process.Kill()
 	return fmt.Errorf("timed out waiting for GLiNER2 server to start")

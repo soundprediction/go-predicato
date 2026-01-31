@@ -142,13 +142,13 @@ func (eo *EdgeOperations) ExtractEdges(ctx context.Context, episode *types.Node,
 
 	// Use the specialized extraction client
 	client := eo.getExtractionNLP()
-	
+
 	// We extract relations from the WHOLE text usually, but ExtractEdges was doing it batch-wise on nodes context?
 	// The original implementation passed batch nodes context to LLM.
 	// But GLiNER extracts from text.
 	// If we use ExtractRelations(text), we get all relations.
 	// We then need to map them back to nodes we know about.
-	
+
 	extractedRelations, err := client.ExtractRelations(ctx, episode.Content, relationTypes)
 	if err != nil {
 		// Fallback or error?
@@ -201,8 +201,6 @@ func (eo *EdgeOperations) ExtractEdges(ctx context.Context, episode *types.Node,
 // Wait, ExtractEdges calls extractEdgesBatch.
 // I am replacing ExtractEdges AND extractEdgesBatch (if I can span both).
 // My StartLine/EndLine 128-332 covers both ExtractEdges and extractEdgesBatch.
-
-
 
 // GetBetweenNodes retrieves edges between two specific nodes using the proper Ladybug query pattern
 func (eo *EdgeOperations) GetBetweenNodes(ctx context.Context, sourceNodeID, targetNodeID string) ([]*types.Edge, error) {

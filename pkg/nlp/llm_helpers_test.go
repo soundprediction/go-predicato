@@ -133,6 +133,30 @@ func (m *mockLLMClient) ChatWithStructuredOutput(ctx context.Context, messages [
 	return nil, nil
 }
 
+func (m *mockLLMClient) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]nlp.ExtractedEntity, error) {
+	m.callCount++
+	return []nlp.ExtractedEntity{}, nil
+}
+
+func (m *mockLLMClient) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]nlp.ExtractedRelation, error) {
+	m.callCount++
+	return []nlp.ExtractedRelation{}, nil
+}
+
+func (m *mockLLMClient) Summarize(ctx context.Context, text string) (string, error) {
+	m.callCount++
+	return "summary", nil
+}
+
+func (m *mockLLMClient) GenerateText(ctx context.Context, prompt string) (string, error) {
+	if m.callCount >= len(m.responses) {
+		return m.responses[len(m.responses)-1], nil
+	}
+	response := m.responses[m.callCount]
+	m.callCount++
+	return response, nil
+}
+
 func (m *mockLLMClient) Close() error {
 	// Nothing to close in mock
 	return nil
