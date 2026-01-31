@@ -146,28 +146,28 @@ func (c *OpenAIClient) ExtractEntities(ctx context.Context, text string, entityT
 	if len(entityTypes) > 0 {
 		sysPrompt += fmt.Sprintf(" specific entity types: %s", strings.Join(entityTypes, ", "))
 	}
-	
+
 	prompt := fmt.Sprintf("Extract entities from the following text:\n\n%s", text)
-	
+
 	type EntityResult struct {
 		Entities []ExtractedEntity `json:"entities"`
 	}
-	
+
 	messages := []types.Message{
 		NewSystemMessage(sysPrompt),
 		NewUserMessage(prompt),
 	}
-	
+
 	resp, err := c.ChatWithStructuredOutput(ctx, messages, EntityResult{})
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var result EntityResult
 	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse extraction result: %w", err)
 	}
-	
+
 	return result.Entities, nil
 }
 
@@ -177,28 +177,28 @@ func (c *OpenAIClient) ExtractRelations(ctx context.Context, text string, relati
 	if len(relationTypes) > 0 {
 		sysPrompt += fmt.Sprintf(" specific relation types: %s", strings.Join(relationTypes, ", "))
 	}
-	
+
 	prompt := fmt.Sprintf("Extract relationships from the following text:\n\n%s", text)
-	
+
 	type RelationResult struct {
 		Relations []ExtractedRelation `json:"relations"`
 	}
-	
+
 	messages := []types.Message{
 		NewSystemMessage(sysPrompt),
 		NewUserMessage(prompt),
 	}
-	
+
 	resp, err := c.ChatWithStructuredOutput(ctx, messages, RelationResult{})
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var result RelationResult
 	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse relation result: %w", err)
 	}
-	
+
 	return result.Relations, nil
 }
 
@@ -208,12 +208,12 @@ func (c *OpenAIClient) Summarize(ctx context.Context, text string) (string, erro
 		NewSystemMessage("You are a helpful assistant that summarizes text."),
 		NewUserMessage(fmt.Sprintf("Please summarize the following text:\n\n%s", text)),
 	}
-	
+
 	resp, err := c.Chat(ctx, messages)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return resp.Content, nil
 }
 
@@ -222,12 +222,12 @@ func (c *OpenAIClient) GenerateText(ctx context.Context, prompt string) (string,
 	messages := []types.Message{
 		NewUserMessage(prompt),
 	}
-	
+
 	resp, err := c.Chat(ctx, messages)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return resp.Content, nil
 }
 
