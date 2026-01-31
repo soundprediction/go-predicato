@@ -41,6 +41,44 @@ func (m *mockClient) Close() error {
 	return nil
 }
 
+func (m *mockClient) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]ExtractedEntity, error) {
+	m.callCount++
+	if m.callCount <= m.failUntilCall {
+		return nil, m.errorToReturn
+	}
+	return []ExtractedEntity{}, nil
+}
+
+func (m *mockClient) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error) {
+	m.callCount++
+	if m.callCount <= m.failUntilCall {
+		return nil, m.errorToReturn
+	}
+	return []ExtractedRelation{}, nil
+}
+
+func (m *mockClient) Summarize(ctx context.Context, text string) (string, error) {
+	m.callCount++
+	if m.callCount <= m.failUntilCall {
+		return "", m.errorToReturn
+	}
+	if m.responseToReturn != nil {
+		return m.responseToReturn.Content, nil
+	}
+	return "summary", nil
+}
+
+func (m *mockClient) GenerateText(ctx context.Context, prompt string) (string, error) {
+	m.callCount++
+	if m.callCount <= m.failUntilCall {
+		return "", m.errorToReturn
+	}
+	if m.responseToReturn != nil {
+		return m.responseToReturn.Content, nil
+	}
+	return "generated text", nil
+}
+
 func (m *mockClient) GetCapabilities() []TaskCapability {
 	return []TaskCapability{TaskTextGeneration}
 }
