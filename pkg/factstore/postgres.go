@@ -164,7 +164,9 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 				source_id VARCHAR(255) REFERENCES sources(id),
 				group_id VARCHAR(255),
 				source_node_name TEXT,
+				source_node_type VARCHAR(50),
 				target_node_name TEXT,
+				target_node_type VARCHAR(50),
 				relation TEXT,
 				description TEXT,
 				embedding vector(%d),
@@ -179,7 +181,9 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 				source_id VARCHAR(255) REFERENCES sources(id),
 				group_id VARCHAR(255),
 				source_node_name TEXT,
+				source_node_type VARCHAR(50),
 				target_node_name TEXT,
+				target_node_type VARCHAR(50),
 				relation TEXT,
 				description TEXT,
 				embedding JSONB,
@@ -335,11 +339,13 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 
 	// Insert edges
 	edgeStmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO extracted_edges (id, source_id, group_id, source_node_name, target_node_name, relation, description, embedding, weight, chunk_index, created_at) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO extracted_edges (id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO UPDATE SET
 			source_node_name = EXCLUDED.source_node_name,
+			source_node_type = EXCLUDED.source_node_type,
 			target_node_name = EXCLUDED.target_node_name,
+			target_node_type = EXCLUDED.target_node_type,
 			relation = EXCLUDED.relation,
 			description = EXCLUDED.description,
 			embedding = EXCLUDED.embedding,
@@ -362,7 +368,7 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 		}
 
 		if _, err := edgeStmt.ExecContext(ctx,
-			edge.ID, sourceID, edgeGroupID, edge.SourceNodeName, edge.TargetNodeName,
+			edge.ID, sourceID, edgeGroupID, edge.SourceNodeName, edge.SourceNodeType, edge.TargetNodeName, edge.TargetNodeType,
 			edge.Relation, edge.Description, embeddingStr, edge.Weight, edge.ChunkIndex, createdAt); err != nil {
 			return fmt.Errorf("failed to insert edge %s: %w", edge.ID, err)
 		}
@@ -412,7 +418,7 @@ func (p *PostgresDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]
 
 func (p *PostgresDB) GetExtractedEdges(ctx context.Context, sourceID string) ([]*ExtractedEdge, error) {
 	rows, err := p.db.QueryContext(ctx,
-		"SELECT id, source_id, group_id, source_node_name, target_node_name, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges WHERE source_id = $1",
+		"SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges WHERE source_id = $1",
 		sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query extracted edges: %w", err)
@@ -467,7 +473,7 @@ func (p *PostgresDB) GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNo
 }
 
 func (p *PostgresDB) GetAllEdges(ctx context.Context, limit int) ([]*ExtractedEdge, error) {
-	query := "SELECT id, source_id, group_id, source_node_name, target_node_name, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges"
+	query := "SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges"
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -995,7 +1001,7 @@ func (p *PostgresDB) vectorSearchEdges(ctx context.Context, embedding []float32,
 	embeddingStr := p.embeddingToString(embedding)
 
 	sqlQuery := `
-		SELECT id, source_id, group_id, source_node_name, target_node_name, relation, description, embedding, weight, chunk_index, created_at,
+		SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at,
 			   1 - (embedding <=> $1::vector) AS score
 		FROM extracted_edges
 		WHERE embedding IS NOT NULL`
@@ -1040,7 +1046,7 @@ func (p *PostgresDB) vectorSearchEdges(ctx context.Context, embedding []float32,
 		var embeddingStr sql.NullString
 		var score float64
 
-		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.TargetNodeName,
+		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType,
 			&e.Relation, &e.Description, &embeddingStr, &e.Weight, &e.ChunkIndex, &e.CreatedAt, &score); err != nil {
 			return nil, nil, err
 		}
@@ -1068,7 +1074,7 @@ func (p *PostgresDB) vectorSearchEdges(ctx context.Context, embedding []float32,
 // and computing cosine similarity in Go. Used for DoltGres.
 func (p *PostgresDB) inMemoryVectorSearchEdges(ctx context.Context, embedding []float32, config *FactSearchConfig) ([]*ExtractedEdge, []float64, error) {
 	sqlQuery := `
-		SELECT id, source_id, group_id, source_node_name, target_node_name, relation, description, embedding, weight, chunk_index, created_at
+		SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at
 		FROM extracted_edges
 		WHERE embedding IS NOT NULL`
 
@@ -1109,7 +1115,7 @@ func (p *PostgresDB) inMemoryVectorSearchEdges(ctx context.Context, embedding []
 		var e ExtractedEdge
 		var embeddingJSON sql.NullString
 
-		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.TargetNodeName,
+		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType,
 			&e.Relation, &e.Description, &embeddingJSON, &e.Weight, &e.ChunkIndex, &e.CreatedAt); err != nil {
 			return nil, nil, err
 		}
@@ -1147,7 +1153,7 @@ func (p *PostgresDB) inMemoryVectorSearchEdges(ctx context.Context, embedding []
 
 func (p *PostgresDB) keywordSearchEdges(ctx context.Context, query string, config *FactSearchConfig) ([]*ExtractedEdge, []float64, error) {
 	sqlQuery := `
-		SELECT id, source_id, group_id, source_node_name, target_node_name, relation, description, embedding, weight, chunk_index, created_at,
+		SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at,
 			   ts_rank(to_tsvector('english', COALESCE(relation, '') || ' ' || COALESCE(description, '')), 
 			          plainto_tsquery('english', $1)) AS score
 		FROM extracted_edges
@@ -1194,7 +1200,7 @@ func (p *PostgresDB) keywordSearchEdges(ctx context.Context, query string, confi
 		var embeddingStr sql.NullString
 		var score float64
 
-		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.TargetNodeName,
+		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType,
 			&e.Relation, &e.Description, &embeddingStr, &e.Weight, &e.ChunkIndex, &e.CreatedAt, &score); err != nil {
 			return nil, nil, err
 		}
@@ -1401,7 +1407,7 @@ func (p *PostgresDB) scanEdges(rows *sql.Rows) ([]*ExtractedEdge, error) {
 		var e ExtractedEdge
 		var embeddingStr sql.NullString
 
-		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.TargetNodeName,
+		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType,
 			&e.Relation, &e.Description, &embeddingStr, &e.Weight, &e.ChunkIndex, &e.CreatedAt); err != nil {
 			return nil, err
 		}

@@ -113,7 +113,9 @@ func (d *DoltDB) Initialize(ctx context.Context) error {
 			source_id VARCHAR(255),
 			group_id VARCHAR(255),
 			source_node_name TEXT,
+			source_node_type VARCHAR(50),
 			target_node_name TEXT,
+			target_node_type VARCHAR(50),
 			relation TEXT,
 			description TEXT,
 			embedding JSON,
@@ -184,7 +186,7 @@ func (d *DoltDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, no
 		}
 	}
 
-	edgeStmt, err := tx.PrepareContext(ctx, `INSERT INTO extracted_edges (id, source_id, group_id, source_node_name, target_node_name, relation, description, embedding, weight, chunk_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	edgeStmt, err := tx.PrepareContext(ctx, `INSERT INTO extracted_edges (id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare edge statement: %w", err)
 	}
@@ -203,7 +205,7 @@ func (d *DoltDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, no
 		if createdAt.IsZero() {
 			createdAt = time.Now()
 		}
-		if _, err := edgeStmt.ExecContext(ctx, edge.ID, sourceID, edgeGroupID, edge.SourceNodeName, edge.TargetNodeName, edge.Relation, edge.Description, embeddingJSON, edge.Weight, edge.ChunkIndex, createdAt); err != nil {
+		if _, err := edgeStmt.ExecContext(ctx, edge.ID, sourceID, edgeGroupID, edge.SourceNodeName, edge.SourceNodeType, edge.TargetNodeName, edge.TargetNodeType, edge.Relation, edge.Description, embeddingJSON, edge.Weight, edge.ChunkIndex, createdAt); err != nil {
 			return fmt.Errorf("failed to insert edge %s: %w", edge.ID, err)
 		}
 	}
@@ -267,7 +269,7 @@ func (d *DoltDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]*Ext
 }
 
 func (d *DoltDB) GetExtractedEdges(ctx context.Context, sourceID string) ([]*ExtractedEdge, error) {
-	rows, err := d.db.QueryContext(ctx, "SELECT id, source_id, group_id, source_node_name, target_node_name, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges WHERE source_id = ?", sourceID)
+	rows, err := d.db.QueryContext(ctx, "SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges WHERE source_id = ?", sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query extracted edges: %w", err)
 	}
@@ -279,7 +281,7 @@ func (d *DoltDB) GetExtractedEdges(ctx context.Context, sourceID string) ([]*Ext
 		var embeddingBytes []byte
 		var groupID sql.NullString
 		var createdAt sql.NullTime
-		if err := rows.Scan(&e.ID, &e.SourceID, &groupID, &e.SourceNodeName, &e.TargetNodeName, &e.Relation, &e.Description, &embeddingBytes, &e.Weight, &e.ChunkIndex, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.SourceID, &groupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType, &e.Relation, &e.Description, &embeddingBytes, &e.Weight, &e.ChunkIndex, &createdAt); err != nil {
 			return nil, err
 		}
 		if groupID.Valid {
@@ -371,7 +373,7 @@ func (d *DoltDB) GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNode, 
 }
 
 func (d *DoltDB) GetAllEdges(ctx context.Context, limit int) ([]*ExtractedEdge, error) {
-	query := "SELECT id, source_id, group_id, source_node_name, target_node_name, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges"
+	query := "SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges"
 	var rows *sql.Rows
 	var err error
 	if limit > 0 {
@@ -391,7 +393,7 @@ func (d *DoltDB) GetAllEdges(ctx context.Context, limit int) ([]*ExtractedEdge, 
 		var embeddingBytes []byte
 		var groupID sql.NullString
 		var createdAt sql.NullTime
-		if err := rows.Scan(&e.ID, &e.SourceID, &groupID, &e.SourceNodeName, &e.TargetNodeName, &e.Relation, &e.Description, &embeddingBytes, &e.Weight, &e.ChunkIndex, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.SourceID, &groupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType, &e.Relation, &e.Description, &embeddingBytes, &e.Weight, &e.ChunkIndex, &createdAt); err != nil {
 			return nil, err
 		}
 		if groupID.Valid {

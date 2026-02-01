@@ -27,7 +27,9 @@ type ExtractedEdge struct {
 	SourceID       string    `json:"source_id"`
 	GroupID        string    `json:"group_id"`
 	SourceNodeName string    `json:"source_node_name"`
+	SourceNodeType string    `json:"source_node_type"`
 	TargetNodeName string    `json:"target_node_name"`
+	TargetNodeType string    `json:"target_node_type"`
 	Relation       string    `json:"relation"`
 	Description    string    `json:"description"`
 	Embedding      []float32 `json:"embedding,omitempty"`

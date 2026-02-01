@@ -173,7 +173,9 @@ type ExtractedEdgeDTO struct {
 	SourceID       string    `json:"source_id"`
 	GroupID        string    `json:"group_id"`
 	SourceNodeName string    `json:"source_node_name"`
+	SourceNodeType string    `json:"source_node_type,omitempty"`
 	TargetNodeName string    `json:"target_node_name"`
+	TargetNodeType string    `json:"target_node_type,omitempty"`
 	Relation       string    `json:"relation"`
 	Description    string    `json:"description"`
 	Weight         float64   `json:"weight"`
