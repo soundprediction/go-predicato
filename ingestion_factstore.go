@@ -117,11 +117,11 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 				for _, n := range nodes {
 					if n.Uuid == e.SourceNodeID {
 						sourceName = n.Name
-							sourceType = n.EntityType
+						sourceType = n.EntityType
 					}
 					if n.Uuid == e.TargetNodeID {
 						targetName = n.Name
-							targetType = n.EntityType
+						targetType = n.EntityType
 					}
 				}
 
