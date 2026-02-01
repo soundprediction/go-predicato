@@ -111,15 +111,17 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 				// Resolve Names for Facts DB
 				// e.SourceNodeID and e.TargetNodeID are UUIDs from the extraction context (nodes + previous)
 
-				var sourceName, targetName string
+				var sourceName, sourceType, targetName, targetType string
 
 				// Lookup in current chunk nodes (most likely)
 				for _, n := range nodes {
 					if n.Uuid == e.SourceNodeID {
 						sourceName = n.Name
+							sourceType = n.EntityType
 					}
 					if n.Uuid == e.TargetNodeID {
 						targetName = n.Name
+							targetType = n.EntityType
 					}
 				}
 
@@ -128,9 +130,11 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 					for _, n := range flattenedNodes {
 						if n.Uuid == e.SourceNodeID {
 							sourceName = n.Name
+							sourceType = n.EntityType
 						}
 						if n.Uuid == e.TargetNodeID {
 							targetName = n.Name
+							targetType = n.EntityType
 						}
 					}
 				}
@@ -140,9 +144,11 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 					for _, n := range previousEpisodes {
 						if n.Uuid == e.SourceNodeID {
 							sourceName = n.Name
+							sourceType = n.EntityType
 						}
 						if n.Uuid == e.TargetNodeID {
 							targetName = n.Name
+							targetType = n.EntityType
 						}
 					}
 				}
@@ -151,7 +157,9 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 					ID:             e.Uuid,
 					SourceID:       episode.ID,
 					SourceNodeName: sourceName,
+					SourceNodeType: sourceType,
 					TargetNodeName: targetName,
+					TargetNodeType: targetType,
 					Relation:       e.Name,
 					Description:    e.Summary,  // Alias for Fact
 					Weight:         e.Strength, // Use Strength
