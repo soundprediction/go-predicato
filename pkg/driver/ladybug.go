@@ -122,6 +122,7 @@ type LadybugDriver struct {
 	closeCh    chan struct{}
 	closed     bool
 	closeMu    sync.RWMutex
+	verbose    bool
 }
 
 // copyDir recursively copies a directory from src to dst
@@ -226,6 +227,9 @@ type LadybugDriverConfig struct {
 
 	// Maximum database size in bytes (defaults to 8TB)
 	MaxDbSize uint64
+
+	// Verbose logging (defaults to false)
+	Verbose bool
 }
 
 // DefaultLadybugDriverConfig returns a LadybugDriverConfig with sensible defaults
@@ -407,6 +411,7 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 		dbPath:       db,
 		tempDbPath:   tempDbPath,
 		originalPath: originalPath,
+		verbose:      config.Verbose,
 		writeQueue:   make(chan writeOperation, config.WriteQueueSize),
 		closeCh:      make(chan struct{}),
 	}
@@ -712,8 +717,10 @@ func (k *LadybugDriver) setupSchema() {
 	for _, query := range fulltextIndexQueries {
 		_, err = conn.Query(query)
 		if err != nil {
-			// Log but continue - indexes may already exist or table may not have data yet
-			log.Printf("Fulltext index creation note: %v", err)
+			// Log only if verbose - indexes may already exist or table may not have data yet
+			if k.verbose {
+				log.Printf("Fulltext index creation note: %v", err)
+			}
 		}
 	}
 }
