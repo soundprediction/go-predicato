@@ -157,3 +157,8 @@ func (c *Client) ExtractRelations(text string, entityLabels []string, schema map
 	}
 	return relations, nil
 }
+
+// GetModel returns the model identifier.
+func (c *Client) GetModel() string {
+	return "gliner-native"
+}

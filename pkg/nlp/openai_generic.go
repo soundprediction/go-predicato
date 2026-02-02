@@ -165,6 +165,11 @@ func (c *OpenAIGenericClient) ChatWithStructuredOutput(ctx context.Context, mess
 	}, nil
 }
 
+// GetModel returns the model identifier.
+func (c *OpenAIGenericClient) GetModel() string {
+	return c.config.Model
+}
+
 // Close implements the Client interface
 func (c *OpenAIGenericClient) Close() error {
 	// OpenAI client doesn't require explicit cleanup

@@ -1,6 +1,7 @@
 package gliner2
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -13,18 +14,41 @@ type Entity struct {
 }
 
 type Relation struct {
-	Head       string  `json:"head"`
-	Tail       string  `json:"tail"`
-	Relation   string  `json:"relation"`
-	Confidence float64 `json:"confidence,omitempty"`
-	HeadSpan   *Span   `json:"head_span,omitempty"`
-	TailSpan   *Span   `json:"tail_span,omitempty"`
+	Head       SpanOrString `json:"head"`
+	Tail       SpanOrString `json:"tail"`
+	Relation   string       `json:"relation"`
+	Confidence float64      `json:"confidence,omitempty"`
+	HeadSpan   *Span        `json:"head_span,omitempty"`
+	TailSpan   *Span        `json:"tail_span,omitempty"`
 }
 
 type Span struct {
 	Text  string `json:"text"`
 	Start int    `json:"start"`
 	End   int    `json:"end"`
+}
+
+type SpanOrString struct {
+	Text  string `json:"text"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+}
+
+func (s *SpanOrString) UnmarshalJSON(data []byte) error {
+	// Try unmarshaling as a string first
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		s.Text = str
+		return nil
+	}
+	// If it's not a string, try unmarshaling as a struct
+	type alias SpanOrString
+	var aux alias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*s = SpanOrString(aux)
+	return nil
 }
 
 type Fact struct {
@@ -64,8 +88,8 @@ type RelationResult struct {
 }
 
 type RelationTuple struct {
-	Head string `json:"head"`
-	Tail string `json:"tail"`
+	Head SpanOrString `json:"head"`
+	Tail SpanOrString `json:"tail"`
 }
 
 type ClassificationResult struct {

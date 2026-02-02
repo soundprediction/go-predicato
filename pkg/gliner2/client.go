@@ -62,6 +62,19 @@ func (c *Client) GetCapabilities() []nlp.TaskCapability {
 	}
 }
 
+func (c *Client) GetModel() string {
+	switch c.provider {
+	case ProviderLocal:
+		return "gliner-2-local"
+	case ProviderFastino:
+		return "gliner-2-fastino"
+	case ProviderNative:
+		return "gliner-2-native"
+	default:
+		return "gliner-2"
+	}
+}
+
 func (c *Client) Chat(ctx context.Context, messages []types.Message) (*types.Response, error) {
 	return nil, fmt.Errorf("GLInER2 does not support general Chat interface; use specific methods like ExtractEntities")
 }
@@ -142,8 +155,8 @@ func (c *Client) ExtractRelations(ctx context.Context, text string, relationType
 		for relType, tuples := range rels.RelationExtraction {
 			for _, tuple := range tuples {
 				relations = append(relations, nlp.ExtractedRelation{
-					Source:     tuple.Head,
-					Target:     tuple.Tail,
+					Source:     tuple.Head.Text,
+					Target:     tuple.Tail.Text,
 					Type:       relType,
 					Confidence: 1.0, // GLInER2 doesn't always provide confidence per relation yet
 				})

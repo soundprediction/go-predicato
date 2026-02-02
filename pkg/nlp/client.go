@@ -27,6 +27,9 @@ type Client interface {
 	// GenerateText generates text based on the provided prompt.
 	GenerateText(ctx context.Context, prompt string) (string, error)
 
+	// GetModel returns the model identifier being used by this client.
+	GetModel() string
+
 	// GetCapabilities returns the list of capabilities supported by this client.
 	GetCapabilities() []TaskCapability
 

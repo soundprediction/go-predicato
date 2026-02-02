@@ -164,3 +164,8 @@ func (a *LLMAdapter) GetCapabilities() []nlp.TaskCapability {
 		return []nlp.TaskCapability{}
 	}
 }
+
+// GetModel returns the model identifier.
+func (a *LLMAdapter) GetModel() string {
+	return "rust-bert-" + a.task
+}

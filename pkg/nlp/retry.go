@@ -270,6 +270,11 @@ func (r *RetryClient) GenerateText(ctx context.Context, prompt string) (string, 
 	return "", fmt.Errorf("failed after %d retries: %w", r.config.MaxRetries, lastErr)
 }
 
+// GetModel returns the model identifier of the wrapped client.
+func (r *RetryClient) GetModel() string {
+	return r.client.GetModel()
+}
+
 // Close implements the Client interface
 func (r *RetryClient) Close() error {
 	return r.client.Close()

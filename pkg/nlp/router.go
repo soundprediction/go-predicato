@@ -95,6 +95,14 @@ func (r *RouterClient) ChatWithStructuredOutput(ctx context.Context, messages []
 	return resp, nil
 }
 
+// GetModel returns the model identifier of the default client.
+func (r *RouterClient) GetModel() string {
+	if r.defaultClient != nil {
+		return r.defaultClient.GetModel()
+	}
+	return "router"
+}
+
 // Close closes all providers
 func (r *RouterClient) Close() error {
 	var errs []string
