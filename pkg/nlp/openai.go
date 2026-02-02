@@ -134,6 +134,11 @@ func (c *OpenAIClient) ChatWithStructuredOutput(ctx context.Context, messages []
 	return response, nil
 }
 
+// GetModel returns the model identifier.
+func (c *OpenAIClient) GetModel() string {
+	return c.config.Model
+}
+
 // Close cleans up resources (no-op for OpenAI client).
 func (c *OpenAIClient) Close() error {
 	return nil

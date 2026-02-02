@@ -197,6 +197,11 @@ func (c *TokenTrackingClient) trackUsage(ctx context.Context, resp *types.Respon
 	}
 }
 
+// GetModel returns the model identifier of the wrapped client.
+func (c *TokenTrackingClient) GetModel() string {
+	return c.client.GetModel()
+}
+
 // Close implements Client
 func (c *TokenTrackingClient) Close() error {
 	return c.client.Close()

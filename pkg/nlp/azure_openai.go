@@ -163,6 +163,14 @@ func (a *AzureOpenAIClient) GetCapabilities() []TaskCapability {
 	return []TaskCapability{TaskTextGeneration}
 }
 
+// GetModel returns the model identifier.
+func (a *AzureOpenAIClient) GetModel() string {
+	if a.deploymentID != "" {
+		return a.deploymentID
+	}
+	return a.config.Model
+}
+
 // ChatWithStructuredOutput implements structured output for Azure OpenAI.
 // Azure OpenAI supports structured output similar to OpenAI.
 func (a *AzureOpenAIClient) ChatWithStructuredOutput(ctx context.Context, messages []types.Message, schema interface{}) (*types.Response, error) {

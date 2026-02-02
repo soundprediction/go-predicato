@@ -77,6 +77,11 @@ func (c *CircuitBreakerClient) ChatWithStructuredOutput(ctx context.Context, mes
 	return resp.(*types.Response), nil
 }
 
+// GetModel returns the model identifier of the wrapped client.
+func (c *CircuitBreakerClient) GetModel() string {
+	return c.client.GetModel()
+}
+
 // Close implements Client
 func (c *CircuitBreakerClient) Close() error {
 	return c.client.Close()

@@ -200,6 +200,11 @@ func (g *GeminiClient) ChatWithStructuredOutput(ctx context.Context, messages []
 	return resp, nil
 }
 
+// GetModel returns the model identifier.
+func (g *GeminiClient) GetModel() string {
+	return g.config.Model
+}
+
 // Close releases any resources held by the client.
 // For GeminiClient, this closes the underlying HTTP client's idle connections.
 func (g *GeminiClient) Close() error {

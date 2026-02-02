@@ -69,6 +69,14 @@ func (a *LLMAdapter) GetCapabilities() []nlp.TaskCapability {
 	return caps
 }
 
+// GetModel returns the model identifier.
+func (a *LLMAdapter) GetModel() string {
+	if a.baseClient != nil {
+		return "gliner-adapter(" + a.baseClient.GetModel() + ")"
+	}
+	return "gliner-adapter"
+}
+
 func (a *LLMAdapter) Chat(ctx context.Context, messages []types.Message) (*types.Response, error) {
 	// 1. Inspect messages to detect extraction pattern
 	if len(messages) == 0 {

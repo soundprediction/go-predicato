@@ -62,6 +62,19 @@ func (c *Client) GetCapabilities() []nlp.TaskCapability {
 	}
 }
 
+func (c *Client) GetModel() string {
+	switch c.provider {
+	case ProviderLocal:
+		return "gliner-2-local"
+	case ProviderFastino:
+		return "gliner-2-fastino"
+	case ProviderNative:
+		return "gliner-2-native"
+	default:
+		return "gliner-2"
+	}
+}
+
 func (c *Client) Chat(ctx context.Context, messages []types.Message) (*types.Response, error) {
 	return nil, fmt.Errorf("GLInER2 does not support general Chat interface; use specific methods like ExtractEntities")
 }
