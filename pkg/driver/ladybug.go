@@ -2177,7 +2177,6 @@ var (
 		"Episodic":       true,
 		"Community":      true,
 		"RelatesToNode_": true,
-		"Source":         true,
 	}
 	allowedEdgeLabels = map[string]bool{
 		"RELATES_TO": true,
