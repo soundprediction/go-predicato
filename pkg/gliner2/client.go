@@ -142,8 +142,8 @@ func (c *Client) ExtractRelations(ctx context.Context, text string, relationType
 		for relType, tuples := range rels.RelationExtraction {
 			for _, tuple := range tuples {
 				relations = append(relations, nlp.ExtractedRelation{
-					Source:     tuple.Head,
-					Target:     tuple.Tail,
+					Source:     tuple.Head.Text,
+					Target:     tuple.Tail.Text,
 					Type:       relType,
 					Confidence: 1.0, // GLInER2 doesn't always provide confidence per relation yet
 				})

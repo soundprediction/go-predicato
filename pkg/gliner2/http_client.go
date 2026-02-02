@@ -149,9 +149,19 @@ func (c *HTTPClient) ExtractFacts(ctx context.Context, text string, schema inter
 	for relationType, tuples := range relations.RelationExtraction {
 		for _, tuple := range tuples {
 			fact := Fact{
-				Source:     tuple.Head,
-				Target:     tuple.Tail,
-				Type:       relationType,
+				Source: tuple.Head.Text,
+				Target: tuple.Tail.Text,
+				Type:   relationType,
+				SourceSpan: &Span{
+					Text:  tuple.Head.Text,
+					Start: tuple.Head.Start,
+					End:   tuple.Head.End,
+				},
+				TargetSpan: &Span{
+					Text:  tuple.Tail.Text,
+					Start: tuple.Tail.Start,
+					End:   tuple.Tail.End,
+				},
 				Confidence: 1.0, // GLInER2 doesn't provide confidence in tuple format
 			}
 			facts = append(facts, fact)
