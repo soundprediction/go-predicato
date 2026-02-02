@@ -233,6 +233,10 @@ type AddEpisodeOptions struct {
 	// ModelerErrorHandling controls how errors from GraphModeler are handled.
 	// Default is FailOnError.
 	ModelerErrorHandling modeler.ModelerErrorHandling
+
+	// Verbose enables detailed logging of extracted entities, relations, and summaries
+	// during ingestion. Useful for debugging and monitoring ingestion pipelines.
+	Verbose bool
 }
 
 // NewClient creates a new Predicato client with the provided configuration.

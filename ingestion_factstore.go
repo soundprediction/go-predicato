@@ -78,6 +78,20 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 		}
 	}
 
+	// Verbose logging for extracted entities
+	if options.Verbose {
+		c.logger.Info("[VERBOSE] Extracted entities",
+			"episode_id", episode.ID,
+			"entity_count", len(factsNodes))
+		for _, n := range factsNodes {
+			c.logger.Info("[VERBOSE] Entity",
+				"name", n.Name,
+				"type", n.Type,
+				"description", n.Description,
+				"chunk", n.ChunkIndex)
+		}
+	}
+
 	// 6. Extract Edges (Raw) and Prepare Facts Data
 	edgeOps := maintenance.NewEdgeOperations(c.driver, c.nlProcessor, c.embedder, prompts.NewLibrary())
 	edgeOps.ExtractionNLP = c.nlpModels.EdgeExtraction
@@ -169,6 +183,21 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 		}
 	}
 
+	// Verbose logging for extracted relations
+	if options.Verbose {
+		c.logger.Info("[VERBOSE] Extracted relations",
+			"episode_id", episode.ID,
+			"relation_count", len(factsEdges))
+		for _, e := range factsEdges {
+			c.logger.Info("[VERBOSE] Relation",
+				"source", e.SourceNodeName,
+				"relation", e.Relation,
+				"target", e.TargetNodeName,
+				"description", e.Description,
+				"chunk", e.ChunkIndex)
+		}
+	}
+
 	// 7. Save to Facts
 	source := &factstore.Source{
 		ID:        episode.ID,
@@ -178,6 +207,16 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 		Metadata:  episode.Metadata,
 		CreatedAt: episode.CreatedAt,
 	}
+
+	// Verbose logging for source being saved
+	if options.Verbose {
+		c.logger.Info("[VERBOSE] Saving source to factstore",
+			"source_id", source.ID,
+			"source_name", source.Name,
+			"content_length", len(source.Content),
+			"group_id", source.GroupID)
+	}
+
 	if err := c.factStore.SaveSource(ctx, source); err != nil {
 		return nil, err
 	}
@@ -437,6 +476,20 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		"merged", entityOutput.MergedCount,
 		"new", entityOutput.NewCount)
 
+	// Verbose logging for resolved entities
+	if options.Verbose {
+		c.logger.Info("[VERBOSE] Resolved entities",
+			"source_id", sourceID,
+			"entity_count", len(entityOutput.ResolvedNodes))
+		for _, n := range entityOutput.ResolvedNodes {
+			c.logger.Info("[VERBOSE] Resolved Entity",
+				"name", n.Name,
+				"type", n.Type,
+				"summary", n.Summary,
+				"uuid", n.Uuid)
+		}
+	}
+
 	// 7. Resolve Relationships using GraphModeler
 	relInput := &modeler.RelationshipResolutionInput{
 		ExtractedEdges: allExtractedEdges,
@@ -476,6 +529,22 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		"episodic_edges", len(relOutput.EpisodicEdges),
 		"new", relOutput.NewCount)
 
+	// Verbose logging for resolved relationships
+	if options.Verbose {
+		c.logger.Info("[VERBOSE] Resolved relationships",
+			"source_id", sourceID,
+			"edge_count", len(relOutput.ResolvedEdges))
+		for _, e := range relOutput.ResolvedEdges {
+			c.logger.Info("[VERBOSE] Resolved Edge",
+				"name", e.Name,
+				"source_id", e.SourceNodeID,
+				"target_id", e.TargetNodeID,
+				"fact", e.Fact,
+				"summary", e.Summary)
+		}
+	}
+
+
 	// 8. Build Communities using GraphModeler
 	commInput := &modeler.CommunityInput{
 		Nodes:     entityOutput.ResolvedNodes,
@@ -510,6 +579,19 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		c.logger.Info("Community detection complete",
 			"communities", len(communities),
 			"community_edges", len(communityEdges))
+
+		// Verbose logging for community summaries
+		if options.Verbose {
+			c.logger.Info("[VERBOSE] Community summaries",
+				"source_id", sourceID,
+				"community_count", len(communities))
+			for _, comm := range communities {
+				c.logger.Info("[VERBOSE] Community",
+					"name", comm.Name,
+					"summary", comm.Summary,
+					"uuid", comm.Uuid)
+			}
+		}
 	}
 
 	return &types.AddEpisodeResults{
