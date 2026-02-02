@@ -83,6 +83,11 @@ func (m *mockClient) GetCapabilities() []TaskCapability {
 	return []TaskCapability{TaskTextGeneration}
 }
 
+func (m *mockClient) GetModel() string {
+	return "mock-model"
+}
+
+
 func TestRetryClient_SuccessOnFirstAttempt(t *testing.T) {
 	mock := &mockClient{
 		failUntilCall: 0,

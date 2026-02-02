@@ -23,6 +23,27 @@ func (m *mockLLM) GetCapabilities() []nlp.TaskCapability {
 	return []nlp.TaskCapability{nlp.TaskTextGeneration}
 }
 
+func (m *mockLLM) GetModel() string {
+	return "mock-model"
+}
+
+func (m *mockLLM) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]nlp.ExtractedEntity, error) {
+	return nil, nil
+}
+
+func (m *mockLLM) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]nlp.ExtractedRelation, error) {
+	return nil, nil
+}
+
+func (m *mockLLM) Summarize(ctx context.Context, text string) (string, error) {
+	return "summary", nil
+}
+
+func (m *mockLLM) GenerateText(ctx context.Context, prompt string) (string, error) {
+	return "generated", nil
+}
+
+
 func TestAdapterNodeExtraction(t *testing.T) {
 	modelID := "onnx-community/gliner_small-v2.1"
 	c, err := NewClient(modelID)

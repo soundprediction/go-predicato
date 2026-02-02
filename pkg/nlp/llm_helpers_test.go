@@ -166,6 +166,10 @@ func (m *mockLLMClient) GetCapabilities() []nlp.TaskCapability {
 	return []nlp.TaskCapability{nlp.TaskTextGeneration}
 }
 
+func (m *mockLLMClient) GetModel() string {
+	return "mock-model"
+}
+
 func TestGenerateJSONWithContinuation_Success(t *testing.T) {
 	// Test successful JSON generation on first try
 	mockClient := &mockLLMClient{
