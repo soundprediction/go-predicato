@@ -544,7 +544,6 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		}
 	}
 
-
 	// 8. Build Communities using GraphModeler
 	commInput := &modeler.CommunityInput{
 		Nodes:     entityOutput.ResolvedNodes,

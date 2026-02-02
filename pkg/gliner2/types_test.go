@@ -7,28 +7,28 @@ import (
 
 func TestSpanOrString_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantText string
+		name      string
+		input     string
+		wantText  string
 		wantStart int
 		wantEnd   int
-		wantErr  bool
+		wantErr   bool
 	}{
 		{
-			name:     "string input",
-			input:    `"Aspirin"`,
-			wantText: "Aspirin",
+			name:      "string input",
+			input:     `"Aspirin"`,
+			wantText:  "Aspirin",
 			wantStart: 0,
 			wantEnd:   0,
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
-			name:     "object input",
-			input:    `{"text": "Aspirin", "start": 0, "end": 7}`,
-			wantText: "Aspirin",
+			name:      "object input",
+			input:     `{"text": "Aspirin", "start": 0, "end": 7}`,
+			wantText:  "Aspirin",
 			wantStart: 0,
 			wantEnd:   7,
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
 			name:    "invalid input",
