@@ -43,7 +43,6 @@ func (m *mockLLM) GenerateText(ctx context.Context, prompt string) (string, erro
 	return "generated", nil
 }
 
-
 func TestAdapterNodeExtraction(t *testing.T) {
 	modelID := "onnx-community/gliner_small-v2.1"
 	c, err := NewClient(modelID)
