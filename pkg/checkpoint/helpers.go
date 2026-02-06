@@ -217,12 +217,12 @@ func (m *CheckpointManager) FindFailed(ctx context.Context, maxAttempts int) ([]
 
 // GetStatistics returns statistics about checkpoints
 type CheckpointStatistics struct {
+	ByStep     map[ProcessingStep]int
 	Total      int
 	Completed  int
 	InProgress int
 	Failed     int
 	Stalled    int
-	ByStep     map[ProcessingStep]int
 }
 
 func (m *CheckpointManager) GetStatistics(ctx context.Context, maxAttempts int, stalledDuration time.Duration) (*CheckpointStatistics, error) {

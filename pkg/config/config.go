@@ -9,43 +9,44 @@ import (
 
 // Config holds all configuration for the application
 type Config struct {
-	// Log configuration
-	Log LogConfig `mapstructure:"log"`
-
-	// Server configuration
-	Server ServerConfig `mapstructure:"server"`
 
 	// Database configuration
 	Database DatabaseConfig `mapstructure:"database"`
 
-	// NLP configuration
-	NLP NLPConfig `mapstructure:"nlp"`
+	// Embedding configuration
+	Embedding EmbeddingConfig `mapstructure:"embedding"`
+
+	// Log configuration
+	Log LogConfig `mapstructure:"log"`
 
 	// Telemetry configuration
 	Telemetry TelemetryConfig `mapstructure:"telemetry"`
 
-	// Embedding configuration
-	Embedding EmbeddingConfig `mapstructure:"embedding"`
+	// FactStore configuration
+	FactStore FactStoreConfig `mapstructure:"factstore"`
+
+	// Server configuration
+	Server ServerConfig `mapstructure:"server"`
+
+	// NLP configuration
+	NLP NLPConfig `mapstructure:"nlp"`
 
 	// Alert configuration
 	Alert AlertConfig `mapstructure:"alert"`
 
 	// CircuitBreaker configuration
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
-
-	// FactStore configuration
-	FactStore FactStoreConfig `mapstructure:"factstore"`
 }
 
 // AlertConfig holds configuration for alerting
 type AlertConfig struct {
-	Enabled  bool     `mapstructure:"enabled" json:"enabled"`
 	SMTPHost string   `mapstructure:"smtp_host" json:"smtp_host"`
-	SMTPPort int      `mapstructure:"smtp_port" json:"smtp_port"`
 	Username string   `mapstructure:"username" json:"-"` // Excluded from JSON to prevent credential exposure
 	Password string   `mapstructure:"password" json:"-"` // Excluded from JSON to prevent credential exposure
 	From     string   `mapstructure:"from" json:"from"`
 	To       []string `mapstructure:"to" json:"to"`
+	SMTPPort int      `mapstructure:"smtp_port" json:"smtp_port"`
+	Enabled  bool     `mapstructure:"enabled" json:"enabled"`
 }
 
 // CircuitBreakerConfig holds configuration for circuit breaking
@@ -72,8 +73,8 @@ type LogConfig struct {
 // ServerConfig holds server configuration
 type ServerConfig struct {
 	Host string `mapstructure:"host"`
-	Port int    `mapstructure:"port"`
 	Mode string `mapstructure:"mode"` // gin mode: debug, release, test
+	Port int    `mapstructure:"port"`
 }
 
 // DatabaseConfig holds database configuration

@@ -90,9 +90,9 @@ const LadybugSchemaQueries = `
 
 // writeOperation represents a queued write operation
 type writeOperation struct {
-	query    string
 	params   map[string]interface{}
 	resultCh chan writeResult
+	query    string
 }
 
 // writeResult holds the result of a write operation
@@ -108,21 +108,22 @@ type writeResult struct {
 // for write operations that will not terminate until Close() is called. Use defer driver.Close()
 // immediately after creating the driver to ensure proper cleanup.
 type LadybugDriver struct {
-	provider     GraphProvider
-	db           *ladybug.Database
-	client       *ladybug.Connection // Note: Python uses AsyncConnection, but Go ladybug doesn't have async
-	dbPath       string
-	tempDbPath   string     // If non-empty, this is a temp copy that should be cleaned up
-	originalPath string     // Original path before copying to temp
-	mu           sync.Mutex // Mutex to protect database operations from concurrent access
+	db     *ladybug.Database
+	client *ladybug.Connection // Note: Python uses AsyncConnection, but Go ladybug doesn't have async
 
 	// Write queue for transparent concurrency handling
-	writeQueue chan writeOperation
-	writeWg    sync.WaitGroup
-	closeCh    chan struct{}
-	closed     bool
-	closeMu    sync.RWMutex
-	verbose    bool
+	writeQueue   chan writeOperation
+	closeCh      chan struct{}
+	provider     GraphProvider
+	dbPath       string
+	tempDbPath   string // If non-empty, this is a temp copy that should be cleaned up
+	originalPath string // Original path before copying to temp
+	writeWg      sync.WaitGroup
+	closeMu      sync.RWMutex
+	mu           sync.Mutex // Mutex to protect database operations from concurrent access
+
+	closed  bool
+	verbose bool
 }
 
 // copyDir recursively copies a directory from src to dst
@@ -222,11 +223,11 @@ type LadybugDriverConfig struct {
 	// Buffer pool size in bytes (defaults to 1GB)
 	BufferPoolSize uint64
 
-	// Enable compression (defaults to true)
-	EnableCompression bool
-
 	// Maximum database size in bytes (defaults to 8TB)
 	MaxDbSize uint64
+
+	// Enable compression (defaults to true)
+	EnableCompression bool
 
 	// Verbose logging (defaults to false)
 	Verbose bool
@@ -2694,8 +2695,8 @@ func convertToFloat32Slice(data interface{}) []float32 {
 
 // LadybugDriverSession implements GraphDriverSession for ladybug exactly like Python
 type LadybugDriverSession struct {
-	provider GraphProvider
 	driver   *LadybugDriver
+	provider GraphProvider
 }
 
 // NewLadybugDriverSession creates a new LadybugDriverSession

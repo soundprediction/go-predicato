@@ -18,25 +18,25 @@ import (
 
 // LogRecord represents a single log entry for Parquet storage
 type LogRecord struct {
-	ID            string    `parquet:"id"`
 	Timestamp     time.Time `parquet:"timestamp"`
+	ID            string    `parquet:"id"`
 	Level         string    `parquet:"level"`
 	Message       string    `parquet:"message"`
 	UserID        string    `parquet:"user_id"`
 	SessionID     string    `parquet:"session_id"`
 	RequestSource string    `parquet:"request_source"`
 	SourceFile    string    `parquet:"source_file"`
-	LineNumber    int       `parquet:"line_number"`
 	Attributes    string    `parquet:"attributes"` // JSON string
+	LineNumber    int       `parquet:"line_number"`
 }
 
 // ParquetHandler is a slog.Handler that writes error logs to Parquet files
 type ParquetHandler struct {
 	next      slog.Handler
 	outputDir string
-	mu        sync.Mutex
 	buffer    []LogRecord
 	batchSize int
+	mu        sync.Mutex
 }
 
 // NewParquetHandler creates a new ParquetHandler

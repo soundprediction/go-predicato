@@ -151,11 +151,10 @@ func init() {
 // MCPConfig holds all configuration for the MCP server
 type MCPConfig struct {
 	// LLM Configuration
-	LLMModel       string
-	SmallLLMModel  string
-	LLMTemperature float64
-	OpenAIAPIKey   string
-	LLMBaseURL     string
+	LLMModel      string
+	SmallLLMModel string
+	OpenAIAPIKey  string
+	LLMBaseURL    string
 
 	// Embedder Configuration
 	EmbedderModel    string
@@ -170,18 +169,20 @@ type MCPConfig struct {
 	DatabaseName     string
 
 	// MCP Server Configuration
-	GroupID           string
-	UseCustomEntities bool
-	DestroyGraph      bool
-	Transport         string
-	Host              string
-	Port              int
+	GroupID   string
+	Transport string
+	Host      string
+
+	// Telemetry Configuration
+	TelemetryParquetPath string
+	LLMTemperature       float64
+	Port                 int
 
 	// Concurrency limits
 	SemaphoreLimit int
 
-	// Telemetry Configuration
-	TelemetryParquetPath string
+	UseCustomEntities bool
+	DestroyGraph      bool
 }
 
 // MCPServer wraps the Predicato client for MCP operations
@@ -243,17 +244,17 @@ type UUIDRequest struct {
 
 // MCPToolResponse is a generic response wrapper
 type MCPToolResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
+	Message string      `json:"message"`
 	Error   string      `json:"error,omitempty"`
+	Success bool        `json:"success"`
 }
 
 // MCPTool represents a registered MCP tool
 type MCPTool struct {
+	Schema      interface{} `json:"inputSchema"`
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
-	Schema      interface{} `json:"inputSchema"`
 }
 
 // MCPCapabilities represents the capabilities of the MCP server

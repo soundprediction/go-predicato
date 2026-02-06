@@ -62,8 +62,8 @@ type geminiEmbedPart struct {
 
 // geminiEmbeddingResponse represents the response from Gemini embeddings API.
 type geminiEmbeddingResponse struct {
-	Embeddings []geminiEmbedding `json:"embeddings"`
 	Error      *geminiError      `json:"error,omitempty"`
+	Embeddings []geminiEmbedding `json:"embeddings"`
 }
 
 // geminiEmbedding represents a single embedding in the response.
@@ -73,9 +73,9 @@ type geminiEmbedding struct {
 
 // geminiError represents an error response.
 type geminiError struct {
-	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Status  string `json:"status"`
+	Code    int    `json:"code"`
 }
 
 // Embed generates embeddings for the given texts.
@@ -220,8 +220,8 @@ func (g *GeminiEmbedder) EmbedSingle(ctx context.Context, text string) ([]float3
 	}
 
 	var geminiResp struct {
-		Embedding geminiEmbedding `json:"embedding"`
 		Error     *geminiError    `json:"error,omitempty"`
+		Embedding geminiEmbedding `json:"embedding"`
 	}
 
 	if err := json.Unmarshal(body, &geminiResp); err != nil {

@@ -211,11 +211,11 @@ type NodePair struct {
 
 // DedupCandidateIndexes holds precomputed lookup structures that drive entity deduplication heuristics
 type DedupCandidateIndexes struct {
-	ExistingNodes       []*types.Node
 	NodesByUUID         map[string]*types.Node
 	NormalizedExisting  map[string][]*types.Node // normalized name -> nodes
 	ShinglesByCandidate map[string][]string      // uuid -> shingles
 	LSHBuckets          map[string][]string      // band key -> []uuid
+	ExistingNodes       []*types.Node
 }
 
 // DedupResolutionState holds mutable resolution bookkeeping shared across deterministic and LLM passes

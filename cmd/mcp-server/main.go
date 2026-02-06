@@ -44,10 +44,9 @@ var EntityTypes = map[string]interface{}{
 // Config holds all configuration for the MCP server
 type Config struct {
 	// NLP Configuration
-	NLPModel       string
-	SmallNLPModel  string
-	NLPTemperature float64
-	OpenAIAPIKey   string
+	NLPModel      string
+	SmallNLPModel string
+	OpenAIAPIKey  string
 
 	// Embedder Configuration
 	EmbedderModel string
@@ -59,15 +58,16 @@ type Config struct {
 	DatabasePassword string
 
 	// MCP Server Configuration
-	GroupID           string
-	UseCustomEntities bool
-	DestroyGraph      bool
-	Transport         string
-	Host              string
-	Port              int
+	GroupID        string
+	Transport      string
+	Host           string
+	NLPTemperature float64
+	Port           int
 
 	// Concurrency limits
-	SemaphoreLimit int
+	SemaphoreLimit    int
+	UseCustomEntities bool
+	DestroyGraph      bool
 }
 
 // MCPServer wraps the Predicato client for MCP operations

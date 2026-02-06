@@ -24,12 +24,12 @@ type AddMemoryRequest struct {
 // SearchRequest represents search parameters
 type SearchRequest struct {
 	Query          string   `json:"query"`
-	Limit          int      `json:"limit,omitempty"`
-	GroupIDs       []string `json:"group_ids,omitempty"`
-	MaxNodes       int      `json:"max_nodes,omitempty"`
-	MaxFacts       int      `json:"max_facts,omitempty"`
 	CenterNodeUUID string   `json:"center_node_uuid,omitempty"`
 	Entity         string   `json:"entity,omitempty"` // Single entity type to filter results
+	GroupIDs       []string `json:"group_ids,omitempty"`
+	Limit          int      `json:"limit,omitempty"`
+	MaxNodes       int      `json:"max_nodes,omitempty"`
+	MaxFacts       int      `json:"max_facts,omitempty"`
 }
 
 // GetEpisodesRequest represents parameters for retrieving episodes
@@ -52,10 +52,10 @@ type UUIDRequest struct {
 
 // ToolResponse is a generic response wrapper
 type ToolResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
+	Message string      `json:"message"`
 	Error   string      `json:"error,omitempty"`
+	Success bool        `json:"success"`
 }
 
 // AddMemoryTool handles adding episodes to memory

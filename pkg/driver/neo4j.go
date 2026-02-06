@@ -1803,9 +1803,9 @@ func (n *Neo4jDriver) VerifyConnectivity(ctx context.Context) error {
 
 // Neo4jDriverSession implements GraphDriverSession for Neo4j.
 type Neo4jDriverSession struct {
+	session  neo4j.SessionWithContext
 	driver   *Neo4jDriver
 	database string
-	session  neo4j.SessionWithContext
 }
 
 // Enter implements the context manager pattern.

@@ -42,48 +42,48 @@ type SearchConfig struct {
 }
 
 type NodeSearchConfig struct {
-	SearchMethods []SearchMethod `json:"search_methods"`
 	Reranker      RerankerType   `json:"reranker"`
+	SearchMethods []SearchMethod `json:"search_methods"`
 	MinScore      float64        `json:"min_score"`
 	MMRLambda     float64        `json:"mmr_lambda"`
 	MaxDepth      int            `json:"max_depth"`
 }
 
 type EdgeSearchConfig struct {
-	SearchMethods []SearchMethod `json:"search_methods"`
 	Reranker      RerankerType   `json:"reranker"`
+	SearchMethods []SearchMethod `json:"search_methods"`
 	MinScore      float64        `json:"min_score"`
 	MMRLambda     float64        `json:"mmr_lambda"`
 	MaxDepth      int            `json:"max_depth"`
 }
 
 type EpisodeSearchConfig struct {
-	SearchMethods []SearchMethod `json:"search_methods"`
 	Reranker      RerankerType   `json:"reranker"`
+	SearchMethods []SearchMethod `json:"search_methods"`
 	MinScore      float64        `json:"min_score"`
 }
 
 type CommunitySearchConfig struct {
-	SearchMethods []SearchMethod `json:"search_methods"`
 	Reranker      RerankerType   `json:"reranker"`
+	SearchMethods []SearchMethod `json:"search_methods"`
 	MinScore      float64        `json:"min_score"`
 	MMRLambda     float64        `json:"mmr_lambda"`
 }
 
 type SearchFilters struct {
+	TimeRange   *types.TimeRange `json:"time_range,omitempty"`
 	GroupIDs    []string         `json:"group_ids,omitempty"`
 	NodeTypes   []types.NodeType `json:"node_types,omitempty"`
 	EdgeTypes   []types.EdgeType `json:"edge_types,omitempty"`
 	EntityTypes []string         `json:"entity_types,omitempty"`
-	TimeRange   *types.TimeRange `json:"time_range,omitempty"`
 }
 
 type HybridSearchResult struct {
+	Query      string        `json:"query"`
 	Nodes      []*types.Node `json:"nodes"`
 	Edges      []*types.Edge `json:"edges"`
 	NodeScores []float64     `json:"node_scores"`
 	EdgeScores []float64     `json:"edge_scores"`
-	Query      string        `json:"query"`
 	Total      int           `json:"total"`
 }
 

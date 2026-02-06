@@ -11,14 +11,15 @@ import (
 
 // ValidateModelerOptions configures modeler validation.
 type ValidateModelerOptions struct {
+
+	// GroupID is the group identifier for sample data
+	GroupID string
+
 	// NodeCount is the number of sample nodes to generate (default: 5)
 	NodeCount int
 
 	// EdgeCount is the number of sample edges to generate (default: 3)
 	EdgeCount int
-
-	// GroupID is the group identifier for sample data
-	GroupID string
 
 	// Timeout for each validation step (default: 30s)
 	Timeout time.Duration

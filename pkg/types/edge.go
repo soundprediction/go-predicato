@@ -29,14 +29,14 @@ type EdgeOperations interface {
 
 // BaseEdge represents the abstract base class for all edges (equivalent to Python Edge class)
 type BaseEdge struct {
-	Uuid         string    `json:"uuid"`             // matches Python uuid field
-	GroupID      string    `json:"group_id"`         // matches Python group_id
-	SourceNodeID string    `json:"source_node_uuid"` // matches Python source_node_uuid
-	TargetNodeID string    `json:"target_node_uuid"` // matches Python target_node_uuid
-	CreatedAt    time.Time `json:"created_at"`       // matches Python created_at
+	CreatedAt time.Time `json:"created_at"` // matches Python created_at
 
 	// Metadata and common fields
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	Uuid         string                 `json:"uuid"`             // matches Python uuid field
+	GroupID      string                 `json:"group_id"`         // matches Python group_id
+	SourceNodeID string                 `json:"source_node_uuid"` // matches Python source_node_uuid
+	TargetNodeID string                 `json:"target_node_uuid"` // matches Python target_node_uuid
 }
 
 // EdgeInterface defines the interface that all edge types must implement (equivalent to Python ABC methods)
@@ -227,27 +227,29 @@ func GetEpisodicEdgesByUUIDs(ctx context.Context, driver EdgeOperations, uuids [
 type EntityEdge struct {
 	BaseEdge
 
+	UpdatedAt  time.Time              `json:"updated_at"`
+	ValidFrom  time.Time              `json:"valid_from"`
+	ExpiredAt  *time.Time             `json:"expired_at,omitempty"` // matches Python expired_at
+	ValidAt    *time.Time             `json:"valid_at,omitempty"`   // matches Python valid_at
+	InvalidAt  *time.Time             `json:"invalid_at,omitempty"` // matches Python invalid_at
+	Attributes map[string]interface{} `json:"attributes"`           // matches Python attributes
+
+	ValidTo *time.Time `json:"valid_to,omitempty"`
+
 	// EntityEdge-specific fields (from Python EntityEdge class)
-	Name          string                 `json:"name"`                 // matches Python name
-	Fact          string                 `json:"fact"`                 // matches Python fact
-	FactEmbedding []float32              `json:"fact_embedding"`       // matches Python fact_embedding
-	Episodes      []string               `json:"episodes"`             // matches Python episodes
-	ExpiredAt     *time.Time             `json:"expired_at,omitempty"` // matches Python expired_at
-	ValidAt       *time.Time             `json:"valid_at,omitempty"`   // matches Python valid_at
-	InvalidAt     *time.Time             `json:"invalid_at,omitempty"` // matches Python invalid_at
-	Attributes    map[string]interface{} `json:"attributes"`           // matches Python attributes
+	Name string `json:"name"` // matches Python name
+	Fact string `json:"fact"` // matches Python fact
 
 	// Backward compatibility fields (from old Go Edge type)
-	Type      EdgeType   `json:"type"`
-	SourceID  string     `json:"source_id"` // alias for SourceNodeID uuid
-	TargetID  string     `json:"target_id"` // alias for TargetNodeID uuid
-	UpdatedAt time.Time  `json:"updated_at"`
-	Summary   string     `json:"summary,omitempty"` // alias for Fact
-	Strength  float64    `json:"strength,omitempty"`
-	Embedding []float32  `json:"embedding,omitempty"` // general embedding field
-	ValidFrom time.Time  `json:"valid_from"`
-	ValidTo   *time.Time `json:"valid_to,omitempty"`
-	SourceIDs []string   `json:"source_ids,omitempty"`
+	Type          EdgeType  `json:"type"`
+	SourceID      string    `json:"source_id"`           // alias for SourceNodeID uuid
+	TargetID      string    `json:"target_id"`           // alias for TargetNodeID uuid
+	Summary       string    `json:"summary,omitempty"`   // alias for Fact
+	FactEmbedding []float32 `json:"fact_embedding"`      // matches Python fact_embedding
+	Episodes      []string  `json:"episodes"`            // matches Python episodes
+	Embedding     []float32 `json:"embedding,omitempty"` // general embedding field
+	SourceIDs     []string  `json:"source_ids,omitempty"`
+	Strength      float64   `json:"strength,omitempty"`
 }
 
 // EdgeType represents the type of an edge for backward compatibility

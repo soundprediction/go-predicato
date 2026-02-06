@@ -59,19 +59,19 @@ type azureOpenAIMessage struct {
 
 // azureOpenAIResponse represents the response from Azure OpenAI API.
 type azureOpenAIResponse struct {
+	Error   *azureOpenAIError   `json:"error,omitempty"`
 	ID      string              `json:"id"`
 	Object  string              `json:"object"`
-	Created int64               `json:"created"`
 	Model   string              `json:"model"`
 	Choices []azureOpenAIChoice `json:"choices"`
-	Error   *azureOpenAIError   `json:"error,omitempty"`
+	Created int64               `json:"created"`
 }
 
 // azureOpenAIChoice represents a choice in the response.
 type azureOpenAIChoice struct {
-	Index        int                `json:"index"`
 	Message      azureOpenAIMessage `json:"message"`
 	FinishReason string             `json:"finish_reason"`
+	Index        int                `json:"index"`
 }
 
 // azureOpenAIError represents an error response.

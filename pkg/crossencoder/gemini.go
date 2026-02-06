@@ -15,8 +15,8 @@ import (
 // This reranker uses the Gemini API to score passage relevance through classification
 type GeminiRerankerClient struct {
 	client    nlp.Client
-	config    Config
 	semaphore chan struct{} // Controls concurrency
+	config    Config
 }
 
 // NewGeminiRerankerClient creates a new Gemini-based reranker client
@@ -43,10 +43,10 @@ func (c *GeminiRerankerClient) Rank(ctx context.Context, query string, passages 
 
 	// Create a slice to hold results with original indices
 	type passageResult struct {
+		err     error
 		passage string
 		score   float64
 		index   int
-		err     error
 	}
 
 	results := make([]passageResult, len(passages))

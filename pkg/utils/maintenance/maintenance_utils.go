@@ -138,12 +138,12 @@ func (mu *MaintenanceUtils) GetGraphStatistics(ctx context.Context, groupID stri
 
 // GraphStatistics holds statistics about the graph
 type GraphStatistics struct {
-	NodeCount      int64            `json:"node_count"`
-	EdgeCount      int64            `json:"edge_count"`
+	LastUpdated    time.Time        `json:"last_updated"`
 	NodesByType    map[string]int64 `json:"nodes_by_type"`
 	EdgesByType    map[string]int64 `json:"edges_by_type"`
+	NodeCount      int64            `json:"node_count"`
+	EdgeCount      int64            `json:"edge_count"`
 	CommunityCount int64            `json:"community_count"`
-	LastUpdated    time.Time        `json:"last_updated"`
 }
 
 // CleanupOrphanedEdges removes edges that reference non-existent nodes

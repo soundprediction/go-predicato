@@ -41,24 +41,24 @@ func NewVoyageEmbedder(config *VoyageConfig) *VoyageEmbedder {
 
 // voyageEmbeddingRequest represents the request structure for Voyage AI embeddings API.
 type voyageEmbeddingRequest struct {
-	Input []string `json:"input"`
 	Model string   `json:"model"`
+	Input []string `json:"input"`
 }
 
 // voyageEmbeddingResponse represents the response from Voyage AI embeddings API.
 type voyageEmbeddingResponse struct {
-	Object string                `json:"object"`
-	Data   []voyageEmbeddingData `json:"data"`
-	Model  string                `json:"model"`
-	Usage  voyageEmbeddingUsage  `json:"usage"`
 	Error  *voyageEmbeddingError `json:"error,omitempty"`
+	Object string                `json:"object"`
+	Model  string                `json:"model"`
+	Data   []voyageEmbeddingData `json:"data"`
+	Usage  voyageEmbeddingUsage  `json:"usage"`
 }
 
 // voyageEmbeddingData represents a single embedding in the response.
 type voyageEmbeddingData struct {
 	Object    string    `json:"object"`
-	Index     int       `json:"index"`
 	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
 }
 
 // voyageEmbeddingUsage represents usage information in the response.

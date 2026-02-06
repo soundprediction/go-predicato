@@ -128,8 +128,8 @@ type Worker[T any, R any] func(ctx context.Context, item T) (R, error)
 //	})
 //	results, errors := pool.ProcessItems(ctx, []string{"a", "bb", "ccc"})
 type WorkerPool[T any, R any] struct {
-	numWorkers int
 	worker     Worker[T, R]
+	numWorkers int
 }
 
 // NewWorkerPool creates a new worker pool

@@ -9,15 +9,15 @@ import (
 
 // EpisodeSearchOptions holds options for episode search
 type EpisodeSearchOptions struct {
-	Limit     int
-	GroupIDs  []string
 	TimeRange *types.TimeRange
+	GroupIDs  []string
+	Limit     int
 }
 
 // CommunitySearchOptions holds options for community search
 type CommunitySearchOptions struct {
-	Limit     int
 	GroupIDs  []string
+	Limit     int
 	MinScore  float64
 	MMRLambda float64
 }
@@ -252,8 +252,8 @@ func (su *SearchUtilities) GetRelevantEdges(ctx context.Context, queryEdges []*t
 // EntitySearchOptions holds options for entity-specific searches
 type EntitySearchOptions struct {
 	EntityTypes []string
-	Limit       int
 	GroupIDs    []string
+	Limit       int
 	MinScore    float64
 }
 

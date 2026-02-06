@@ -161,9 +161,9 @@ type EpisodeTuple struct {
 
 // BulkProcessingResult represents the result of bulk processing operations
 type BulkProcessingResult struct {
-	ProcessedItems int
-	Errors         []error
 	UUIDMappings   map[string]string
+	Errors         []error
+	ProcessedItems int
 }
 
 // DedupeNodesResult represents the result of node deduplication
@@ -304,9 +304,9 @@ func GroupDuplicatesByEpisode(
 
 // BatchProcessor processes items in batches with concurrent execution
 type BatchProcessor[T any, R any] struct {
+	ProcessBatch   func(ctx context.Context, batch []T) ([]R, error)
 	BatchSize      int
 	MaxConcurrency int
-	ProcessBatch   func(ctx context.Context, batch []T) ([]R, error)
 }
 
 // NewBatchProcessor creates a new batch processor

@@ -16,27 +16,27 @@ import (
 
 // TokenUsageRecord represents a single log entry for token usage
 type TokenUsageRecord struct {
-	ID               string    `parquet:"id"`
 	Timestamp        time.Time `parquet:"timestamp"`
+	ID               string    `parquet:"id"`
 	Model            string    `parquet:"model"`
-	TotalTokens      int       `parquet:"total_tokens"`
-	PromptTokens     int       `parquet:"prompt_tokens"`
-	CompletionTokens int       `parquet:"completion_tokens"`
-	EstimatedCost    float64   `parquet:"estimated_cost"`
 	UserID           string    `parquet:"user_id"`
 	SessionID        string    `parquet:"session_id"`
 	RequestSource    string    `parquet:"request_source"`
 	IngestionSource  string    `parquet:"ingestion_source"`
+	TotalTokens      int       `parquet:"total_tokens"`
+	PromptTokens     int       `parquet:"prompt_tokens"`
+	CompletionTokens int       `parquet:"completion_tokens"`
+	EstimatedCost    float64   `parquet:"estimated_cost"`
 	IsSystemCall     bool      `parquet:"is_system_call"`
 }
 
 // ParquetTokenTracker handles persistence of token usage stats to Parquet files
 type ParquetTokenTracker struct {
-	outputDir      string
 	costCalculator *cost.CostCalculator
-	mu             sync.Mutex
+	outputDir      string
 	buffer         []TokenUsageRecord
 	batchSize      int
+	mu             sync.Mutex
 }
 
 // NewTokenTracker creates a new token tracker writing to a directory

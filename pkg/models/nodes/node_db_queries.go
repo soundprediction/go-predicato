@@ -175,8 +175,8 @@ func GetEntityNodeSaveQuery(provider driver.GraphProvider, labels string, hasAOS
 
 // QueryWithParams represents a query with its parameters for bulk operations
 type QueryWithParams struct {
-	Query  string
 	Params map[string]interface{}
+	Query  string
 }
 
 // GetEntityNodeSaveBulkQuery returns the bulk entity node save query based on provider and nodes

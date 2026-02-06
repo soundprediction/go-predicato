@@ -45,23 +45,23 @@ type RerankerClient struct {
 
 // RerankRequest represents the request structure for Jina-compatible rerank APIs
 type RerankRequest struct {
+	TopK      *int     `json:"top_k,omitempty"`
 	Model     string   `json:"model"`
 	Query     string   `json:"query"`
 	Documents []string `json:"documents"`
-	TopK      *int     `json:"top_k,omitempty"`
 }
 
 // RerankResponse represents the response structure from Jina-compatible rerank APIs
 type RerankResponse struct {
-	Results []RankedResult `json:"results"`
-	Model   string         `json:"model"`
 	Usage   *Usage         `json:"usage,omitempty"`
+	Model   string         `json:"model"`
+	Results []RankedResult `json:"results"`
 }
 
 // RankedResult represents a single ranking result
 type RankedResult struct {
-	Index          int     `json:"index"`
 	Document       string  `json:"document"`
+	Index          int     `json:"index"`
 	RelevanceScore float64 `json:"relevance_score"`
 }
 
@@ -73,10 +73,10 @@ type Usage struct {
 
 // RerankerConfig holds configuration for Jina-compatible reranking services
 type RerankerConfig struct {
-	Config
+	TopK    *int   `json:"top_k,omitempty"`
 	BaseURL string `json:"base_url,omitempty"`
 	APIKey  string `json:"api_key,omitempty"`
-	TopK    *int   `json:"top_k,omitempty"`
+	Config
 }
 
 // NewRerankerClient creates a new client for any Jina-compatible reranking service

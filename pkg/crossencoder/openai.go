@@ -15,8 +15,8 @@ import (
 // for each passage. Log-probabilities are used to rank the passages.
 type OpenAIRerankerClient struct {
 	client    nlp.Client
-	config    Config
 	semaphore chan struct{} // Controls concurrency
+	config    Config
 }
 
 // NewOpenAIRerankerClient creates a new OpenAI-based reranker client
@@ -43,10 +43,10 @@ func (c *OpenAIRerankerClient) Rank(ctx context.Context, query string, passages 
 
 	// Create a slice to hold results with original indices
 	type passageResult struct {
+		err     error
 		passage string
 		score   float64
 		index   int
-		err     error
 	}
 
 	results := make([]passageResult, len(passages))

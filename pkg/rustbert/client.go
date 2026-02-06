@@ -9,11 +9,11 @@ import (
 
 // Client wraps go-rust-bert models for use in Predicato.
 type Client struct {
-	config             Config
 	nerModel           *rustbert.NERModel
 	summarizationModel *rustbert.SummarizationModel
 	qaModel            *rustbert.QAModel
 	textGenModel       *rustbert.TextGenerationModel
+	config             Config
 	mu                 sync.Mutex
 }
 

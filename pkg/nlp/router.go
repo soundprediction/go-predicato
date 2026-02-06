@@ -11,9 +11,9 @@ import (
 
 // RouterClient routes requests to specific LLM providers based on rules
 type RouterClient struct {
+	defaultClient Client
 	providers     map[string]Client
 	rules         []config.RouterRule
-	defaultClient Client
 }
 
 // NewRouterClient creates a new router client

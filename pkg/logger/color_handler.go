@@ -24,9 +24,9 @@ const (
 // - Other messages: Standard output
 type ColorHandler struct {
 	w      io.Writer
-	level  slog.Level
 	attrs  []slog.Attr
 	groups []string
+	level  slog.Level
 	mu     sync.Mutex
 }
 

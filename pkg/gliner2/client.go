@@ -10,11 +10,11 @@ import (
 
 // Client provides unified access to GLInER2 functionality through different providers
 type Client struct {
-	provider   Provider
 	httpClient *HTTPClient
 	// Future: go-gline-rs GLInER2
 	nativeClient *NativeClient // for go-gline-rs GLInER2 when available
 	config       Config
+	provider     Provider
 }
 
 func NewClient(config Config) (*Client, error) {

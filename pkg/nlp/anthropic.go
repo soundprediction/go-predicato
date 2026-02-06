@@ -35,10 +35,10 @@ func NewAnthropicClient(config *LLMConfig) *AnthropicClient {
 // anthropicRequest represents the request structure for Anthropic API.
 type anthropicRequest struct {
 	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	Messages    []anthropicMessage `json:"messages"`
-	Temperature float64            `json:"temperature,omitempty"`
 	System      string             `json:"system,omitempty"`
+	Messages    []anthropicMessage `json:"messages"`
+	MaxTokens   int                `json:"max_tokens"`
+	Temperature float64            `json:"temperature,omitempty"`
 }
 
 // anthropicMessage represents a message in Anthropic format.
@@ -49,8 +49,8 @@ type anthropicMessage struct {
 
 // anthropicResponse represents the response from Anthropic API.
 type anthropicResponse struct {
-	Content []anthropicContent `json:"content"`
 	Error   *anthropicError    `json:"error,omitempty"`
+	Content []anthropicContent `json:"content"`
 }
 
 // anthropicContent represents content in the response.

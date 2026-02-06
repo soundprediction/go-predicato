@@ -435,9 +435,9 @@ func DedupeNodesBulk(
 
 	// PASS 1: Resolve each episode's nodes against the live graph in parallel
 	type firstPassResult struct {
-		resolvedNodes  []*types.Node
-		uuidMap        map[string]string
 		duplicatePairs interface{} // Can be []NodePair from maintenance or any compatible type
+		uuidMap        map[string]string
+		resolvedNodes  []*types.Node
 	}
 
 	firstPassResults := make([]firstPassResult, len(extractedNodesByEpisode))

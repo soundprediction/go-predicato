@@ -25,28 +25,33 @@ type TimeRange struct {
 
 // FactSearchConfig configures a factstore search query
 type FactSearchConfig struct {
+
+	// TimeRange filters by created_at timestamp
+	TimeRange *TimeRange `json:"time_range,omitempty"`
+
 	// GroupID filters results to a specific group (multi-tenant)
 	GroupID string `json:"group_id,omitempty"`
 
 	// NodeTypes filters to specific entity types (e.g., ["person", "organization"])
 	NodeTypes []string `json:"node_types,omitempty"`
 
+	// SearchMethods specifies which search methods to use
+	// Default: [VectorSearch, KeywordSearch] (hybrid)
+	SearchMethods []SearchMethod `json:"search_methods,omitempty"`
+
 	// Limit is the maximum number of results to return
 	Limit int `json:"limit,omitempty"`
 
 	// MinScore filters out results below this similarity threshold (0.0-1.0)
 	MinScore float64 `json:"min_score,omitempty"`
-
-	// TimeRange filters by created_at timestamp
-	TimeRange *TimeRange `json:"time_range,omitempty"`
-
-	// SearchMethods specifies which search methods to use
-	// Default: [VectorSearch, KeywordSearch] (hybrid)
-	SearchMethods []SearchMethod `json:"search_methods,omitempty"`
 }
 
 // FactSearchResults contains the results of a factstore search
 type FactSearchResults struct {
+
+	// Query is the original query string
+	Query string `json:"query"`
+
 	// Nodes are the matching extracted nodes
 	Nodes []*ExtractedNode `json:"nodes"`
 
@@ -58,9 +63,6 @@ type FactSearchResults struct {
 
 	// EdgeScores are the relevance scores for each edge (same order as Edges)
 	EdgeScores []float64 `json:"edge_scores,omitempty"`
-
-	// Query is the original query string
-	Query string `json:"query"`
 
 	// Total is the total number of results
 	Total int `json:"total"`
@@ -86,11 +88,11 @@ type FactStoreConfig struct {
 	// DoltGres: "postgres://user:pass@localhost:5432/database" (embedded)
 	ConnectionString string `json:"connection_string,omitempty"`
 
-	// EmbeddingDimensions is the vector dimension (e.g., 1024 for qwen3-embedding)
-	EmbeddingDimensions int `json:"embedding_dimensions,omitempty"`
-
 	// DataDir is the directory for embedded DoltGres data (only for doltgres type)
 	DataDir string `json:"data_dir,omitempty"`
+
+	// EmbeddingDimensions is the vector dimension (e.g., 1024 for qwen3-embedding)
+	EmbeddingDimensions int `json:"embedding_dimensions,omitempty"`
 
 	// MaxConnections for connection pooling (postgres only)
 	MaxConnections int `json:"max_connections,omitempty"`
@@ -98,12 +100,12 @@ type FactStoreConfig struct {
 
 // Source represents the origin of extracted information.
 type Source struct {
+	CreatedAt time.Time              `json:"created_at"`
+	Metadata  map[string]interface{} `json:"metadata"`
 	ID        string                 `json:"id"`
 	Name      string                 `json:"name"`
 	Content   string                 `json:"content"`
 	GroupID   string                 `json:"group_id"`
-	Metadata  map[string]interface{} `json:"metadata"`
-	CreatedAt time.Time              `json:"created_at"`
 }
 
 // ExtractedNode is an alias to types.ExtractedNode for backward compatibility.

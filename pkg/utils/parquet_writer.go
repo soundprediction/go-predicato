@@ -33,37 +33,41 @@ func NewParquetGraphWriter(baseDir string) (*ParquetGraphWriter, error) {
 
 // ParquetEpisode represents the schema for an episode in Parquet
 type ParquetEpisode struct {
-	ID        string     `parquet:"id"`
-	Name      string     `parquet:"name"`
-	Content   string     `parquet:"content"`
 	Reference *time.Time `parquet:"reference"`
-	GroupID   string     `parquet:"group_id"`
 	CreatedAt *time.Time `parquet:"created_at"`
 	UpdatedAt *time.Time `parquet:"updated_at"`
 	ValidFrom *time.Time `parquet:"valid_from"`
-	Embedding []float32  `parquet:"embedding"`
+	ID        string     `parquet:"id"`
+	Name      string     `parquet:"name"`
+	Content   string     `parquet:"content"`
+	GroupID   string     `parquet:"group_id"`
 	Metadata  string     `parquet:"metadata"` // JSON string
+	Embedding []float32  `parquet:"embedding"`
 }
 
 // ParquetEntityNode represents the schema for an entity node in Parquet
 type ParquetEntityNode struct {
-	ID            string     `parquet:"id"`
-	Name          string     `parquet:"name"`
-	EntityType    string     `parquet:"entity_type"`
-	GroupID       string     `parquet:"group_id"`
 	CreatedAt     *time.Time `parquet:"created_at"`
 	UpdatedAt     *time.Time `parquet:"updated_at"`
 	ValidFrom     *time.Time `parquet:"valid_from"`
 	ValidTo       *time.Time `parquet:"valid_to"`
+	ID            string     `parquet:"id"`
+	Name          string     `parquet:"name"`
+	EntityType    string     `parquet:"entity_type"`
+	GroupID       string     `parquet:"group_id"`
 	Summary       string     `parquet:"summary"`
-	Embedding     []float32  `parquet:"embedding"`
-	NameEmbedding []float32  `parquet:"name_embedding"`
 	Metadata      string     `parquet:"metadata"` // JSON string
 	EpisodeID     string     `parquet:"episode_id"`
+	Embedding     []float32  `parquet:"embedding"`
+	NameEmbedding []float32  `parquet:"name_embedding"`
 }
 
 // ParquetEntityEdge represents the schema for an entity edge in Parquet
 type ParquetEntityEdge struct {
+	CreatedAt     *time.Time `parquet:"created_at"`
+	ValidFrom     *time.Time `parquet:"valid_from"`
+	InvalidAt     *time.Time `parquet:"invalid_at"`
+	ExpiredAt     *time.Time `parquet:"expired_at"`
 	ID            string     `parquet:"id"`
 	SourceID      string     `parquet:"source_id"`
 	TargetID      string     `parquet:"target_id"`
@@ -72,15 +76,11 @@ type ParquetEntityEdge struct {
 	Summary       string     `parquet:"summary"`
 	EdgeType      string     `parquet:"edge_type"`
 	GroupID       string     `parquet:"group_id"`
-	CreatedAt     *time.Time `parquet:"created_at"`
-	ValidFrom     *time.Time `parquet:"valid_from"`
-	InvalidAt     *time.Time `parquet:"invalid_at"`
-	ExpiredAt     *time.Time `parquet:"expired_at"`
-	Embedding     []float32  `parquet:"embedding"`
-	FactEmbedding []float32  `parquet:"fact_embedding"`
 	Episodes      string     `parquet:"episodes"` // JSON string
 	Metadata      string     `parquet:"metadata"` // JSON string
 	EpisodeID     string     `parquet:"episode_id"`
+	Embedding     []float32  `parquet:"embedding"`
+	FactEmbedding []float32  `parquet:"fact_embedding"`
 }
 
 // ParquetEpisodicEdge represents the schema for an episodic edge in Parquet

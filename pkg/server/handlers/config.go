@@ -20,8 +20,8 @@ func NewConfigHandler(cfg *config.Config) *ConfigHandler {
 
 // ModelsResponse represents the response for the models endpoint
 type ModelsResponse struct {
-	NLP       NLPModelsResponse       `json:"nlp"`
 	Embedding EmbeddingModelsResponse `json:"embedding"`
+	NLP       NLPModelsResponse       `json:"nlp"`
 }
 
 // NLPModelsResponse represents NLP model configuration (without API keys)

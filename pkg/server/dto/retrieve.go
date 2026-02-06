@@ -36,11 +36,11 @@ type GetEpisodesRequest struct {
 
 // Episode represents an episode in the knowledge graph
 type Episode struct {
+	CreatedAt time.Time `json:"created_at"`
 	UUID      string    `json:"uuid"`
 	GroupID   string    `json:"group_id"`
 	Content   string    `json:"content"`
 	Source    string    `json:"source,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
 }
 
 // GetEpisodesResponse represents episodes response
@@ -54,19 +54,19 @@ type SearchFactsRequest struct {
 	Query         string   `json:"query" binding:"required"`
 	GroupID       string   `json:"group_id,omitempty"`
 	NodeTypes     []string `json:"node_types,omitempty"`
+	SearchMethods []string `json:"search_methods,omitempty"` // "vector", "keyword", or both
 	Limit         int      `json:"limit,omitempty"`
 	MinScore      float64  `json:"min_score,omitempty"`
-	SearchMethods []string `json:"search_methods,omitempty"` // "vector", "keyword", or both
 }
 
 // SearchFactsResponse represents the response from a fact store search
 // Uses ExtractedNodeDTO and ExtractedEdgeDTO from ingest.go
 type SearchFactsResponse struct {
-	Success    bool               `json:"success"`
+	Query      string             `json:"query"`
 	Nodes      []ExtractedNodeDTO `json:"nodes"`
 	Edges      []ExtractedEdgeDTO `json:"edges,omitempty"`
 	NodeScores []float64          `json:"node_scores"`
 	EdgeScores []float64          `json:"edge_scores,omitempty"`
-	Query      string             `json:"query"`
 	Total      int                `json:"total"`
+	Success    bool               `json:"success"`
 }

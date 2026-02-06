@@ -17,12 +17,21 @@ var (
 
 // Node represents a node in the knowledge graph.
 type Node struct {
-	Uuid      string    `json:"uuid" mapstructure:"uuid"`
-	Name      string    `json:"name" mapstructure:"name"`
-	Type      NodeType  `json:"type" mapstructure:"type"`
-	GroupID   string    `json:"group_id" mapstructure:"group_id"`
 	CreatedAt time.Time `json:"created_at" mapstructure:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" mapstructure:"updated_at"`
+
+	Reference time.Time `json:"reference,omitempty" mapstructure:"reference"`
+
+	// Temporal fields
+	ValidFrom time.Time              `json:"valid_from" mapstructure:"valid_from"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty" mapstructure:"metadata"`
+
+	ValidTo *time.Time `json:"valid_to,omitempty" mapstructure:"valid_to"`
+
+	Uuid    string   `json:"uuid" mapstructure:"uuid"`
+	Name    string   `json:"name" mapstructure:"name"`
+	Type    NodeType `json:"type" mapstructure:"type"`
+	GroupID string   `json:"group_id" mapstructure:"group_id"`
 
 	// Entity-specific fields
 	EntityType string `json:"entity_type,omitempty" mapstructure:"entity_type"`
@@ -31,23 +40,17 @@ type Node struct {
 	// Episode-specific fields
 	EpisodeType EpisodeType `json:"episode_type,omitempty" mapstructure:"episode_type"`
 	Content     string      `json:"content,omitempty" mapstructure:"content"`
-	Reference   time.Time   `json:"reference,omitempty" mapstructure:"reference"`
 	EntityEdges []string    `json:"entity_edges,omitempty" mapstructure:"entity_edges"`
 
-	// Community-specific fields
-	Level int `json:"level,omitempty"`
-
 	// Common fields
-	Embedding     []float32              `json:"embedding,omitempty" mapstructure:"embedding"`
-	NameEmbedding []float32              `json:"name_embedding,omitempty" mapstructure:"name_embedding"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty" mapstructure:"metadata"`
-
-	// Temporal fields
-	ValidFrom time.Time  `json:"valid_from" mapstructure:"valid_from"`
-	ValidTo   *time.Time `json:"valid_to,omitempty" mapstructure:"valid_to"`
+	Embedding     []float32 `json:"embedding,omitempty" mapstructure:"embedding"`
+	NameEmbedding []float32 `json:"name_embedding,omitempty" mapstructure:"name_embedding"`
 
 	// Source tracking
 	SourceIDs []string `json:"source_ids,omitempty" mapstructure:"source_ids"`
+
+	// Community-specific fields
+	Level int `json:"level,omitempty"`
 }
 
 // Validate checks if the Node has all required fields set.
@@ -135,6 +138,12 @@ func (e *Episode) ValidateForCreate() error {
 
 // SearchConfig holds configuration for search operations.
 type SearchConfig struct {
+	// Filters for constraining search results.
+	Filters *SearchFilters
+	// NodeConfig holds configuration for node search.
+	NodeConfig *NodeSearchConfig
+	// EdgeConfig holds configuration for edge search.
+	EdgeConfig *EdgeSearchConfig
 	// Limit is the maximum number of results to return.
 	Limit int
 	// CenterNodeDistance is the maximum distance from center nodes.
@@ -145,12 +154,6 @@ type SearchConfig struct {
 	IncludeEdges bool
 	// Rerank determines if results should be reranked.
 	Rerank bool
-	// Filters for constraining search results.
-	Filters *SearchFilters
-	// NodeConfig holds configuration for node search.
-	NodeConfig *NodeSearchConfig
-	// EdgeConfig holds configuration for edge search.
-	EdgeConfig *EdgeSearchConfig
 }
 
 // Validate checks if the SearchConfig has valid values.
@@ -183,26 +186,28 @@ func (c *SearchConfig) WithDefaults() *SearchConfig {
 
 // NodeSearchConfig holds configuration for node search operations.
 type NodeSearchConfig struct {
-	// SearchMethods defines which search methods to use.
-	SearchMethods []string
 	// Reranker defines which reranking method to use.
 	Reranker string
+	// SearchMethods defines which search methods to use.
+	SearchMethods []string
 	// MinScore is the minimum score for results.
 	MinScore float64
 }
 
 // EdgeSearchConfig holds configuration for edge search operations.
 type EdgeSearchConfig struct {
-	// SearchMethods defines which search methods to use.
-	SearchMethods []string
 	// Reranker defines which reranking method to use.
 	Reranker string
+	// SearchMethods defines which search methods to use.
+	SearchMethods []string
 	// MinScore is the minimum score for results.
 	MinScore float64
 }
 
 // SearchFilters holds filters for search operations.
 type SearchFilters struct {
+	// TimeRange for temporal filtering.
+	TimeRange *TimeRange
 	// GroupIDs to include in search.
 	GroupIDs []string
 	// NodeTypes to include.
@@ -211,8 +216,6 @@ type SearchFilters struct {
 	EdgeTypes []EdgeType
 	// EntityTypes to include.
 	EntityTypes []string
-	// TimeRange for temporal filtering.
-	TimeRange *TimeRange
 }
 
 // TimeRange represents a time range for filtering.
@@ -223,32 +226,32 @@ type TimeRange struct {
 
 // SearchResults holds the results of a search operation.
 type SearchResults struct {
+	// Query used for the search.
+	Query string
 	// Nodes found in the search.
 	Nodes []*Node
 	// Edges found in the search.
 	Edges []*Edge
-	// Query used for the search.
-	Query string
 	// Total number of results found (before limit).
 	Total int
 }
 
 // ExtractedEntity represents an entity extracted from content.
 type ExtractedEntity struct {
+	Metadata map[string]string `json:"metadata"`
 	Name     string            `json:"name"`
 	Type     string            `json:"type"`
 	Summary  string            `json:"summary"`
-	Metadata map[string]string `json:"metadata"`
 }
 
 // ExtractedRelationship represents a relationship extracted from content.
 type ExtractedRelationship struct {
+	Metadata     map[string]string `json:"metadata"`
 	SourceEntity string            `json:"source_entity"`
 	TargetEntity string            `json:"target_entity"`
 	Name         string            `json:"name"`
 	Summary      string            `json:"summary"`
 	Strength     float64           `json:"strength"`
-	Metadata     map[string]string `json:"metadata"`
 }
 
 // AddEpisodeResults represents the result of adding a single episode to the knowledge graph.
@@ -302,10 +305,10 @@ type EpisodeProcessingResult struct {
 	ExtractedRelationships []*Edge `json:"extracted_relationships"`
 	// EpisodicEdges connect the episode to the extracted entities.
 	EpisodicEdges []*Edge `json:"episodic_edges"`
-	// ProcessingTime is the time taken to process this episode.
-	ProcessingTime time.Duration `json:"processing_time"`
 	// Errors encountered during processing.
 	Errors []string `json:"errors,omitempty"`
+	// ProcessingTime is the time taken to process this episode.
+	ProcessingTime time.Duration `json:"processing_time"`
 }
 
 // BulkEpisodeResults represents the result of bulk episode processing.

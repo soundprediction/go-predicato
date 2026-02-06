@@ -107,40 +107,40 @@ type GraphDriver interface {
 
 // GraphStats holds statistics about the graph.
 type GraphStats struct {
-	NodeCount      int64            `json:"node_count"`
-	EdgeCount      int64            `json:"edge_count"`
+	LastUpdated    time.Time        `json:"last_updated"`
 	NodesByType    map[string]int64 `json:"nodes_by_type"`
 	EdgesByType    map[string]int64 `json:"edges_by_type"`
+	NodeCount      int64            `json:"node_count"`
+	EdgeCount      int64            `json:"edge_count"`
 	CommunityCount int64            `json:"community_count"`
-	LastUpdated    time.Time        `json:"last_updated"`
 }
 
 // QueryOptions holds options for database queries.
 type QueryOptions struct {
-	Limit     int
-	Offset    int
+	Filters   map[string]interface{}
 	SortBy    string
 	SortOrder string
-	Filters   map[string]interface{}
+	Limit     int
+	Offset    int
 }
 
 // SearchOptions holds options for text-based search operations.
 type SearchOptions struct {
+	TimeRange   *types.TimeRange `json:"time_range,omitempty"`
+	NodeTypes   []types.NodeType `json:"node_types,omitempty"`
+	EdgeTypes   []types.EdgeType `json:"edge_types,omitempty"`
 	Limit       int              `json:"limit"`
 	UseFullText bool             `json:"use_fulltext"`
 	ExactMatch  bool             `json:"exact_match"`
-	NodeTypes   []types.NodeType `json:"node_types,omitempty"`
-	EdgeTypes   []types.EdgeType `json:"edge_types,omitempty"`
-	TimeRange   *types.TimeRange `json:"time_range,omitempty"`
 }
 
 // VectorSearchOptions holds options for vector similarity search operations.
 type VectorSearchOptions struct {
-	Limit     int              `json:"limit"`
-	MinScore  float64          `json:"min_score"`
+	TimeRange *types.TimeRange `json:"time_range,omitempty"`
 	NodeTypes []types.NodeType `json:"node_types,omitempty"`
 	EdgeTypes []types.EdgeType `json:"edge_types,omitempty"`
-	TimeRange *types.TimeRange `json:"time_range,omitempty"`
+	Limit     int              `json:"limit"`
+	MinScore  float64          `json:"min_score"`
 }
 
 // convertRecordToEdge converts a database record to an Edge object
