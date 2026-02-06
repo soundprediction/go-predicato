@@ -8,15 +8,16 @@ import (
 // This type is used by both the factstore (for persistence) and the extraction
 // pipeline (for intermediate results).
 type ExtractedNode struct {
-	ID          string    `json:"id"`
-	SourceID    string    `json:"source_id"`
-	GroupID     string    `json:"group_id"`
-	Name        string    `json:"name"`
-	Type        string    `json:"type"`
-	Description string    `json:"description"`
-	Embedding   []float32 `json:"embedding"`
-	ChunkIndex  int       `json:"chunk_index"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	SourceID       string    `json:"source_id"`
+	GroupID        string    `json:"group_id"`
+	Name           string    `json:"name"`
+	NormalizedName string    `json:"normalized_name"`
+	Type           string    `json:"type"`
+	Description    string    `json:"description"`
+	Embedding      []float32 `json:"embedding"`
+	ChunkIndex     int       `json:"chunk_index"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ExtractedEdge represents a raw relationship extracted from a source.

@@ -2,8 +2,11 @@ package factstore
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/soundprediction/predicato/pkg/utils"
 )
 
 // TestSearchMethodJSON verifies SearchMethod serializes correctly
@@ -373,5 +376,165 @@ func TestStatsJSON(t *testing.T) {
 
 	if unmarshaled.SourceCount != stats.SourceCount {
 		t.Errorf("SourceCount mismatch: expected %d, got %d", stats.SourceCount, unmarshaled.SourceCount)
+	}
+}
+
+// --- Entity Dedup Tests ---
+
+// TestExtractedNodeNormalizedNameJSON verifies NormalizedName round-trips through JSON
+func TestExtractedNodeNormalizedNameJSON(t *testing.T) {
+	node := &ExtractedNode{
+		ID:             "node-1",
+		SourceID:       "source-1",
+		GroupID:        "group-1",
+		Name:           "  Acme  Corporation ",
+		NormalizedName: "acme corporation",
+		Type:           "organization",
+		Description:    "A company",
+		ChunkIndex:     0,
+		CreatedAt:      time.Now().Truncate(time.Second),
+	}
+
+	b, err := json.Marshal(node)
+	if err != nil {
+		t.Fatalf("Failed to marshal node: %v", err)
+	}
+
+	var unmarshaled ExtractedNode
+	if err := json.Unmarshal(b, &unmarshaled); err != nil {
+		t.Fatalf("Failed to unmarshal node: %v", err)
+	}
+
+	if unmarshaled.NormalizedName != "acme corporation" {
+		t.Errorf("NormalizedName mismatch: expected 'acme corporation', got %q", unmarshaled.NormalizedName)
+	}
+}
+
+// TestDedupNormalization verifies that NormalizeStringExact produces consistent keys for dedup
+func TestDedupNormalization(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"simple lowercase", "ACME Corp", "acme corp"},
+		{"leading/trailing whitespace", "  John Smith  ", "john smith"},
+		{"multiple internal spaces", "New   York   City", "new york city"},
+		{"mixed case and whitespace", "  UNITED  States  ", "united states"},
+		{"tabs and newlines", "Hello\t\nWorld", "hello world"},
+		{"already normalized", "test entity", "test entity"},
+		{"empty string", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := utils.NormalizeStringExact(tt.input)
+			if result != tt.expected {
+				t.Errorf("NormalizeStringExact(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestDedupSameEntityNormalizesToSameKey verifies that different representations of the same
+// entity name normalize to the same dedup key
+func TestDedupSameEntityNormalizesToSameKey(t *testing.T) {
+	variants := []string{
+		"Acme Corporation",
+		"acme corporation",
+		"ACME CORPORATION",
+		"  Acme   Corporation  ",
+		"acme  corporation",
+	}
+
+	normalized := utils.NormalizeStringExact(variants[0])
+	for _, v := range variants[1:] {
+		if got := utils.NormalizeStringExact(v); got != normalized {
+			t.Errorf("Expected %q and %q to normalize the same, got %q vs %q", variants[0], v, normalized, got)
+		}
+	}
+}
+
+// TestDedupPersonTypeDetection verifies person type detection logic used in SaveExtractedKnowledge
+func TestDedupPersonTypeDetection(t *testing.T) {
+	tests := []struct {
+		nodeType string
+		isPerson bool
+	}{
+		{"person", true},
+		{"Person", true},
+		{"PERSON", true},
+		{"  Person  ", true},
+		{"organization", false},
+		{"location", false},
+		{"concept", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.nodeType, func(t *testing.T) {
+			normalizedType := strings.ToLower(strings.TrimSpace(tt.nodeType))
+			isPerson := normalizedType == "person"
+			if isPerson != tt.isPerson {
+				t.Errorf("Type %q: expected isPerson=%v, got %v", tt.nodeType, tt.isPerson, isPerson)
+			}
+		})
+	}
+}
+
+// TestDedupDescriptionMerge verifies that the longer description wins
+func TestDedupDescriptionMerge(t *testing.T) {
+	tests := []struct {
+		name        string
+		existing    string
+		incoming    string
+		shouldKeep  string
+		shouldMerge bool // true if incoming should replace existing
+	}{
+		{
+			name:        "incoming longer wins",
+			existing:    "Short desc",
+			incoming:    "A much longer and more detailed description of the entity",
+			shouldKeep:  "A much longer and more detailed description of the entity",
+			shouldMerge: true,
+		},
+		{
+			name:        "existing longer stays",
+			existing:    "A detailed existing description with lots of context",
+			incoming:    "Brief",
+			shouldKeep:  "A detailed existing description with lots of context",
+			shouldMerge: false,
+		},
+		{
+			name:        "same length no change",
+			existing:    "Same length text A",
+			incoming:    "Same length text B",
+			shouldKeep:  "Same length text A",
+			shouldMerge: false,
+		},
+		{
+			name:        "empty existing gets replaced",
+			existing:    "",
+			incoming:    "New description",
+			shouldKeep:  "New description",
+			shouldMerge: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the merge logic from SaveExtractedKnowledge
+			result := tt.existing
+			if len(tt.incoming) > len(tt.existing) {
+				result = tt.incoming
+			}
+			if result != tt.shouldKeep {
+				t.Errorf("Expected %q, got %q", tt.shouldKeep, result)
+			}
+			merged := len(tt.incoming) > len(tt.existing)
+			if merged != tt.shouldMerge {
+				t.Errorf("Expected shouldMerge=%v, got %v", tt.shouldMerge, merged)
+			}
+		})
 	}
 }

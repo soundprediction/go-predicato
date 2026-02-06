@@ -9,6 +9,7 @@ import (
 	"github.com/soundprediction/predicato/pkg/modeler"
 	"github.com/soundprediction/predicato/pkg/prompts"
 	"github.com/soundprediction/predicato/pkg/types"
+	"github.com/soundprediction/predicato/pkg/utils"
 	"github.com/soundprediction/predicato/pkg/utils/maintenance"
 )
 
@@ -67,13 +68,14 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 		for _, n := range nodes {
 			flattenedNodes = append(flattenedNodes, n)
 			factsNodes = append(factsNodes, &factstore.ExtractedNode{
-				ID:          n.Uuid,
-				SourceID:    episode.ID,
-				Name:        n.Name,
-				Type:        string(n.Type),
-				Description: n.Summary,
-				Embedding:   n.Embedding,
-				ChunkIndex:  chunkIdx,
+				ID:             n.Uuid,
+				SourceID:       episode.ID,
+				Name:           n.Name,
+				NormalizedName: utils.NormalizeStringExact(n.Name),
+				Type:           string(n.Type),
+				Description:    n.Summary,
+				Embedding:      n.Embedding,
+				ChunkIndex:     chunkIdx,
 			})
 		}
 	}
@@ -170,9 +172,9 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 				factsEdges = append(factsEdges, &factstore.ExtractedEdge{
 					ID:             e.Uuid,
 					SourceID:       episode.ID,
-					SourceNodeName: sourceName,
+					SourceNodeName: utils.NormalizeStringExact(sourceName),
 					SourceNodeType: sourceType,
-					TargetNodeName: targetName,
+					TargetNodeName: utils.NormalizeStringExact(targetName),
 					TargetNodeType: targetType,
 					Relation:       e.Name,
 					Description:    e.Summary,  // Alias for Fact

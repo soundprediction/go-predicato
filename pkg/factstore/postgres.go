@@ -12,6 +12,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/soundprediction/predicato/pkg/utils"
 )
 
 // PostgresDB implements FactsDB using PostgreSQL with VectorChord extension.
@@ -232,6 +233,44 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 		}
 	}
 
+	// --- Entity dedup migrations ---
+
+	// Add normalized_name column to extracted_nodes
+	if _, err := p.db.ExecContext(ctx, `ALTER TABLE extracted_nodes ADD COLUMN IF NOT EXISTS normalized_name TEXT`); err != nil {
+		fmt.Printf("Warning: failed to add normalized_name column: %v\n", err)
+	}
+
+	// Backfill normalized_name for existing rows
+	if _, err := p.db.ExecContext(ctx, `UPDATE extracted_nodes SET normalized_name = LOWER(TRIM(name)) WHERE normalized_name IS NULL`); err != nil {
+		fmt.Printf("Warning: failed to backfill normalized_name: %v\n", err)
+	}
+
+	// Create node_sources junction table
+	nodeSourcesTable := `
+		CREATE TABLE IF NOT EXISTS node_sources (
+			node_id VARCHAR(255) REFERENCES extracted_nodes(id),
+			source_id VARCHAR(255) REFERENCES sources(id),
+			chunk_index INT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (node_id, source_id, chunk_index)
+		)`
+	if _, err := p.db.ExecContext(ctx, nodeSourcesTable); err != nil {
+		return fmt.Errorf("failed to create node_sources table: %w", err)
+	}
+
+	// Create dedup lookup index
+	if _, err := p.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_nodes_dedup ON extracted_nodes(group_id, normalized_name, type)`); err != nil {
+		fmt.Printf("Warning: failed to create dedup index: %v\n", err)
+	}
+
+	// Backfill node_sources from existing data
+	if _, err := p.db.ExecContext(ctx, `
+		INSERT INTO node_sources (node_id, source_id, chunk_index, created_at)
+		SELECT id, source_id, chunk_index, created_at FROM extracted_nodes
+		ON CONFLICT DO NOTHING`); err != nil {
+		fmt.Printf("Warning: failed to backfill node_sources: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -304,41 +343,104 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 		return fmt.Errorf("failed to get source group_id: %w", err)
 	}
 
-	// Insert nodes
-	nodeStmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO extracted_nodes (id, source_id, group_id, name, type, description, embedding, chunk_index, created_at) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		ON CONFLICT (id) DO UPDATE SET
-			name = EXCLUDED.name,
-			type = EXCLUDED.type,
-			description = EXCLUDED.description,
-			embedding = EXCLUDED.embedding,
-			chunk_index = EXCLUDED.chunk_index`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare node statement: %w", err)
-	}
-	defer nodeStmt.Close()
+	// Track original node ID -> canonical (deduplicated) node ID for edge consistency
+	nodeIDMap := make(map[string]string)
 
 	for _, node := range nodes {
-		var embeddingVal interface{}
-		if len(node.Embedding) > 0 {
-			embeddingVal = p.embeddingToString(node.Embedding)
-		} else {
-			embeddingVal = nil // Pass NULL for empty embeddings
-		}
+		normalizedName := utils.NormalizeStringExact(node.Name)
+		normalizedType := strings.ToLower(strings.TrimSpace(node.Type))
+		isPerson := normalizedType == "person"
+
 		nodeGroupID := node.GroupID
 		if nodeGroupID == "" {
 			nodeGroupID = groupID
 		}
-		createdAt := node.CreatedAt
-		if createdAt.IsZero() {
-			createdAt = time.Now()
+
+		// Look up existing entity
+		var existingID string
+		var existingDesc string
+		if isPerson {
+			// Person: dedup only within the same source
+			err = tx.QueryRowContext(ctx, `
+				SELECT en.id, en.description FROM extracted_nodes en
+				JOIN node_sources ns ON ns.node_id = en.id
+				WHERE ns.source_id = $1 AND en.normalized_name = $2 AND LOWER(en.type) = $3
+				LIMIT 1`,
+				sourceID, normalizedName, normalizedType).Scan(&existingID, &existingDesc)
+		} else {
+			// Non-person: dedup globally within group
+			err = tx.QueryRowContext(ctx, `
+				SELECT id, description FROM extracted_nodes
+				WHERE group_id = $1 AND normalized_name = $2 AND LOWER(type) = $3
+				LIMIT 1`,
+				nodeGroupID, normalizedName, normalizedType).Scan(&existingID, &existingDesc)
 		}
 
-		if _, err := nodeStmt.ExecContext(ctx,
-			node.ID, sourceID, nodeGroupID, node.Name, node.Type, node.Description,
-			embeddingVal, node.ChunkIndex, createdAt); err != nil {
-			return fmt.Errorf("failed to insert node %s: %w", node.ID, err)
+		var canonicalID string
+		if err == nil {
+			// Found existing entity
+			canonicalID = existingID
+
+			// Update description if new one is longer
+			if len(node.Description) > len(existingDesc) {
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE extracted_nodes SET description = $1 WHERE id = $2`,
+					node.Description, existingID); err != nil {
+					return fmt.Errorf("failed to update node description %s: %w", existingID, err)
+				}
+			}
+
+			// Update embedding to latest
+			if len(node.Embedding) > 0 {
+				embeddingVal := p.embeddingToString(node.Embedding)
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE extracted_nodes SET embedding = $1 WHERE id = $2`,
+					embeddingVal, existingID); err != nil {
+					return fmt.Errorf("failed to update node embedding %s: %w", existingID, err)
+				}
+			}
+		} else if err == sql.ErrNoRows {
+			// New entity — insert
+			canonicalID = node.ID
+
+			var embeddingVal interface{}
+			if len(node.Embedding) > 0 {
+				embeddingVal = p.embeddingToString(node.Embedding)
+			}
+
+			createdAt := node.CreatedAt
+			if createdAt.IsZero() {
+				createdAt = time.Now()
+			}
+
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO extracted_nodes (id, source_id, group_id, name, normalized_name, type, description, embedding, chunk_index, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				ON CONFLICT (id) DO UPDATE SET
+					name = EXCLUDED.name,
+					normalized_name = EXCLUDED.normalized_name,
+					type = EXCLUDED.type,
+					description = EXCLUDED.description,
+					embedding = EXCLUDED.embedding,
+					chunk_index = EXCLUDED.chunk_index`,
+				canonicalID, sourceID, nodeGroupID, node.Name, normalizedName, node.Type, node.Description,
+				embeddingVal, node.ChunkIndex, createdAt); err != nil {
+				return fmt.Errorf("failed to insert node %s: %w", canonicalID, err)
+			}
+		} else {
+			return fmt.Errorf("failed to look up existing node: %w", err)
+		}
+
+		// Record mapping
+		nodeIDMap[node.ID] = canonicalID
+
+		// Insert into node_sources junction table
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO node_sources (node_id, source_id, chunk_index, created_at)
+			VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+			ON CONFLICT DO NOTHING`,
+			canonicalID, sourceID, node.ChunkIndex); err != nil {
+			return fmt.Errorf("failed to insert node_source for %s: %w", canonicalID, err)
 		}
 	}
 
@@ -365,8 +467,6 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 		var embeddingVal interface{}
 		if len(edge.Embedding) > 0 {
 			embeddingVal = p.embeddingToString(edge.Embedding)
-		} else {
-			embeddingVal = nil // Pass NULL for empty embeddings
 		}
 		edgeGroupID := edge.GroupID
 		if edgeGroupID == "" {
@@ -415,8 +515,12 @@ func (p *PostgresDB) GetSource(ctx context.Context, sourceID string) (*Source, e
 }
 
 func (p *PostgresDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]*ExtractedNode, error) {
-	rows, err := p.db.QueryContext(ctx,
-		"SELECT id, source_id, group_id, name, type, description, embedding, chunk_index, created_at FROM extracted_nodes WHERE source_id = $1",
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT en.id, en.source_id, en.group_id, en.name, en.normalized_name, en.type,
+		       en.description, en.embedding, en.chunk_index, en.created_at
+		FROM extracted_nodes en
+		JOIN node_sources ns ON ns.node_id = en.id
+		WHERE ns.source_id = $1`,
 		sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query extracted nodes: %w", err)
@@ -468,7 +572,7 @@ func (p *PostgresDB) GetAllSources(ctx context.Context, limit int) ([]*Source, e
 }
 
 func (p *PostgresDB) GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNode, error) {
-	query := "SELECT id, source_id, group_id, name, type, description, embedding, chunk_index, created_at FROM extracted_nodes"
+	query := "SELECT id, source_id, group_id, name, normalized_name, type, description, embedding, chunk_index, created_at FROM extracted_nodes"
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -734,7 +838,7 @@ func (p *PostgresDB) vectorSearchNodes(ctx context.Context, embedding []float32,
 
 	// Build query with filters (VectorChord mode)
 	sqlQuery := `
-		SELECT id, source_id, group_id, name, type, description, embedding, chunk_index, created_at,
+		SELECT id, source_id, group_id, name, normalized_name, type, description, embedding, chunk_index, created_at,
 			   1 - (embedding <=> $1::vector) AS score
 		FROM extracted_nodes
 		WHERE embedding IS NOT NULL`
@@ -787,11 +891,16 @@ func (p *PostgresDB) vectorSearchNodes(ctx context.Context, embedding []float32,
 	for rows.Next() {
 		var n ExtractedNode
 		var embeddingStr sql.NullString
+		var normalizedName sql.NullString
 		var score float64
 
-		if err := rows.Scan(&n.ID, &n.SourceID, &n.GroupID, &n.Name, &n.Type, &n.Description,
+		if err := rows.Scan(&n.ID, &n.SourceID, &n.GroupID, &n.Name, &normalizedName, &n.Type, &n.Description,
 			&embeddingStr, &n.ChunkIndex, &n.CreatedAt, &score); err != nil {
 			return nil, nil, err
+		}
+
+		if normalizedName.Valid {
+			n.NormalizedName = normalizedName.String
 		}
 
 		if score < config.MinScore {
@@ -823,7 +932,7 @@ func (p *PostgresDB) inMemoryVectorSearchNodes(ctx context.Context, embedding []
 	// Build query to fetch all nodes with embeddings
 	// Limit to MaxInMemorySearchResults to prevent excessive memory usage
 	sqlQuery := `
-		SELECT id, source_id, group_id, name, type, description, embedding, chunk_index, created_at
+		SELECT id, source_id, group_id, name, normalized_name, type, description, embedding, chunk_index, created_at
 		FROM extracted_nodes
 		WHERE embedding IS NOT NULL`
 
@@ -874,10 +983,15 @@ func (p *PostgresDB) inMemoryVectorSearchNodes(ctx context.Context, embedding []
 	for rows.Next() {
 		var n ExtractedNode
 		var embeddingJSON sql.NullString
+		var normalizedName sql.NullString
 
-		if err := rows.Scan(&n.ID, &n.SourceID, &n.GroupID, &n.Name, &n.Type, &n.Description,
+		if err := rows.Scan(&n.ID, &n.SourceID, &n.GroupID, &n.Name, &normalizedName, &n.Type, &n.Description,
 			&embeddingJSON, &n.ChunkIndex, &n.CreatedAt); err != nil {
 			return nil, nil, err
+		}
+
+		if normalizedName.Valid {
+			n.NormalizedName = normalizedName.String
 		}
 
 		if !embeddingJSON.Valid || embeddingJSON.String == "" {
@@ -921,11 +1035,11 @@ func (p *PostgresDB) inMemoryVectorSearchNodes(ctx context.Context, embedding []
 
 func (p *PostgresDB) keywordSearchNodes(ctx context.Context, query string, config *FactSearchConfig) ([]*ExtractedNode, []float64, error) {
 	sqlQuery := `
-		SELECT id, source_id, group_id, name, type, description, embedding, chunk_index, created_at,
-			   ts_rank(to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, '')), 
+		SELECT id, source_id, group_id, name, normalized_name, type, description, embedding, chunk_index, created_at,
+			   ts_rank(to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, '')),
 			          plainto_tsquery('english', $1)) AS score
 		FROM extracted_nodes
-		WHERE to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, '')) 
+		WHERE to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, ''))
 			  @@ plainto_tsquery('english', $1)`
 
 	args := []interface{}{query}
@@ -976,11 +1090,16 @@ func (p *PostgresDB) keywordSearchNodes(ctx context.Context, query string, confi
 	for rows.Next() {
 		var n ExtractedNode
 		var embeddingStr sql.NullString
+		var normalizedName sql.NullString
 		var score float64
 
-		if err := rows.Scan(&n.ID, &n.SourceID, &n.GroupID, &n.Name, &n.Type, &n.Description,
+		if err := rows.Scan(&n.ID, &n.SourceID, &n.GroupID, &n.Name, &normalizedName, &n.Type, &n.Description,
 			&embeddingStr, &n.ChunkIndex, &n.CreatedAt, &score); err != nil {
 			return nil, nil, err
+		}
+
+		if normalizedName.Valid {
+			n.NormalizedName = normalizedName.String
 		}
 
 		if score < config.MinScore {
@@ -1394,10 +1513,15 @@ func (p *PostgresDB) scanNodes(rows *sql.Rows) ([]*ExtractedNode, error) {
 	for rows.Next() {
 		var n ExtractedNode
 		var embeddingStr sql.NullString
+		var normalizedName sql.NullString
 
-		if err := rows.Scan(&n.ID, &n.SourceID, &n.GroupID, &n.Name, &n.Type, &n.Description,
+		if err := rows.Scan(&n.ID, &n.SourceID, &n.GroupID, &n.Name, &normalizedName, &n.Type, &n.Description,
 			&embeddingStr, &n.ChunkIndex, &n.CreatedAt); err != nil {
 			return nil, err
+		}
+
+		if normalizedName.Valid {
+			n.NormalizedName = normalizedName.String
 		}
 
 		if embeddingStr.Valid {
