@@ -1,3 +1,5 @@
+//go:build cgo
+
 // Package factstore provides fact storage backends.
 package factstore
 
