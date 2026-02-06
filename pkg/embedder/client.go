@@ -21,10 +21,10 @@ type Client interface {
 
 // Config holds configuration for embedding clients.
 type Config struct {
+	Headers    map[string]string `json:"headers,omitempty"` // Additional headers for requests
 	Model      string            `json:"model"`
+	BaseURL    string            `json:"base_url,omitempty"` // Custom base URL for OpenAI-compatible services
 	BatchSize  int               `json:"batch_size"`
 	Dimensions int               `json:"dimensions"`
-	BaseURL    string            `json:"base_url,omitempty"` // Custom base URL for OpenAI-compatible services
-	Headers    map[string]string `json:"headers,omitempty"`  // Additional headers for requests
-	MaxRetries int               `json:"max_retries"`        // Maximum number of retry attempts
+	MaxRetries int               `json:"max_retries"` // Maximum number of retry attempts
 }

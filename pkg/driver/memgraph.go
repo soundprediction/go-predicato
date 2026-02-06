@@ -1837,9 +1837,9 @@ func (m *MemgraphDriver) VerifyConnectivity(ctx context.Context) error {
 
 // MemgraphDriverSession implements GraphDriverSession for Memgraph.
 type MemgraphDriverSession struct {
+	session  neo4j.SessionWithContext
 	driver   *MemgraphDriver
 	database string
-	session  neo4j.SessionWithContext
 }
 
 // Enter implements the context manager pattern.

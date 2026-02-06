@@ -11,9 +11,9 @@ import (
 )
 
 type HTTPClient struct {
+	httpClient *http.Client
 	baseURL    string
 	apiKey     string
-	httpClient *http.Client
 	timeout    time.Duration
 }
 
@@ -34,11 +34,11 @@ type FastinoConfig struct {
 // }
 
 type Config struct {
-	Provider Provider       `json:"provider"`
-	Local    *LocalConfig   `json:"local,omitempty"`
-	Fastino  *FastinoConfig `json:"fastino,omitempty"`
+	Local   *LocalConfig   `json:"local,omitempty"`
+	Fastino *FastinoConfig `json:"fastino,omitempty"`
 	// Future:
 	// Native *NativeConfig `json:"native,omitempty"`
+	Provider Provider `json:"provider"`
 }
 
 func NewHTTPClient(config Config) (*HTTPClient, error) {

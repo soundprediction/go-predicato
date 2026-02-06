@@ -151,8 +151,8 @@ func (b *Builder) getNodesByUUIDs(ctx context.Context, uuids []string, groupID s
 
 // DummyMemgraphNode mimics a memgraph.Node struct
 type DummyMemgraphNode struct {
-	ID    int64
 	Props map[string]interface{}
+	ID    int64
 }
 
 func (n DummyMemgraphNode) GetID() int64                     { return n.ID }
@@ -160,8 +160,8 @@ func (n DummyMemgraphNode) GetProps() map[string]interface{} { return n.Props }
 
 // DummyNeo4jNode mimics a neo4j.Node struct
 type DummyNeo4jNode struct {
-	Id    int64 // Note the lowercase 'd'
 	Props map[string]interface{}
+	Id    int64 // Note the lowercase 'd'
 }
 
 func (n DummyNeo4jNode) GetID() int64                     { return n.Id }

@@ -8,6 +8,7 @@ import (
 // This type is used by both the factstore (for persistence) and the extraction
 // pipeline (for intermediate results).
 type ExtractedNode struct {
+	CreatedAt      time.Time `json:"created_at"`
 	ID             string    `json:"id"`
 	SourceID       string    `json:"source_id"`
 	GroupID        string    `json:"group_id"`
@@ -17,13 +18,13 @@ type ExtractedNode struct {
 	Description    string    `json:"description"`
 	Embedding      []float32 `json:"embedding"`
 	ChunkIndex     int       `json:"chunk_index"`
-	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ExtractedEdge represents a raw relationship extracted from a source.
 // This type is used by both the factstore (for persistence) and the extraction
 // pipeline (for intermediate results).
 type ExtractedEdge struct {
+	CreatedAt      time.Time `json:"created_at"`
 	ID             string    `json:"id"`
 	SourceID       string    `json:"source_id"`
 	GroupID        string    `json:"group_id"`
@@ -36,13 +37,15 @@ type ExtractedEdge struct {
 	Embedding      []float32 `json:"embedding,omitempty"`
 	Weight         float64   `json:"weight"`
 	ChunkIndex     int       `json:"chunk_index"`
-	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ExtractionResults is returned when ExtractOnly=true in AddEpisodeOptions.
 // It contains the raw extractions before graph modeling, allowing for custom
 // processing, filtering, or alternative graph modeling logic.
 type ExtractionResults struct {
+
+	// Metadata contains additional extraction information
+	Metadata *ExtractionMetadata `json:"metadata,omitempty"`
 	// SourceID is the episode/document ID in the fact store
 	SourceID string `json:"source_id"`
 
@@ -57,9 +60,6 @@ type ExtractionResults struct {
 
 	// ExtractionTime is how long the extraction took
 	ExtractionTime time.Duration `json:"extraction_time"`
-
-	// Metadata contains additional extraction information
-	Metadata *ExtractionMetadata `json:"metadata,omitempty"`
 }
 
 // ExtractionMetadata contains additional information about the extraction process.

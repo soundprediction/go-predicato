@@ -13,8 +13,8 @@ type PricingModel struct {
 
 // CostCalculator calculates estimated costs for LLM usage
 type CostCalculator struct {
-	mu     sync.RWMutex
 	prices map[string]PricingModel
+	mu     sync.RWMutex
 }
 
 // NewCostCalculator creates a new calculator with default pricing

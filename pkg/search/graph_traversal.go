@@ -12,10 +12,10 @@ import (
 
 // BFSSearchOptions holds options for BFS search operations
 type BFSSearchOptions struct {
-	MaxDepth      int
-	Limit         int
 	SearchFilters *SearchFilters
 	GroupIDs      []string
+	MaxDepth      int
+	Limit         int
 }
 
 // NodeBFSSearch performs breadth-first search to find nodes connected to origin nodes

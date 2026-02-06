@@ -14,16 +14,16 @@ import (
 // BGERerankerClient implements cross-encoder functionality using BGE reranker models
 // This client can work with BGE reranker endpoints like BAAI/bge-reranker-base
 type BGERerankerClient struct {
-	config     BGEConfig
 	httpClient *http.Client
+	config     BGEConfig
 }
 
 // BGEConfig extends Config with BGE-specific settings
 type BGEConfig struct {
-	Config
+	Headers map[string]string `json:"headers,omitempty"`
 	BaseURL string            `json:"base_url"`
 	APIKey  string            `json:"api_key,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Config
 }
 
 // NewBGERerankerClient creates a new BGE-based reranker client
@@ -56,14 +56,14 @@ type bgeRerankRequest struct {
 
 // bgeRerankResponse represents the response from BGE reranking API
 type bgeRerankResponse struct {
-	Results []bgeRerankResult `json:"results"`
 	Error   *bgeError         `json:"error,omitempty"`
+	Results []bgeRerankResult `json:"results"`
 }
 
 // bgeRerankResult represents a single reranking result
 type bgeRerankResult struct {
-	Index    int     `json:"index"`
 	Document string  `json:"document"`
+	Index    int     `json:"index"`
 	Score    float64 `json:"relevance_score"`
 }
 

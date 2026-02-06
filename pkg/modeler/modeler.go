@@ -45,23 +45,24 @@ type GraphModeler interface {
 
 // EntityResolutionInput contains input data for entity resolution.
 type EntityResolutionInput struct {
-	// ExtractedNodes are the raw entities extracted from the episode
-	ExtractedNodes []*types.Node
 
 	// Episode is the main episode node being processed
 	Episode *types.Node
 
-	// PreviousEpisodes provides context from prior episodes
-	PreviousEpisodes []*types.Node
-
 	// EntityTypes defines the entity type schema
 	EntityTypes map[string]interface{}
+
+	// Options contains resolution configuration
+	Options *EntityResolutionOptions
 
 	// GroupID is the tenant/group identifier
 	GroupID string
 
-	// Options contains resolution configuration
-	Options *EntityResolutionOptions
+	// ExtractedNodes are the raw entities extracted from the episode
+	ExtractedNodes []*types.Node
+
+	// PreviousEpisodes provides context from prior episodes
+	PreviousEpisodes []*types.Node
 }
 
 // EntityResolutionOptions configures entity resolution behavior.
@@ -81,12 +82,13 @@ type EntityResolutionOptions struct {
 
 // EntityResolutionOutput contains the results of entity resolution.
 type EntityResolutionOutput struct {
-	// ResolvedNodes are the deduplicated/merged nodes ready for the graph
-	ResolvedNodes []*types.Node
 
 	// UUIDMap maps original extraction UUID -> resolved node UUID
 	// Used to update edge endpoints after entity resolution
 	UUIDMap map[string]string
+
+	// ResolvedNodes are the deduplicated/merged nodes ready for the graph
+	ResolvedNodes []*types.Node
 
 	// MergedCount is the number of entities that were merged into existing ones
 	MergedCount int
@@ -97,11 +99,6 @@ type EntityResolutionOutput struct {
 
 // RelationshipResolutionInput contains input data for relationship resolution.
 type RelationshipResolutionInput struct {
-	// ExtractedEdges are the raw relationships extracted from the episode
-	ExtractedEdges []*types.Edge
-
-	// ResolvedNodes are the entities after resolution
-	ResolvedNodes []*types.Node
 
 	// UUIDMap maps original extraction UUID -> resolved node UUID
 	UUIDMap map[string]string
@@ -109,14 +106,20 @@ type RelationshipResolutionInput struct {
 	// Episode is the main episode node being processed
 	Episode *types.Node
 
-	// GroupID is the tenant/group identifier
-	GroupID string
-
 	// EdgeTypes defines the relationship type schema
 	EdgeTypes map[string]interface{}
 
 	// Options contains resolution configuration
 	Options *RelationshipResolutionOptions
+
+	// GroupID is the tenant/group identifier
+	GroupID string
+
+	// ExtractedEdges are the raw relationships extracted from the episode
+	ExtractedEdges []*types.Edge
+
+	// ResolvedNodes are the entities after resolution
+	ResolvedNodes []*types.Node
 }
 
 // RelationshipResolutionOptions configures relationship resolution behavior.
@@ -142,17 +145,17 @@ type RelationshipResolutionOutput struct {
 
 // CommunityInput contains input data for community detection.
 type CommunityInput struct {
-	// Nodes are the resolved entities to cluster
-	Nodes []*types.Node
-
-	// Edges are the relationships between entities
-	Edges []*types.Edge
 
 	// GroupID is the tenant/group identifier
 	GroupID string
 
 	// EpisodeID is the episode that triggered this update
 	EpisodeID string
+	// Nodes are the resolved entities to cluster
+	Nodes []*types.Node
+
+	// Edges are the relationships between entities
+	Edges []*types.Edge
 }
 
 // CommunityOutput contains the results of community detection.
@@ -166,8 +169,6 @@ type CommunityOutput struct {
 
 // ModelerValidationResult contains the results of validating a GraphModeler.
 type ModelerValidationResult struct {
-	// Valid is true if all required methods work correctly
-	Valid bool `json:"valid"`
 
 	// EntityResolution contains the result of testing ResolveEntities
 	EntityResolution *ValidationStepResult `json:"entity_resolution"`
@@ -180,16 +181,18 @@ type ModelerValidationResult struct {
 
 	// Warnings contains non-fatal issues found during validation
 	Warnings []string `json:"warnings,omitempty"`
+	// Valid is true if all required methods work correctly
+	Valid bool `json:"valid"`
 }
 
 // ValidationStepResult contains the result of validating a single modeler method.
 type ValidationStepResult struct {
-	// Passed is true if the method executed without error
-	Passed bool `json:"passed"`
 
 	// Error contains any error returned by the method
 	Error error `json:"error,omitempty"`
 
 	// Latency is how long the method took to execute
 	Latency int64 `json:"latency_ms"`
+	// Passed is true if the method executed without error
+	Passed bool `json:"passed"`
 }

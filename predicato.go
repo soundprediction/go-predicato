@@ -166,8 +166,12 @@ type NlpModels struct {
 
 // Config holds configuration for the Predicato client.
 type Config struct {
-	// GroupID is used to isolate data for multi-tenant scenarios
-	GroupID string
+	// NlpModels holds specialized NLP clients for different steps
+	NlpModels NlpModels
+
+	// DefaultGraphModeler is the default GraphModeler used for graph promotion.
+	// If nil, a DefaultModeler is created using the client's NLP/embedder config.
+	DefaultGraphModeler modeler.GraphModeler
 	// TimeZone for temporal operations
 	TimeZone *time.Location
 	// Search configuration
@@ -176,41 +180,47 @@ type Config struct {
 	EntityTypes map[string]interface{}
 	EdgeTypes   map[string]interface{}
 
-	// FactsDBURL is the connection string for the Dolt facts database
-	// Deprecated: Use FactStoreConfig instead for PostgreSQL/DoltGres support
-	FactsDBURL string
-
 	// FactStoreConfig configures the factstore backend (PostgreSQL/DoltGres)
 	// If nil and FactsDBURL is set, falls back to legacy Dolt behavior
 	FactStoreConfig *factstore.FactStoreConfig
 
 	EdgeMap map[string]map[string][]interface{}
-	// NlpModels holds specialized NLP clients for different steps
-	NlpModels NlpModels
+	// GroupID is used to isolate data for multi-tenant scenarios
+	GroupID string
 
-	// DefaultGraphModeler is the default GraphModeler used for graph promotion.
-	// If nil, a DefaultModeler is created using the client's NLP/embedder config.
-	DefaultGraphModeler modeler.GraphModeler
+	// FactsDBURL is the connection string for the Dolt facts database
+	// Deprecated: Use FactStoreConfig instead for PostgreSQL/DoltGres support
+	FactsDBURL string
 }
 
 // AddEpisodeOptions holds options for adding a single episode.
 // This matches the optional parameters from the Python add_episode method.
 type AddEpisodeOptions struct {
+
+	// GraphModeler overrides the default graph modeler for this episode.
+	// If nil, uses Config.DefaultGraphModeler or creates a DefaultModeler.
+	GraphModeler modeler.GraphModeler
+
 	// EntityTypes custom entity type definitions
 	EntityTypes map[string]interface{}
-	// ExcludedEntityTypes entity types to exclude from extraction
-	ExcludedEntityTypes []string
-	// PreviousEpisodeUUIDs UUIDs of previous episodes for context
-	PreviousEpisodeUUIDs []string
 	// EdgeTypes custom edge type definitions
 	EdgeTypes map[string]interface{}
 	// EdgeTypeMap mapping of entity pairs to edge types
 	EdgeTypeMap map[string]map[string][]interface{}
+	// ExcludedEntityTypes entity types to exclude from extraction
+	ExcludedEntityTypes []string
+	// PreviousEpisodeUUIDs UUIDs of previous episodes for context
+	PreviousEpisodeUUIDs []string
+	MaxCharacters        int
+
+	// ModelerErrorHandling controls how errors from GraphModeler are handled.
+	// Default is FailOnError.
+	ModelerErrorHandling modeler.ModelerErrorHandling
+
 	// OverwriteExisting whether to overwrite an existing episode with the same UUID
 	// Default behavior is false (skip if exists)
 	OverwriteExisting  bool
 	GenerateEmbeddings bool
-	MaxCharacters      int
 
 	// Skip options for faster ingestion or debugging
 	SkipReflexion      bool
@@ -225,14 +235,6 @@ type AddEpisodeOptions struct {
 	// promoting to the graph. Use PromoteToGraph to complete ingestion later.
 	// Requires FactStoreConfig to be configured.
 	ExtractOnly bool
-
-	// GraphModeler overrides the default graph modeler for this episode.
-	// If nil, uses Config.DefaultGraphModeler or creates a DefaultModeler.
-	GraphModeler modeler.GraphModeler
-
-	// ModelerErrorHandling controls how errors from GraphModeler are handled.
-	// Default is FailOnError.
-	ModelerErrorHandling modeler.ModelerErrorHandling
 
 	// Verbose enables detailed logging of extracted entities, relations, and summaries
 	// during ingestion. Useful for debugging and monitoring ingestion pipelines.

@@ -30,9 +30,9 @@ const (
 
 // AddMessagesRequest represents a request to add messages to the knowledge graph
 type AddMessagesRequest struct {
+	Reference *time.Time `json:"reference,omitempty"`
 	GroupID   string     `json:"group_id" binding:"required"`
 	Messages  []Message  `json:"messages" binding:"required,dive"`
-	Reference *time.Time `json:"reference,omitempty"`
 }
 
 // Validate performs validation on AddMessagesRequest
@@ -59,10 +59,10 @@ func (r *AddMessagesRequest) Validate() error {
 
 // AddEntityNodeRequest represents a request to add an entity node
 type AddEntityNodeRequest struct {
+	Attributes map[string]interface{} `json:"attributes,omitempty"`
 	GroupID    string                 `json:"group_id" binding:"required"`
 	Name       string                 `json:"name" binding:"required"`
 	EntityType string                 `json:"entity_type,omitempty"`
-	Attributes map[string]interface{} `json:"attributes,omitempty"`
 }
 
 // Validate performs validation on AddEntityNodeRequest
@@ -105,9 +105,9 @@ func (r *ClearDataRequest) Validate() error {
 
 // IngestResponse represents a response from ingest operations
 type IngestResponse struct {
-	Success   bool   `json:"success"`
 	Message   string `json:"message,omitempty"`
 	ProcessID string `json:"process_id,omitempty"`
+	Success   bool   `json:"success"`
 }
 
 // ExtractEpisodeRequest represents a request to extract entities from an episode
@@ -157,6 +157,7 @@ func (r *ExtractEpisodeRequest) Validate() error {
 
 // ExtractedNodeDTO represents an extracted entity node in API responses
 type ExtractedNodeDTO struct {
+	CreatedAt   time.Time `json:"created_at"`
 	ID          string    `json:"id"`
 	SourceID    string    `json:"source_id"`
 	GroupID     string    `json:"group_id"`
@@ -164,11 +165,11 @@ type ExtractedNodeDTO struct {
 	Type        string    `json:"type"`
 	Description string    `json:"description"`
 	ChunkIndex  int       `json:"chunk_index"`
-	CreatedAt   time.Time `json:"created_at"`
 }
 
 // ExtractedEdgeDTO represents an extracted relationship in API responses
 type ExtractedEdgeDTO struct {
+	CreatedAt      time.Time `json:"created_at"`
 	ID             string    `json:"id"`
 	SourceID       string    `json:"source_id"`
 	GroupID        string    `json:"group_id"`
@@ -180,7 +181,6 @@ type ExtractedEdgeDTO struct {
 	Description    string    `json:"description"`
 	Weight         float64   `json:"weight"`
 	ChunkIndex     int       `json:"chunk_index"`
-	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ExtractionMetadataDTO contains metadata about the extraction process
@@ -193,13 +193,13 @@ type ExtractionMetadataDTO struct {
 
 // ExtractEpisodeResponse represents the response from extraction
 type ExtractEpisodeResponse struct {
-	Success        bool                   `json:"success"`
+	Metadata       *ExtractionMetadataDTO `json:"metadata,omitempty"`
 	SourceID       string                 `json:"source_id"`
+	ExtractionTime string                 `json:"extraction_time"`
 	ExtractedNodes []ExtractedNodeDTO     `json:"extracted_nodes"`
 	ExtractedEdges []ExtractedEdgeDTO     `json:"extracted_edges"`
 	ChunkCount     int                    `json:"chunk_count"`
-	ExtractionTime string                 `json:"extraction_time"`
-	Metadata       *ExtractionMetadataDTO `json:"metadata,omitempty"`
+	Success        bool                   `json:"success"`
 }
 
 // PromoteToGraphRequest represents a request to promote extracted knowledge to the graph
@@ -231,22 +231,27 @@ func (r *PromoteToGraphRequest) Validate() error {
 
 // NodeDTO represents a node in API responses
 type NodeDTO struct {
+	CreatedAt  time.Time              `json:"created_at"`
+	UpdatedAt  *time.Time             `json:"updated_at,omitempty"`
+	ValidFrom  *time.Time             `json:"valid_from,omitempty"`
+	ValidTo    *time.Time             `json:"valid_to,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	UUID       string                 `json:"uuid"`
 	GroupID    string                 `json:"group_id"`
 	Name       string                 `json:"name"`
 	Type       string                 `json:"type"`
 	EntityType string                 `json:"entity_type,omitempty"`
 	Summary    string                 `json:"summary,omitempty"`
-	CreatedAt  time.Time              `json:"created_at"`
-	UpdatedAt  *time.Time             `json:"updated_at,omitempty"`
-	ValidFrom  *time.Time             `json:"valid_from,omitempty"`
-	ValidTo    *time.Time             `json:"valid_to,omitempty"`
 	SourceIDs  []string               `json:"source_ids,omitempty"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // EdgeDTO represents an edge in API responses
 type EdgeDTO struct {
+	CreatedAt      time.Time              `json:"created_at"`
+	ExpiredAt      *time.Time             `json:"expired_at,omitempty"`
+	ValidAt        *time.Time             `json:"valid_at,omitempty"`
+	InvalidAt      *time.Time             `json:"invalid_at,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 	UUID           string                 `json:"uuid"`
 	GroupID        string                 `json:"group_id"`
 	SourceNodeUUID string                 `json:"source_node_uuid"`
@@ -254,21 +259,16 @@ type EdgeDTO struct {
 	Type           string                 `json:"type"`
 	Name           string                 `json:"name,omitempty"`
 	Fact           string                 `json:"fact,omitempty"`
-	CreatedAt      time.Time              `json:"created_at"`
-	ExpiredAt      *time.Time             `json:"expired_at,omitempty"`
-	ValidAt        *time.Time             `json:"valid_at,omitempty"`
-	InvalidAt      *time.Time             `json:"invalid_at,omitempty"`
 	Episodes       []string               `json:"episodes,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // PromoteToGraphResponse represents the response from promoting to graph
 type PromoteToGraphResponse struct {
-	Success        bool      `json:"success"`
 	Episode        *NodeDTO  `json:"episode,omitempty"`
 	EpisodicEdges  []EdgeDTO `json:"episodic_edges"`
 	Nodes          []NodeDTO `json:"nodes"`
 	Edges          []EdgeDTO `json:"edges"`
 	Communities    []NodeDTO `json:"communities"`
 	CommunityEdges []EdgeDTO `json:"community_edges"`
+	Success        bool      `json:"success"`
 }

@@ -47,24 +47,24 @@ func NewAzureOpenAIEmbedder(config *AzureOpenAIConfig) *AzureOpenAIEmbedder {
 
 // azureEmbeddingRequest represents the request structure for Azure OpenAI embeddings API.
 type azureEmbeddingRequest struct {
-	Input []string `json:"input"`
 	Model string   `json:"model,omitempty"`
+	Input []string `json:"input"`
 }
 
 // azureEmbeddingResponse represents the response from Azure OpenAI embeddings API.
 type azureEmbeddingResponse struct {
-	Object string               `json:"object"`
-	Data   []azureEmbeddingData `json:"data"`
-	Model  string               `json:"model"`
-	Usage  azureEmbeddingUsage  `json:"usage"`
 	Error  *azureEmbeddingError `json:"error,omitempty"`
+	Object string               `json:"object"`
+	Model  string               `json:"model"`
+	Data   []azureEmbeddingData `json:"data"`
+	Usage  azureEmbeddingUsage  `json:"usage"`
 }
 
 // azureEmbeddingData represents a single embedding in the response.
 type azureEmbeddingData struct {
 	Object    string    `json:"object"`
-	Index     int       `json:"index"`
 	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
 }
 
 // azureEmbeddingUsage represents usage information in the response.

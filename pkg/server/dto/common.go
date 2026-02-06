@@ -8,9 +8,9 @@ import (
 
 // Message represents a chat message
 type Message struct {
+	Timestamp *time.Time `json:"timestamp,omitempty"`
 	Role      string     `json:"role" binding:"required"`
 	Content   string     `json:"content" binding:"required"`
-	Timestamp *time.Time `json:"timestamp,omitempty"`
 }
 
 // ValidRoles defines acceptable message roles
@@ -39,22 +39,22 @@ func (m *Message) Validate() error {
 
 // Result represents a generic API result
 type Result struct {
-	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
+	Success bool        `json:"success"`
 }
 
 // FactResult represents a fact result from the knowledge graph
 type FactResult struct {
+	CreatedAt    time.Time  `json:"created_at"`
+	ValidAt      *time.Time `json:"valid_at,omitempty"`
+	InvalidAt    *time.Time `json:"invalid_at,omitempty"`
+	Score        *float64   `json:"score,omitempty"`
 	UUID         string     `json:"uuid"`
 	Fact         string     `json:"fact"`
 	SourceName   string     `json:"source_name"`
 	TargetName   string     `json:"target_name"`
 	RelationType string     `json:"relation_type"`
-	ValidAt      *time.Time `json:"valid_at,omitempty"`
-	InvalidAt    *time.Time `json:"invalid_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	Score        *float64   `json:"score,omitempty"`
 }
 
 // ErrorResponse represents an error response

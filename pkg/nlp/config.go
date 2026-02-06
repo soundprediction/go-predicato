@@ -28,28 +28,29 @@ type LLMConfig struct {
 	// BaseURL is the base URL of the LLM API service
 	BaseURL string `json:"base_url,omitempty"`
 
-	// Temperature controls randomness in generation (0.0 to 2.0)
-	// Recommended: 0.7 for non-thinking mode
-	Temperature float32 `json:"temperature,omitempty"`
+	// SmallModel is the model to use for simpler prompts
+	SmallModel string `json:"small_model,omitempty"`
 
 	// MaxTokens is the maximum number of tokens to generate
 	MaxTokens int `json:"max_tokens,omitempty"`
-
-	// TopP controls nucleus sampling (0.0 to 1.0)
-	// Recommended: 0.8 for non-thinking mode
-	TopP float32 `json:"top_p,omitempty"`
 
 	// TopK controls top-k sampling (provider-specific, e.g., LM Studio)
 	// Recommended: 20 for non-thinking mode
 	TopK int `json:"top_k,omitempty"`
 
+	MaxRetries int `json:"max_retries,omitempty"`
+
+	// Temperature controls randomness in generation (0.0 to 2.0)
+	// Recommended: 0.7 for non-thinking mode
+	Temperature float32 `json:"temperature,omitempty"`
+
+	// TopP controls nucleus sampling (0.0 to 1.0)
+	// Recommended: 0.8 for non-thinking mode
+	TopP float32 `json:"top_p,omitempty"`
+
 	// MinP controls minimum probability threshold (provider-specific, e.g., LM Studio)
 	// Recommended: 0.0 for non-thinking mode
-	MinP       float32 `json:"min_p,omitempty"`
-	MaxRetries int     `json:"max_retries,omitempty"`
-
-	// SmallModel is the model to use for simpler prompts
-	SmallModel string `json:"small_model,omitempty"`
+	MinP float32 `json:"min_p,omitempty"`
 
 	// InsecureSkipVerify disables TLS certificate verification (useful for local self-signed certs)
 	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`

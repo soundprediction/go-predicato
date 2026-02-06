@@ -56,13 +56,13 @@ type Provider struct {
 
 // Model represents a specific AI model.
 type Model struct {
-	ID           string
-	Name         string
-	ProviderID   ProviderID
-	Capabilities []TaskCapability
-	Description  string
+	ID          string
+	Name        string
+	ProviderID  ProviderID
+	Description string
 	// Family is an optional grouping identifier (e.g., "gpt-4", "llama-3")
-	Family string
+	Family       string
+	Capabilities []TaskCapability
 }
 
 // BuiltInProviders contains the standard set of supported providers.

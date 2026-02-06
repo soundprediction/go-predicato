@@ -28,8 +28,8 @@ type AnalyzeRelevanceRequest struct {
 
 // AnalyzeRelevanceResponse is the response for relevance analysis
 type AnalyzeRelevanceResponse struct {
-	IsRelevant bool   `json:"is_relevant"`
 	Reason     string `json:"reason,omitempty"`
+	IsRelevant bool   `json:"is_relevant"`
 }
 
 // ExtractSourceRequest is the request body for source extraction

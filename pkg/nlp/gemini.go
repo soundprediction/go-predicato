@@ -34,8 +34,8 @@ func NewGeminiClient(config *LLMConfig) *GeminiClient {
 
 // geminiRequest represents the request structure for Gemini API.
 type geminiRequest struct {
-	Contents         []geminiContent         `json:"contents"`
 	GenerationConfig *geminiGenerationConfig `json:"generationConfig,omitempty"`
+	Contents         []geminiContent         `json:"contents"`
 }
 
 // geminiContent represents content in Gemini format.
@@ -59,8 +59,8 @@ type geminiGenerationConfig struct {
 
 // geminiResponse represents the response from Gemini API.
 type geminiResponse struct {
-	Candidates []geminiCandidate `json:"candidates"`
 	Error      *geminiError      `json:"error,omitempty"`
+	Candidates []geminiCandidate `json:"candidates"`
 }
 
 // geminiCandidate represents a candidate response.
@@ -70,9 +70,9 @@ type geminiCandidate struct {
 
 // geminiError represents an error response.
 type geminiError struct {
-	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Status  string `json:"status"`
+	Code    int    `json:"code"`
 }
 
 // Chat implements the Client interface for Gemini.

@@ -300,10 +300,10 @@ func (h *HealthHandler) DetailedHealthCheck(w http.ResponseWriter, r *http.Reque
 // SystemMetrics holds system runtime metrics
 type SystemMetrics struct {
 	MemoryUsage string `json:"memory_usage"`
-	Goroutines  int    `json:"goroutines"`
-	GCCycles    uint32 `json:"gc_cycles"`
-	HeapObjects uint64 `json:"heap_objects"`
 	StackUsage  string `json:"stack_usage"`
+	Goroutines  int    `json:"goroutines"`
+	HeapObjects uint64 `json:"heap_objects"`
+	GCCycles    uint32 `json:"gc_cycles"`
 }
 
 // getSystemMetrics collects current system runtime metrics

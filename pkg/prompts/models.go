@@ -44,9 +44,9 @@ type MissedEntitiesTSV struct {
 
 // EntityClassificationTriple represents an entity with classification
 type EntityClassificationTriple struct {
+	EntityType *string `json:"entity_type"`
 	UUID       string  `json:"uuid"`
 	Name       string  `json:"name"`
-	EntityType *string `json:"entity_type"`
 }
 
 // EntityClassification represents entity classifications
@@ -61,19 +61,19 @@ type EntitySummary struct {
 
 // ExtractedNodeAttributes represents extracted attributes and summary for a node
 type ExtractedNodeAttributes struct {
-	NodeID  int    `json:"node_id" mapstructure:"node_id" csv:"node_id" yaml:"node_id"`
 	Summary string `json:"summary" mapstructure:"summary" csv:"summary" yaml:"summary"`
+	NodeID  int    `json:"node_id" mapstructure:"node_id" csv:"node_id" yaml:"node_id"`
 }
 type ExtractedEdge struct {
+	UpdatedAt time.Time `json:"updated_at" mapstructure:"updated_at" csv:"updated_at"`
 	Name      string    `json:"relation_type" mapstructure:"relation_type" csv:"relation_type"` // matches Python name
 	Fact      string    `json:"fact" mapstructure:"fact" csv:"fact"`
-	SourceID  int       `json:"source_id" mapstructure:"source_id" csv:"source_id"` // alias for SourceNodeID uuid
-	TargetID  int       `json:"target_id" mapstructure:"target_id" csv:"target_id"` // alias for TargetNodeID uuid
-	UpdatedAt time.Time `json:"updated_at" mapstructure:"updated_at" csv:"updated_at"`
 	Summary   string    `json:"summary,omitempty" mapstructure:"summary" csv:"summary"`
 	ValidAt   string    `json:"valid_at,omitempty" mapstructure:"valid_at" csv:"valid_at"`       // matches Python valid_at
 	InvalidAt string    `json:"invalid_at,omitempty" mapstructure:"invalid_at" csv:"invalid_at"` // matches Python invalid_at
 	// alias for Fact
+	SourceID int `json:"source_id" mapstructure:"source_id" csv:"source_id"` // alias for SourceNodeID uuid
+	TargetID int `json:"target_id" mapstructure:"target_id" csv:"target_id"` // alias for TargetNodeID uuid
 }
 
 // ExtractedEdges represents a list of extracted edges
@@ -88,10 +88,10 @@ type MissingFacts struct {
 
 // NodeDuplicate represents a node duplicate resolution
 type NodeDuplicate struct {
-	ID           int    `json:"id" mapstructure:"id" csv:"id"`
-	DuplicateIdx int    `json:"duplicate_idx" mapstructure:"duplicate_idx" csv:"duplicate_idx"`
 	Name         string `json:"name" mapstructure:"name" csv:"name"`
 	Duplicates   []int  `json:"duplicates" mapstructure:"duplicates" csv:"duplicates"`
+	ID           int    `json:"id" mapstructure:"id" csv:"id"`
+	DuplicateIdx int    `json:"duplicate_idx" mapstructure:"duplicate_idx" csv:"duplicate_idx"`
 }
 
 // NodeResolutions represents node duplicate resolutions
@@ -101,16 +101,16 @@ type NodeResolutions struct {
 
 // EdgeDuplicate represents edge duplicate detection result
 type EdgeDuplicate struct {
+	FactType          string   `json:"fact_type"`
 	DuplicateFacts    []string `json:"duplicate_facts"`
 	ContradictedFacts []string `json:"contradicted_facts"`
-	FactType          string   `json:"fact_type"`
 }
 
 // EdgeDuplicateTSV represents edge duplicate detection result from TSV
 type EdgeDuplicateTSV struct {
+	FactType          string   `json:"fact_type" mapstructure:"fact_type" csv:"fact_type" yaml:"fact_type"`
 	DuplicateFacts    []string `json:"duplicate_facts" mapstructure:"duplicate_facts" csv:"duplicate_facts" yaml:"duplicate_facts"`
 	ContradictedFacts []string `json:"contradicted_facts" mapstructure:"contradicted_facts" csv:"contradicted_facts" yaml:"contradicted_facts"`
-	FactType          string   `json:"fact_type" mapstructure:"fact_type" csv:"fact_type" yaml:"fact_type"`
 }
 
 // UniqueFact represents a unique fact
@@ -168,25 +168,25 @@ type QAResponse struct {
 
 // EvalResponse represents an evaluation response
 type EvalResponse struct {
-	IsCorrect bool   `json:"is_correct"`
 	Reasoning string `json:"reasoning"`
+	IsCorrect bool   `json:"is_correct"`
 }
 
 // EvalAddEpisodeResults represents evaluation of episode addition results
 type EvalAddEpisodeResults struct {
-	CandidateIsWorse bool   `json:"candidate_is_worse"`
 	Reasoning        string `json:"reasoning"`
+	CandidateIsWorse bool   `json:"candidate_is_worse"`
 }
 
 // Episode represents an episode context for prompts
 type Episode struct {
+	Reference time.Time              `json:"reference"`
+	CreatedAt time.Time              `json:"created_at"`
+	Metadata  map[string]interface{} `json:"metadata"`
 	ID        string                 `json:"id"`
 	Name      string                 `json:"name"`
 	Content   string                 `json:"content"`
-	Reference time.Time              `json:"reference"`
-	CreatedAt time.Time              `json:"created_at"`
 	GroupID   string                 `json:"group_id"`
-	Metadata  map[string]interface{} `json:"metadata"`
 }
 
 // promptVersionImpl implements PromptVersion.
@@ -551,9 +551,9 @@ func ToPromptTOML(data interface{}) (string, error) {
 
 // PromptFormat defines the strategy for formatting prompt data.
 type PromptFormat struct {
+	Marshal     func(interface{}) (string, error) // Serialization function
 	Name        string                            // e.g., "YAML", "TOML", "TSV"
 	Description string                            // e.g., "provided in YAML format"
-	Marshal     func(interface{}) (string, error) // Serialization function
 }
 
 // GetPromptFormat determines the prompt format strategy from the context.

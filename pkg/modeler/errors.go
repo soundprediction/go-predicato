@@ -35,11 +35,12 @@ func (m ModelerErrorHandling) String() string {
 
 // ModelerError wraps an error with additional context about which modeler step failed.
 type ModelerError struct {
-	// Step is which modeler method failed (e.g., "ResolveEntities")
-	Step string
 
 	// Err is the underlying error
 	Err error
+
+	// Step is which modeler method failed (e.g., "ResolveEntities")
+	Step string
 
 	// Fallback indicates whether fallback to DefaultModeler was used
 	Fallback bool

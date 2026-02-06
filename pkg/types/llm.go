@@ -1,9 +1,9 @@
 package types
 
 type BadLlmCsvResponse struct {
-	Messages []*Message
-	Response string
 	Error    error
+	Response string
+	Messages []*Message
 }
 
 // Role represents the role of a message sender.

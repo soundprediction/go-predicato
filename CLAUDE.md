@@ -78,6 +78,22 @@ Follow the existing project structure and conventions:
    - Run tests to ensure functionality
    - Verify integration with existing code
 
+### Linting
+
+This project uses `betteralign` to optimize struct field ordering for memory efficiency and `golangci-lint` with the `fieldalignment` govet pass. Configuration is in `.golangci.yml`.
+
+**After modifying or creating structs**, run the struct alignment linter:
+
+```bash
+# Check for alignment issues
+betteralign ./...
+
+# Auto-fix alignment issues
+betteralign --apply ./...
+```
+
+**IMPORTANT**: `betteralign --apply` reorders struct fields. If any struct literals use positional (non-named) initialization, the reordering will break them. After running `--apply`, always verify with `go build ./...` and fix any struct literals to use named fields.
+
 ### Quality Standards
 
 - Code should compile without warnings
@@ -85,4 +101,5 @@ Follow the existing project structure and conventions:
 - Error messages should be clear and actionable
 - Performance should be reasonable for the intended use cases
 - Memory usage should be efficient and not leak resources
+- Struct fields should be ordered for optimal memory alignment (run `betteralign ./...` to check)
 

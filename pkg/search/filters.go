@@ -45,8 +45,8 @@ type EnhancedSearchFilters struct {
 
 // FilterQueryResult contains the constructed query parts and parameters
 type FilterQueryResult struct {
-	Queries    []string               `json:"queries"`
 	Parameters map[string]interface{} `json:"parameters"`
+	Queries    []string               `json:"queries"`
 }
 
 // NodeSearchFilterQueryConstructor constructs filter queries for node searches

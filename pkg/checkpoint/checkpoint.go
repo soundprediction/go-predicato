@@ -38,22 +38,22 @@ const (
 
 // EpisodeCheckpoint represents the state of a partially processed episode
 type EpisodeCheckpoint struct {
+
+	// Timestamp tracking
+	CreatedAt       time.Time          `json:"created_at"`
+	LastUpdatedAt   time.Time          `json:"last_updated_at"`
+	Options         *AddEpisodeOptions `json:"options,omitempty"`
+	MainEpisodeNode *types.Node        `json:"main_episode_node,omitempty"`
 	// Episode identification
 	EpisodeID string         `json:"episode_id"`
 	GroupID   string         `json:"group_id"`
 	Step      ProcessingStep `json:"step"`
 
-	// Timestamp tracking
-	CreatedAt      time.Time `json:"created_at"`
-	LastUpdatedAt  time.Time `json:"last_updated_at"`
-	AttemptCount   int       `json:"attempt_count"`
-	LastError      string    `json:"last_error,omitempty"`
-	LastErrorStack string    `json:"last_error_stack,omitempty"`
+	LastError      string `json:"last_error,omitempty"`
+	LastErrorStack string `json:"last_error_stack,omitempty"`
 
 	// Original episode data
-	Episode       types.Episode      `json:"episode"`
-	Options       *AddEpisodeOptions `json:"options,omitempty"`
-	MaxCharacters int                `json:"max_characters"`
+	Episode types.Episode `json:"episode"`
 
 	// STEP 1-2: Preparation data
 	Chunks           []string      `json:"chunks,omitempty"`
@@ -61,7 +61,6 @@ type EpisodeCheckpoint struct {
 
 	// STEP 3: Chunk structures
 	ChunkEpisodeNodes []*types.Node        `json:"chunk_episode_nodes,omitempty"`
-	MainEpisodeNode   *types.Node          `json:"main_episode_node,omitempty"`
 	EpisodeTuples     []utils.EpisodeTuple `json:"episode_tuples,omitempty"`
 
 	// STEP 5: Extracted entities
@@ -87,18 +86,20 @@ type EpisodeCheckpoint struct {
 	// STEP 12: Communities
 	Communities    []*types.Node `json:"communities,omitempty"`
 	CommunityEdges []*types.Edge `json:"community_edges,omitempty"`
+	AttemptCount   int           `json:"attempt_count"`
+	MaxCharacters  int           `json:"max_characters"`
 }
 
 // AddEpisodeOptions is a copy of the predicato.AddEpisodeOptions for checkpoint serialization
 type AddEpisodeOptions struct {
 	EntityTypes          map[string]interface{}              `json:"entity_types,omitempty"`
-	ExcludedEntityTypes  []string                            `json:"excluded_entity_types,omitempty"`
-	PreviousEpisodeUUIDs []string                            `json:"previous_episode_uuids,omitempty"`
 	EdgeTypes            map[string]interface{}              `json:"edge_types,omitempty"`
 	EdgeTypeMap          map[string]map[string][]interface{} `json:"edge_type_map,omitempty"`
+	ExcludedEntityTypes  []string                            `json:"excluded_entity_types,omitempty"`
+	PreviousEpisodeUUIDs []string                            `json:"previous_episode_uuids,omitempty"`
+	MaxCharacters        int                                 `json:"max_characters"`
 	OverwriteExisting    bool                                `json:"overwrite_existing"`
 	GenerateEmbeddings   bool                                `json:"generate_embeddings"`
-	MaxCharacters        int                                 `json:"max_characters"`
 	DeferGraphIngestion  bool                                `json:"defer_graph_ingestion"`
 }
 
