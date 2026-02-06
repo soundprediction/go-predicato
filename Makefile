@@ -30,11 +30,11 @@ test: generate test-cgo test-nocgo
 
 # Run tests for packages that require CGO/Ladybug
 test-cgo:
-	CGO_LDFLAGS="$(CGO_LDFLAGS)" go test -tags system_ladybug ./pkg/driver/... ./pkg/checkpoint/... ./pkg/modeler/... ./pkg/utils/...
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" go test -tags system_ladybug ./pkg/driver/... ./pkg/checkpoint/... ./pkg/modeler/... ./pkg/utils/... ./pkg/factstore/...
 
 # Run tests for pure Go packages (no CGO required)
 test-nocgo:
-	go test ./pkg/factstore/... ./pkg/embedder/... ./pkg/nlp/... ./pkg/prompts/... ./pkg/logger/...
+	go test ./pkg/embedder/... ./pkg/nlp/... ./pkg/prompts/... ./pkg/logger/...
 
 # Run tests with coverage
 test-coverage: generate

@@ -1,3 +1,5 @@
+//go:build cgo
+
 package factstore
 
 import (
@@ -5,12 +7,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
 
 	_ "github.com/dolthub/driver"
+	"github.com/soundprediction/predicato/pkg/utils"
 )
 
 // DoltDB implements FactsDB using a Dolt SQL database.
@@ -131,6 +133,42 @@ func (d *DoltDB) Initialize(ctx context.Context) error {
 			return fmt.Errorf("failed to execute init query: %w", err)
 		}
 	}
+
+	// --- Entity dedup migrations ---
+
+	// Add normalized_name column to extracted_nodes
+	if _, err := d.db.ExecContext(ctx, `ALTER TABLE extracted_nodes ADD COLUMN normalized_name TEXT`); err != nil {
+		// Column may already exist; Dolt doesn't support IF NOT EXISTS for ALTER
+		fmt.Printf("Warning: failed to add normalized_name column (may already exist): %v\n", err)
+	}
+
+	// Backfill normalized_name for existing rows
+	if _, err := d.db.ExecContext(ctx, `UPDATE extracted_nodes SET normalized_name = LOWER(TRIM(name)) WHERE normalized_name IS NULL`); err != nil {
+		fmt.Printf("Warning: failed to backfill normalized_name: %v\n", err)
+	}
+
+	// Create node_sources junction table
+	nodeSourcesTable := `
+		CREATE TABLE IF NOT EXISTS node_sources (
+			node_id VARCHAR(255),
+			source_id VARCHAR(255),
+			chunk_index INT,
+			created_at TIMESTAMP,
+			PRIMARY KEY (node_id, source_id, chunk_index),
+			FOREIGN KEY (node_id) REFERENCES extracted_nodes(id),
+			FOREIGN KEY (source_id) REFERENCES sources(id)
+		)`
+	if _, err := d.db.ExecContext(ctx, nodeSourcesTable); err != nil {
+		fmt.Printf("Warning: failed to create node_sources table: %v\n", err)
+	}
+
+	// Backfill node_sources from existing data
+	if _, err := d.db.ExecContext(ctx, `
+		INSERT IGNORE INTO node_sources (node_id, source_id, chunk_index, created_at)
+		SELECT id, source_id, chunk_index, created_at FROM extracted_nodes`); err != nil {
+		fmt.Printf("Warning: failed to backfill node_sources: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -162,27 +200,96 @@ func (d *DoltDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, no
 		return fmt.Errorf("failed to get source group_id: %w", err)
 	}
 
-	nodeStmt, err := tx.PrepareContext(ctx, `INSERT INTO extracted_nodes (id, source_id, group_id, name, type, description, embedding, chunk_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare node statement: %w", err)
-	}
-	defer nodeStmt.Close()
+	// Track original node ID -> canonical (deduplicated) node ID for edge consistency
+	nodeIDMap := make(map[string]string)
 
 	for _, node := range nodes {
-		embeddingJSON, err := json.Marshal(node.Embedding)
-		if err != nil {
-			return fmt.Errorf("failed to marshal embedding for node %s: %w", node.ID, err)
-		}
+		normalizedName := utils.NormalizeStringExact(node.Name)
+		normalizedType := strings.ToLower(strings.TrimSpace(node.Type))
+		isPerson := normalizedType == "person"
+
 		nodeGroupID := node.GroupID
 		if nodeGroupID == "" {
 			nodeGroupID = groupID
 		}
-		createdAt := node.CreatedAt
-		if createdAt.IsZero() {
-			createdAt = time.Now()
+
+		// Look up existing entity
+		var existingID string
+		var existingDesc string
+		if isPerson {
+			// Person: dedup only within the same source
+			err = tx.QueryRowContext(ctx, `
+				SELECT en.id, en.description FROM extracted_nodes en
+				JOIN node_sources ns ON ns.node_id = en.id
+				WHERE ns.source_id = ? AND en.normalized_name = ? AND LOWER(en.type) = ?
+				LIMIT 1`,
+				sourceID, normalizedName, normalizedType).Scan(&existingID, &existingDesc)
+		} else {
+			// Non-person: dedup globally within group
+			err = tx.QueryRowContext(ctx, `
+				SELECT id, description FROM extracted_nodes
+				WHERE group_id = ? AND normalized_name = ? AND LOWER(type) = ?
+				LIMIT 1`,
+				nodeGroupID, normalizedName, normalizedType).Scan(&existingID, &existingDesc)
 		}
-		if _, err := nodeStmt.ExecContext(ctx, node.ID, sourceID, nodeGroupID, node.Name, node.Type, node.Description, embeddingJSON, node.ChunkIndex, createdAt); err != nil {
-			return fmt.Errorf("failed to insert node %s: %w", node.ID, err)
+
+		var canonicalID string
+		if err == nil {
+			// Found existing entity
+			canonicalID = existingID
+
+			// Update description if new one is longer
+			if len(node.Description) > len(existingDesc) {
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE extracted_nodes SET description = ? WHERE id = ?`,
+					node.Description, existingID); err != nil {
+					return fmt.Errorf("failed to update node description %s: %w", existingID, err)
+				}
+			}
+
+			// Update embedding to latest
+			if len(node.Embedding) > 0 {
+				embeddingJSON, err := json.Marshal(node.Embedding)
+				if err != nil {
+					return fmt.Errorf("failed to marshal embedding for node %s: %w", existingID, err)
+				}
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE extracted_nodes SET embedding = ? WHERE id = ?`,
+					embeddingJSON, existingID); err != nil {
+					return fmt.Errorf("failed to update node embedding %s: %w", existingID, err)
+				}
+			}
+		} else if err == sql.ErrNoRows {
+			// New entity — insert
+			canonicalID = node.ID
+
+			embeddingJSON, err := json.Marshal(node.Embedding)
+			if err != nil {
+				return fmt.Errorf("failed to marshal embedding for node %s: %w", node.ID, err)
+			}
+
+			createdAt := node.CreatedAt
+			if createdAt.IsZero() {
+				createdAt = time.Now()
+			}
+
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO extracted_nodes (id, source_id, group_id, name, normalized_name, type, description, embedding, chunk_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				canonicalID, sourceID, nodeGroupID, node.Name, normalizedName, node.Type, node.Description, embeddingJSON, node.ChunkIndex, createdAt); err != nil {
+				return fmt.Errorf("failed to insert node %s: %w", canonicalID, err)
+			}
+		} else {
+			return fmt.Errorf("failed to look up existing node: %w", err)
+		}
+
+		// Record mapping
+		nodeIDMap[node.ID] = canonicalID
+
+		// Insert into node_sources junction table
+		if _, err := tx.ExecContext(ctx,
+			`INSERT IGNORE INTO node_sources (node_id, source_id, chunk_index, created_at) VALUES (?, ?, ?, NOW())`,
+			canonicalID, sourceID, node.ChunkIndex); err != nil {
+			return fmt.Errorf("failed to insert node_source for %s: %w", canonicalID, err)
 		}
 	}
 
@@ -237,7 +344,12 @@ func (d *DoltDB) GetSource(ctx context.Context, sourceID string) (*Source, error
 }
 
 func (d *DoltDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]*ExtractedNode, error) {
-	rows, err := d.db.QueryContext(ctx, "SELECT id, source_id, group_id, name, type, description, embedding, chunk_index, created_at FROM extracted_nodes WHERE source_id = ?", sourceID)
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT en.id, en.source_id, en.group_id, en.name, en.normalized_name, en.type,
+		       en.description, en.embedding, en.chunk_index, en.created_at
+		FROM extracted_nodes en
+		JOIN node_sources ns ON ns.node_id = en.id
+		WHERE ns.source_id = ?`, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query extracted nodes: %w", err)
 	}
@@ -248,12 +360,16 @@ func (d *DoltDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]*Ext
 		var n ExtractedNode
 		var embeddingBytes []byte
 		var groupID sql.NullString
+		var normalizedName sql.NullString
 		var createdAt sql.NullTime
-		if err := rows.Scan(&n.ID, &n.SourceID, &groupID, &n.Name, &n.Type, &n.Description, &embeddingBytes, &n.ChunkIndex, &createdAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.SourceID, &groupID, &n.Name, &normalizedName, &n.Type, &n.Description, &embeddingBytes, &n.ChunkIndex, &createdAt); err != nil {
 			return nil, err
 		}
 		if groupID.Valid {
 			n.GroupID = groupID.String
+		}
+		if normalizedName.Valid {
+			n.NormalizedName = normalizedName.String
 		}
 		if createdAt.Valid {
 			n.CreatedAt = createdAt.Time
@@ -333,7 +449,7 @@ func (d *DoltDB) GetAllSources(ctx context.Context, limit int) ([]*Source, error
 }
 
 func (d *DoltDB) GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNode, error) {
-	query := "SELECT id, source_id, group_id, name, type, description, embedding, chunk_index, created_at FROM extracted_nodes"
+	query := "SELECT id, source_id, group_id, name, normalized_name, type, description, embedding, chunk_index, created_at FROM extracted_nodes"
 	var rows *sql.Rows
 	var err error
 	if limit > 0 {
@@ -352,12 +468,16 @@ func (d *DoltDB) GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNode, 
 		var n ExtractedNode
 		var embeddingBytes []byte
 		var groupID sql.NullString
+		var normalizedName sql.NullString
 		var createdAt sql.NullTime
-		if err := rows.Scan(&n.ID, &n.SourceID, &groupID, &n.Name, &n.Type, &n.Description, &embeddingBytes, &n.ChunkIndex, &createdAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.SourceID, &groupID, &n.Name, &normalizedName, &n.Type, &n.Description, &embeddingBytes, &n.ChunkIndex, &createdAt); err != nil {
 			return nil, err
 		}
 		if groupID.Valid {
 			n.GroupID = groupID.String
+		}
+		if normalizedName.Valid {
+			n.NormalizedName = normalizedName.String
 		}
 		if createdAt.Valid {
 			n.CreatedAt = createdAt.Time
@@ -680,23 +800,3 @@ func (d *DoltDB) HybridSearch(ctx context.Context, query string, embedding []flo
 	}, nil
 }
 
-// cosineSimilarity calculates the cosine similarity between two vectors
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-
-	var dotProduct, normA, normB float64
-
-	for i := range a {
-		dotProduct += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-
-	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
-}
