@@ -51,6 +51,8 @@ Predicato implements a **two-layer architecture** that separates raw fact extrac
 
 ### Why Two Layers?
 
+Entity extraction is the expensive step — it requires LLM calls and embedding generation for every chunk of every document. By persisting the raw extraction results in the Fact Store, this work is done once and never repeated. The graph can then be built, torn down, and rebuilt with different parameters without re-extracting.
+
 **Fact Store (Layer 1)** - Stores raw extractions exactly as they were found:
 - Preserves source provenance (which document, which chunk)
 - Enables re-processing with different models or parameters
@@ -64,7 +66,7 @@ Predicato implements a **two-layer architecture** that separates raw fact extrac
 - Graph traversal finds multi-hop relationships
 
 This separation enables:
-1. **Multiple views** - Generate different graph representations from the same facts
+1. **Multiple graph views** - Generate different graph representations from the same extracted facts (different resolution thresholds, entity type filters, or custom `GraphModeler` implementations) without re-running extraction
 2. **Incremental updates** - Re-process only changed documents
 3. **Simpler RAG** - Use `SearchFacts()` when you don't need graph features
 4. **Audit trail** - Track exactly what was extracted from each source
