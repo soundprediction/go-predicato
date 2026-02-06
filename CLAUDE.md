@@ -158,9 +158,19 @@ GitHub Actions workflow (`.github/workflows/ci.yml`) runs:
 - **Resource Management**: Cleanup via defer and Close() methods
 - **Testing**: Comprehensive tests required
 
-## Linting
+## Formatting & Linting
 
-This project uses `betteralign` to optimize struct field ordering for memory efficiency and `golangci-lint` with the `fieldalignment` govet pass. Configuration is in `.golangci.yml`.
+**Always run `gofmt` before committing** — CI checks formatting and will reject unformatted code:
+
+```bash
+# Check for formatting issues
+gofmt -l .
+
+# Auto-fix formatting
+gofmt -w .
+```
+
+This project also uses `betteralign` to optimize struct field ordering for memory efficiency and `golangci-lint` with the `fieldalignment` govet pass. Configuration is in `.golangci.yml`.
 
 **After modifying or creating structs**, run the struct alignment linter:
 

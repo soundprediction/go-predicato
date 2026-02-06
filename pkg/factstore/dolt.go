@@ -799,4 +799,3 @@ func (d *DoltDB) HybridSearch(ctx context.Context, query string, embedding []flo
 		Total:      len(nodes) + len(edges),
 	}, nil
 }
-
