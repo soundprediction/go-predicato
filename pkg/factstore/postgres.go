@@ -320,7 +320,12 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 	defer nodeStmt.Close()
 
 	for _, node := range nodes {
-		embeddingStr := p.embeddingToString(node.Embedding)
+		var embeddingVal interface{}
+		if len(node.Embedding) > 0 {
+			embeddingVal = p.embeddingToString(node.Embedding)
+		} else {
+			embeddingVal = nil // Pass NULL for empty embeddings
+		}
 		nodeGroupID := node.GroupID
 		if nodeGroupID == "" {
 			nodeGroupID = groupID
@@ -332,7 +337,7 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 
 		if _, err := nodeStmt.ExecContext(ctx,
 			node.ID, sourceID, nodeGroupID, node.Name, node.Type, node.Description,
-			embeddingStr, node.ChunkIndex, createdAt); err != nil {
+			embeddingVal, node.ChunkIndex, createdAt); err != nil {
 			return fmt.Errorf("failed to insert node %s: %w", node.ID, err)
 		}
 	}
@@ -357,7 +362,12 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 	defer edgeStmt.Close()
 
 	for _, edge := range edges {
-		embeddingStr := p.embeddingToString(edge.Embedding)
+		var embeddingVal interface{}
+		if len(edge.Embedding) > 0 {
+			embeddingVal = p.embeddingToString(edge.Embedding)
+		} else {
+			embeddingVal = nil // Pass NULL for empty embeddings
+		}
 		edgeGroupID := edge.GroupID
 		if edgeGroupID == "" {
 			edgeGroupID = groupID
@@ -369,7 +379,7 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 
 		if _, err := edgeStmt.ExecContext(ctx,
 			edge.ID, sourceID, edgeGroupID, edge.SourceNodeName, edge.SourceNodeType, edge.TargetNodeName, edge.TargetNodeType,
-			edge.Relation, edge.Description, embeddingStr, edge.Weight, edge.ChunkIndex, createdAt); err != nil {
+			edge.Relation, edge.Description, embeddingVal, edge.Weight, edge.ChunkIndex, createdAt); err != nil {
 			return fmt.Errorf("failed to insert edge %s: %w", edge.ID, err)
 		}
 	}
