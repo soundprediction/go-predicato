@@ -313,7 +313,6 @@ func convertToCheckpointOptions(opts *predicato.AddEpisodeOptions) *checkpoint.A
 		EdgeTypes:            opts.EdgeTypes,
 		EdgeTypeMap:          opts.EdgeTypeMap,
 		OverwriteExisting:    opts.OverwriteExisting,
-		GenerateEmbeddings:   opts.GenerateEmbeddings,
 		MaxCharacters:        opts.MaxCharacters,
 		DeferGraphIngestion:  opts.DeferGraphIngestion,
 		DuckDBPath:           opts.DuckDBPath,

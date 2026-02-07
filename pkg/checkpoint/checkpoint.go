@@ -99,7 +99,6 @@ type AddEpisodeOptions struct {
 	PreviousEpisodeUUIDs []string                            `json:"previous_episode_uuids,omitempty"`
 	MaxCharacters        int                                 `json:"max_characters"`
 	OverwriteExisting    bool                                `json:"overwrite_existing"`
-	GenerateEmbeddings   bool                                `json:"generate_embeddings"`
 	DeferGraphIngestion  bool                                `json:"defer_graph_ingestion"`
 }
 

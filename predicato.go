@@ -75,7 +75,7 @@ type Predicato interface {
 	CreateIndices(ctx context.Context) error
 
 	// AddTriplet adds a triplet (subject-predicate-object) directly to the knowledge graph.
-	AddTriplet(ctx context.Context, sourceNode *types.Node, edge *types.Edge, targetNode *types.Node, createEmbeddings bool) (*types.AddTripletResults, error)
+	AddTriplet(ctx context.Context, sourceNode *types.Node, edge *types.Edge, targetNode *types.Node) (*types.AddTripletResults, error)
 
 	// RemoveEpisode removes an episode and its associated nodes and edges from the knowledge graph.
 	RemoveEpisode(ctx context.Context, episodeUUID string) error
@@ -220,8 +220,7 @@ type AddEpisodeOptions struct {
 
 	// OverwriteExisting whether to overwrite an existing episode with the same UUID
 	// Default behavior is false (skip if exists)
-	OverwriteExisting  bool
-	GenerateEmbeddings bool
+	OverwriteExisting bool
 
 	// Skip options for faster ingestion or debugging
 	SkipReflexion      bool

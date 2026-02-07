@@ -233,13 +233,11 @@ func (m *DefaultModeler) ResolveRelationships(ctx context.Context, input *Relati
 	}
 
 	// Resolve edges using existing logic
-	// Signature: ResolveExtractedEdges(ctx, extractedEdges, episode, entities, createEmbeddings, edgeTypes)
 	resolvedEdges, newEdges, err := edgeOps.ResolveExtractedEdges(
 		ctx,
 		mappedEdges,
 		input.Episode,
 		input.ResolvedNodes,
-		true, // createEmbeddings
 		input.EdgeTypes,
 	)
 	if err != nil {

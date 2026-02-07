@@ -314,7 +314,7 @@ func (eo *EdgeOperations) convertRecordToEdge(record map[string]interface{}) (*t
 }
 
 // ResolveExtractedEdges resolves newly extracted edges with existing ones in the graph
-func (eo *EdgeOperations) ResolveExtractedEdges(ctx context.Context, extractedEdges []*types.Edge, episode *types.Node, entities []*types.Node, createEmbeddings bool, edgeTypes map[string]interface{}) ([]*types.Edge, []*types.Edge, error) {
+func (eo *EdgeOperations) ResolveExtractedEdges(ctx context.Context, extractedEdges []*types.Edge, episode *types.Node, entities []*types.Node, edgeTypes map[string]interface{}) ([]*types.Edge, []*types.Edge, error) {
 	if len(extractedEdges) == 0 {
 		return []*types.Edge{}, []*types.Edge{}, nil
 	}
@@ -383,13 +383,11 @@ func (eo *EdgeOperations) ResolveExtractedEdges(ctx context.Context, extractedEd
 		invalidatedEdges = append(invalidatedEdges, newlyInvalidated...)
 	}
 
-	if createEmbeddings {
-		// Create embeddings for all resolved and invalidated edges
-		allEdges := append(resolvedEdges, invalidatedEdges...)
-		for _, edge := range allEdges {
-			if err := eo.createEdgeEmbedding(ctx, edge); err != nil {
-				log.Printf("Warning: failed to create embedding for edge: %v", err)
-			}
+	// Create embeddings for all resolved and invalidated edges
+	allEdges := append(resolvedEdges, invalidatedEdges...)
+	for _, edge := range allEdges {
+		if err := eo.createEdgeEmbedding(ctx, edge); err != nil {
+			log.Printf("Warning: failed to create embedding for edge: %v", err)
 		}
 	}
 
