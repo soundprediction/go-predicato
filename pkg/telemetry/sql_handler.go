@@ -14,19 +14,37 @@ import (
 	_ "github.com/go-sql-driver/mysql" // Ensure mysql driver is available for Dolt
 )
 
+// SQLDialect controls placeholder style and column types for SQL telemetry.
+type SQLDialect int
+
+const (
+	// DialectMySQL uses ? placeholders and JSON column type.
+	DialectMySQL SQLDialect = iota
+	// DialectPostgres uses $1 placeholders and JSONB column type.
+	DialectPostgres
+)
+
 // SQLHandler is a slog.Handler that writes logs to a SQL database
 type SQLHandler struct {
 	next      slog.Handler
 	db        *sql.DB
 	tableName string
+	dialect   SQLDialect
 }
 
-// NewSQLHandler creates a new SQLHandler using an existing DB connection
+// NewSQLHandler creates a new SQLHandler using an existing DB connection.
+// Defaults to MySQL dialect for backward compatibility.
 func NewSQLHandler(next slog.Handler, db *sql.DB) (*SQLHandler, error) {
+	return NewSQLHandlerWithDialect(next, db, DialectMySQL)
+}
+
+// NewSQLHandlerWithDialect creates a new SQLHandler with the specified SQL dialect.
+func NewSQLHandlerWithDialect(next slog.Handler, db *sql.DB, dialect SQLDialect) (*SQLHandler, error) {
 	h := &SQLHandler{
 		next:      next,
 		db:        db,
 		tableName: "telemetry_logs",
+		dialect:   dialect,
 	}
 
 	if err := h.ensureTable(); err != nil {
@@ -37,6 +55,11 @@ func NewSQLHandler(next slog.Handler, db *sql.DB) (*SQLHandler, error) {
 }
 
 func (h *SQLHandler) ensureTable() error {
+	attrType := "JSON"
+	if h.dialect == DialectPostgres {
+		attrType = "JSONB"
+	}
+
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			id VARCHAR(36) PRIMARY KEY,
@@ -48,9 +71,9 @@ func (h *SQLHandler) ensureTable() error {
 			request_source VARCHAR(255),
 			source_file VARCHAR(255),
 			line_number INT,
-			attributes JSON
+			attributes %s
 		)
-	`, h.tableName)
+	`, h.tableName, attrType)
 
 	_, err := h.db.Exec(query)
 	return err
@@ -103,10 +126,18 @@ func (h *SQLHandler) Handle(ctx context.Context, r slog.Record) error {
 	id := uuid.New().String()
 	timestamp := r.Time.UTC()
 
-	query := fmt.Sprintf(`
-		INSERT INTO %s (id, timestamp, level, message, user_id, session_id, request_source, source_file, line_number, attributes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, h.tableName)
+	var query string
+	if h.dialect == DialectPostgres {
+		query = fmt.Sprintf(`
+			INSERT INTO %s (id, timestamp, level, message, user_id, session_id, request_source, source_file, line_number, attributes)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`, h.tableName)
+	} else {
+		query = fmt.Sprintf(`
+			INSERT INTO %s (id, timestamp, level, message, user_id, session_id, request_source, source_file, line_number, attributes)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, h.tableName)
+	}
 
 	_, err := h.db.Exec(query,
 		id,
@@ -135,6 +166,7 @@ func (h *SQLHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 		next:      h.next.WithAttrs(attrs),
 		db:        h.db,
 		tableName: h.tableName,
+		dialect:   h.dialect,
 	}
 }
 
@@ -144,5 +176,6 @@ func (h *SQLHandler) WithGroup(name string) slog.Handler {
 		next:      h.next.WithGroup(name),
 		db:        h.db,
 		tableName: h.tableName,
+		dialect:   h.dialect,
 	}
 }

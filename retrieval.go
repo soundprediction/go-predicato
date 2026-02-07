@@ -217,7 +217,7 @@ func convertReranker(reranker string) search.RerankerType {
 func (c *Client) SearchFacts(ctx context.Context, query string, config *types.SearchConfig) (*factstore.FactSearchResults, error) {
 	// Check if factstore is configured
 	if c.factStore == nil {
-		return nil, fmt.Errorf("factstore not configured: set FactStoreConfig or FactsDBURL in Config")
+		return nil, fmt.Errorf("factstore not configured: set DbConfig in Config")
 	}
 
 	// Check if embedder is available

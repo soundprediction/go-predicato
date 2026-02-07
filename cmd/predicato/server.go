@@ -427,7 +427,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 		if embDim <= 0 {
 			embDim = 1024 // Default for qwen3-embedding
 		}
-		factsDBConfig := &factstore.FactStoreConfig{
+		dbConfig := &factstore.DbConfig{
 			Type:                factstore.FactStoreTypePostgres,
 			ConnectionString:    cfg.FactStore.ConnectionString,
 			EmbeddingDimensions: embDim,
@@ -435,9 +435,9 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 		fmt.Printf("Using PostgreSQL factstore (VectorChord): %s\n", cfg.FactStore.ConnectionString)
 
 		predicatoConfig = &predicato.Config{
-			GroupID:         "default",
-			TimeZone:        time.UTC,
-			FactStoreConfig: factsDBConfig,
+			GroupID:  "default",
+			TimeZone: time.UTC,
+			DbConfig: dbConfig,
 		}
 	} else {
 		// Default to embedded Dolt

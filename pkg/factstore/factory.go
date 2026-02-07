@@ -5,12 +5,16 @@ import (
 )
 
 // NewFactsDB creates a new FactsDB instance based on the configuration.
-// - FactStoreTypePostgres: Uses external PostgreSQL with VectorChord for native vector search
-// - FactStoreTypeDoltGres: Uses DoltGres with in-memory vector search (no VectorChord support)
-// If Type is empty, defaults to DoltGres.
-func NewFactsDB(config *FactStoreConfig) (FactsDB, error) {
+// If config.DB is set, it is returned directly (no new connection is opened).
+// Otherwise a new connection is created based on config.Type.
+func NewFactsDB(config *DbConfig) (FactsDB, error) {
 	if config == nil {
-		return nil, fmt.Errorf("factstore config is required")
+		return nil, fmt.Errorf("storage config is required")
+	}
+
+	// If a pre-built DB is provided, use it directly
+	if config.DB != nil {
+		return config.DB, nil
 	}
 
 	// Default values
@@ -23,36 +27,31 @@ func NewFactsDB(config *FactStoreConfig) (FactsDB, error) {
 	}
 
 	switch config.Type {
-	case FactStoreTypePostgres:
-		// External PostgreSQL with VectorChord for native vector search
+	case DbTypePostgres:
 		return NewPostgresDB(config.ConnectionString, config.EmbeddingDimensions)
 
-	case FactStoreTypeDoltGres, "":
-		// DoltGres without VectorChord - uses in-memory vector search
+	case DbTypeDoltGres, "":
 		return NewDoltGresDB(config.ConnectionString, config.EmbeddingDimensions)
 
 	default:
-		return nil, fmt.Errorf("unsupported factstore type: %s (supported: postgres, doltgres)", config.Type)
+		return nil, fmt.Errorf("unsupported storage type: %s (supported: postgres, doltgres, mysql, sqlite, duckdb)", config.Type)
 	}
 }
 
 // NewFactsDBFromURL creates a FactsDB from a simple connection URL.
 // This is a convenience function for quick setup with external PostgreSQL + VectorChord.
-// For PostgreSQL: "postgres://user:pass@host:5432/dbname"
-// For DoltGres, use NewFactsDB with FactStoreTypeDoltGres explicitly.
 func NewFactsDBFromURL(connectionURL string, embeddingDimensions int) (FactsDB, error) {
-	return NewFactsDB(&FactStoreConfig{
-		Type:                FactStoreTypePostgres,
+	return NewFactsDB(&DbConfig{
+		Type:                DbTypePostgres,
 		ConnectionString:    connectionURL,
 		EmbeddingDimensions: embeddingDimensions,
 	})
 }
 
 // NewDoltGresFactsDB creates a FactsDB for DoltGres (without VectorChord).
-// This is a convenience function for DoltGres setup.
 func NewDoltGresFactsDB(connectionURL string, embeddingDimensions int) (FactsDB, error) {
-	return NewFactsDB(&FactStoreConfig{
-		Type:                FactStoreTypeDoltGres,
+	return NewFactsDB(&DbConfig{
+		Type:                DbTypeDoltGres,
 		ConnectionString:    connectionURL,
 		EmbeddingDimensions: embeddingDimensions,
 	})

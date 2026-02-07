@@ -68,24 +68,48 @@ type FactSearchResults struct {
 	Total int `json:"total"`
 }
 
-// FactStoreType defines the backend database type
-type FactStoreType string
+// DbType defines the backend database type
+type DbType string
 
 const (
-	// FactStoreTypePostgres uses external PostgreSQL with VectorChord
-	FactStoreTypePostgres FactStoreType = "postgres"
-	// FactStoreTypeDoltGres uses embedded DoltGres (PostgreSQL-compatible)
-	FactStoreTypeDoltGres FactStoreType = "doltgres"
+	// DbTypePostgres uses external PostgreSQL with VectorChord
+	DbTypePostgres DbType = "postgres"
+	// DbTypeDoltGres uses embedded DoltGres (PostgreSQL-compatible)
+	DbTypeDoltGres DbType = "doltgres"
+	// DbTypeMySQL uses MySQL-compatible databases
+	DbTypeMySQL DbType = "mysql"
+	// DbTypeSQLite uses SQLite for local/embedded storage
+	DbTypeSQLite DbType = "sqlite"
+	// DbTypeDuckDB uses DuckDB for analytical workloads
+	DbTypeDuckDB DbType = "duckdb"
 )
 
-// FactStoreConfig configures the factstore backend
-type FactStoreConfig struct {
-	// Type is the backend type: "postgres" or "doltgres" (default)
-	Type FactStoreType `json:"type,omitempty"`
+// Deprecated aliases for backward compatibility.
+type FactStoreType = DbType
+
+const (
+	FactStoreTypePostgres = DbTypePostgres
+	FactStoreTypeDoltGres = DbTypeDoltGres
+)
+
+// DbConfig configures the structured store backend.
+// Either set DB to provide a pre-built FactsDB instance (e.g. to share
+// a connection pool with the host application), or set Type and
+// ConnectionString to have one created automatically.
+type DbConfig struct {
+	// DB is an optional pre-built FactsDB instance.
+	// When set, Type/ConnectionString/DataDir are ignored and no new
+	// connection is opened.
+	DB FactsDB `json:"-"`
+
+	// Type is the backend type: "postgres", "doltgres", "mysql", "sqlite", "duckdb"
+	Type DbType `json:"type,omitempty"`
 
 	// ConnectionString for the database
 	// Postgres: "postgres://user:pass@host:5432/database?sslmode=disable"
-	// DoltGres: "postgres://user:pass@localhost:5432/database" (embedded)
+	// MySQL:    "user:pass@tcp(host:3306)/database"
+	// SQLite:   "file:path/to/db.sqlite"
+	// DuckDB:   "path/to/db.duckdb"
 	ConnectionString string `json:"connection_string,omitempty"`
 
 	// DataDir is the directory for embedded DoltGres data (only for doltgres type)
@@ -94,9 +118,12 @@ type FactStoreConfig struct {
 	// EmbeddingDimensions is the vector dimension (e.g., 1024 for qwen3-embedding)
 	EmbeddingDimensions int `json:"embedding_dimensions,omitempty"`
 
-	// MaxConnections for connection pooling (postgres only)
+	// MaxConnections for connection pooling (postgres/mysql only)
 	MaxConnections int `json:"max_connections,omitempty"`
 }
+
+// Deprecated: use DbConfig instead.
+type FactStoreConfig = DbConfig
 
 // Source represents the origin of extracted information.
 type Source struct {
