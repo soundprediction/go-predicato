@@ -178,10 +178,10 @@ func (eo *EdgeOperations) ExtractEdges(ctx context.Context, episode *types.Node,
 				sourceNode.Uuid,
 				targetNode.Uuid,
 				groupID,
-				rel.Type,
+				utils.CleanString(rel.Type),
 				types.EntityEdgeType,
 			)
-			edge.Fact = fmt.Sprintf("%s %s %s", rel.Source, rel.Type, rel.Target)
+			edge.Fact = utils.CleanString(fmt.Sprintf("%s %s %s", rel.Source, rel.Type, rel.Target))
 			edge.Summary = edge.Fact
 			edge.UpdatedAt = time.Now().UTC()
 			edge.ValidFrom = episode.ValidFrom

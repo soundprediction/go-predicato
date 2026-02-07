@@ -142,12 +142,12 @@ func (no *NodeOperations) ExtractNodes(ctx context.Context, episode *types.Node,
 			Uuid:       utils.GenerateUUID(),
 			Type:       types.EntityNodeType,
 			GroupID:    episode.GroupID,
-			Name:       entity.Text,
-			Summary:    entity.Text, // Initial summary is the name
+			Name:       utils.CleanString(entity.Text),
+			Summary:    utils.CleanString(entity.Text), // Initial summary is the name
 			CreatedAt:  time.Now().UTC(),
 			UpdatedAt:  time.Now().UTC(),
 			ValidFrom:  episode.ValidFrom,
-			EntityType: entity.Label,
+			EntityType: utils.CleanString(entity.Label),
 			Metadata: map[string]interface{}{
 				"confidence": entity.Confidence,
 				"start":      entity.Start,
