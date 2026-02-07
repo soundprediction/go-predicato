@@ -38,13 +38,13 @@ func CleanString(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\t", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
-	
+
 	// Collapse multiple spaces into one
 	// Using a loop is simple and effective for this without regex overhead
 	for strings.Contains(s, "  ") {
 		s = strings.ReplaceAll(s, "  ", " ")
 	}
-	
+
 	return strings.TrimSpace(s)
 }
 
