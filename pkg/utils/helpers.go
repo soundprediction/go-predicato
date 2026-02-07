@@ -31,6 +31,23 @@ var (
 	ErrInvalidEntityType = errors.New("invalid entity type")
 )
 
+// CleanString removes extraneous spaces and line breaks from a string.
+// It trims whitespace from the ends and replaces multiple whitespace/newline sequences with a single space.
+func CleanString(s string) string {
+	// Replace all newlines and tabs with spaces
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	
+	// Collapse multiple spaces into one
+	// Using a loop is simple and effective for this without regex overhead
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	
+	return strings.TrimSpace(s)
+}
+
 // GetUseParallelRuntime returns whether to use parallel runtime based on environment variable
 func GetUseParallelRuntime() bool {
 	val := os.Getenv("USE_PARALLEL_RUNTIME")
