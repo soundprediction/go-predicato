@@ -103,7 +103,7 @@ type Predicato interface {
 	// This is the first step of the two-phase ingestion pipeline when you want to
 	// decouple extraction from graph modeling.
 	//
-	// Requires FactStoreConfig to be set in Config.
+	// Requires DbConfig to be set in Config.
 	ExtractToFacts(ctx context.Context, episode types.Episode, options *AddEpisodeOptions) (*types.ExtractionResults, error)
 
 	// PromoteToGraph takes previously extracted facts from the fact store and promotes
@@ -180,16 +180,17 @@ type Config struct {
 	EntityTypes map[string]interface{}
 	EdgeTypes   map[string]interface{}
 
-	// FactStoreConfig configures the factstore backend (PostgreSQL/DoltGres)
-	// If nil and FactsDBURL is set, falls back to legacy Dolt behavior
-	FactStoreConfig *factstore.FactStoreConfig
+	// DbConfig configures the structured store backend.
+	// Set DbConfig.DB to pass a pre-built FactsDB, or set Type and
+	// ConnectionString to have one created automatically.
+	DbConfig *factstore.DbConfig
 
 	EdgeMap map[string]map[string][]interface{}
 	// GroupID is used to isolate data for multi-tenant scenarios
 	GroupID string
 
 	// FactsDBURL is the connection string for the Dolt facts database
-	// Deprecated: Use FactStoreConfig instead for PostgreSQL/DoltGres support
+	// Deprecated: Use DbConfig instead
 	FactsDBURL string
 }
 
@@ -233,7 +234,7 @@ type AddEpisodeOptions struct {
 
 	// ExtractOnly stops after extraction, storing facts in the factstore but not
 	// promoting to the graph. Use PromoteToGraph to complete ingestion later.
-	// Requires FactStoreConfig to be configured.
+	// Requires DbConfig to be configured.
 	ExtractOnly bool
 
 	// Verbose enables detailed logging of extracted entities, relations, and summaries
@@ -264,14 +265,18 @@ func NewClient(driver driver.GraphDriver, nlProcessor nlp.Client, embedderClient
 
 	var factStore factstore.FactsDB
 
-	// Prefer FactStoreConfig over deprecated FactsDBURL
-	if config.FactStoreConfig != nil {
-		factStore, err = factstore.NewFactsDB(config.FactStoreConfig)
+	// Create or reuse the structured store
+	if config.DbConfig != nil {
+		factStore, err = factstore.NewFactsDB(config.DbConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create factstore: %w", err)
 		}
-		if err := factStore.Initialize(context.Background()); err != nil {
-			return nil, fmt.Errorf("failed to initialize factstore: %w", err)
+		// Only auto-initialize when the factory created a new connection
+		// (i.e. no pre-built DB was provided)
+		if config.DbConfig.DB == nil {
+			if err := factStore.Initialize(context.Background()); err != nil {
+				return nil, fmt.Errorf("failed to initialize factstore: %w", err)
+			}
 		}
 	} else if config.FactsDBURL != "" {
 		// Legacy Dolt support (deprecated)

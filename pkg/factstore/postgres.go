@@ -87,6 +87,21 @@ func NewPostgresDBWithConfig(connectionString string, embeddingDimensions int, u
 	}, nil
 }
 
+// NewPostgresDBFromConn creates a PostgresDB that wraps an existing *sql.DB connection.
+// Use this to share a connection pool with the rest of your application instead of
+// opening a separate one. The caller retains ownership of the connection and is
+// responsible for closing it.
+func NewPostgresDBFromConn(db *sql.DB, embeddingDimensions int) *PostgresDB {
+	if embeddingDimensions <= 0 {
+		embeddingDimensions = 1024
+	}
+	return &PostgresDB{
+		db:                  db,
+		embeddingDimensions: embeddingDimensions,
+		usePgVector:         true,
+	}
+}
+
 // NewDoltGresDB creates a new PostgresDB instance for DoltGres (without VectorChord).
 // Uses in-memory vector search since DoltGres doesn't support VectorChord extension.
 // connectionString should be a valid PostgreSQL DSN for DoltGres server.

@@ -8,13 +8,15 @@
 // The following storage backends are supported:
 //   - PostgresDB: PostgreSQL with optional VectorChord extension for vector search
 //   - DoltDB: Dolt SQL database (deprecated, use PostgresDB with DoltGres)
+//   - MySQL, SQLite, DuckDB: via migration SQL files (see migrations/ directory)
 //
 // # Usage
 //
-//	config := &factstore.FactStoreConfig{
+// Create from config:
+//
+//	config := &factstore.DbConfig{
 //	    Type:             "postgres",
 //	    ConnectionString: "postgres://user:pass@localhost:5432/facts",
-//	    UsePgVector:      true,
 //	}
 //	db, err := factstore.NewFactsDB(config)
 //	if err != nil {
@@ -22,10 +24,12 @@
 //	}
 //	defer db.Close()
 //
-//	// Initialize tables
-//	if err := db.Initialize(ctx); err != nil {
-//	    return err
+// Or pass a pre-built connection:
+//
+//	config := &factstore.DbConfig{
+//	    DB: factstore.NewPostgresDBFromConn(existingDB, 1024),
 //	}
+//	db, err := factstore.NewFactsDB(config)
 //
 // # Search Capabilities
 //

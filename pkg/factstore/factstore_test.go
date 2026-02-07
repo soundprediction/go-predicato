@@ -106,8 +106,8 @@ func TestFactSearchResultsJSON(t *testing.T) {
 	}
 }
 
-// TestFactStoreConfigValidation tests config validation
-func TestFactStoreConfigValidation(t *testing.T) {
+// TestDbConfigValidation tests config validation
+func TestDbConfigValidation(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      *FactStoreConfig
