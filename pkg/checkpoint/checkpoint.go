@@ -97,10 +97,9 @@ type AddEpisodeOptions struct {
 	EdgeTypeMap          map[string]map[string][]interface{} `json:"edge_type_map,omitempty"`
 	ExcludedEntityTypes  []string                            `json:"excluded_entity_types,omitempty"`
 	PreviousEpisodeUUIDs []string                            `json:"previous_episode_uuids,omitempty"`
-	MaxCharacters        int                                 `json:"max_characters"`
-	OverwriteExisting    bool                                `json:"overwrite_existing"`
-	GenerateEmbeddings   bool                                `json:"generate_embeddings"`
-	DeferGraphIngestion  bool                                `json:"defer_graph_ingestion"`
+	MaxCharacters       int                                 `json:"max_characters"`
+	OverwriteExisting   bool                                `json:"overwrite_existing"`
+	DeferGraphIngestion bool                                `json:"defer_graph_ingestion"`
 }
 
 // CheckpointManager manages episode checkpoints

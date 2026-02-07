@@ -60,6 +60,36 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 		return nil, err
 	}
 
+	// 4b. Generate Node Embeddings
+	if c.embedder != nil {
+		for _, nodes := range extractedNodesByChunk {
+			if len(nodes) == 0 {
+				continue
+			}
+			texts := make([]string, len(nodes))
+			for i, n := range nodes {
+				if n.Summary != "" {
+					texts[i] = n.Name + " " + n.Summary
+				} else {
+					texts[i] = n.Name
+				}
+			}
+			embeddings, err := c.embedder.Embed(ctx, texts)
+			if err != nil {
+				c.logger.Warn("Failed to generate node embeddings, continuing without",
+					"error", err,
+					"episode_id", episode.ID)
+			} else {
+				for i, emb := range embeddings {
+					nodes[i].Embedding = emb
+				}
+			}
+		}
+	} else {
+		c.logger.Warn("No embedder configured, skipping node embedding generation",
+			"episode_id", episode.ID)
+	}
+
 	// 5. Prepare Facts Data (Nodes)
 	var flattenedNodes []*types.Node
 	var factsNodes []*factstore.ExtractedNode
@@ -183,6 +213,27 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 				})
 			}
 		}
+	}
+
+	// 6b. Generate Edge Embeddings
+	if c.embedder != nil && len(factsEdges) > 0 {
+		texts := make([]string, len(factsEdges))
+		for i, e := range factsEdges {
+			texts[i] = e.Description
+		}
+		embeddings, err := c.embedder.Embed(ctx, texts)
+		if err != nil {
+			c.logger.Warn("Failed to generate edge embeddings, continuing without",
+				"error", err,
+				"episode_id", episode.ID)
+		} else {
+			for i, emb := range embeddings {
+				factsEdges[i].Embedding = emb
+			}
+		}
+	} else if c.embedder == nil && len(factsEdges) > 0 {
+		c.logger.Warn("No embedder configured, skipping edge embedding generation",
+			"episode_id", episode.ID)
 	}
 
 	// Verbose logging for extracted relations

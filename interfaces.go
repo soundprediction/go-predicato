@@ -75,7 +75,7 @@ type GraphQuerier interface {
 // Use this interface when you need direct manipulation of the graph structure.
 type GraphMutator interface {
 	// AddTriplet adds a triplet (subject-predicate-object) directly to the knowledge graph.
-	AddTriplet(ctx context.Context, sourceNode *types.Node, edge *types.Edge, targetNode *types.Node, createEmbeddings bool) (*types.AddTripletResults, error)
+	AddTriplet(ctx context.Context, sourceNode *types.Node, edge *types.Edge, targetNode *types.Node) (*types.AddTripletResults, error)
 
 	// ClearGraph removes all nodes and edges from the knowledge graph for a specific group.
 	ClearGraph(ctx context.Context, groupID string) error
