@@ -112,14 +112,7 @@ func (a *LLMAdapter) Summarize(ctx context.Context, text string) (string, error)
 		return "", fmt.Errorf("task mismatch: adapter configured for %s, requested Summarize", a.task)
 	}
 
-	summaries, err := a.client.Summarize(text)
-	if err != nil {
-		return "", err
-	}
-	if len(summaries) == 0 {
-		return "", nil
-	}
-	return summaries[0], nil
+	return a.client.Summarize(ctx, text)
 }
 
 // GenerateText provides direct access to text generation
@@ -128,7 +121,7 @@ func (a *LLMAdapter) GenerateText(ctx context.Context, prompt string) (string, e
 		return "", fmt.Errorf("task mismatch: adapter configured for %s, requested GenerateText", a.task)
 	}
 
-	return a.client.GenerateText(prompt)
+	return a.client.GenerateText(ctx, prompt)
 }
 
 // GetCapabilities returns the list of capabilities supported by this client.
@@ -145,6 +138,11 @@ func (a *LLMAdapter) GetCapabilities() []nlp.TaskCapability {
 	default:
 		return []nlp.TaskCapability{}
 	}
+}
+
+// ExtractExtended implements the nlp.Client interface.
+func (a *LLMAdapter) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*nlp.ExtendedExtractionResult, error) {
+	return nil, fmt.Errorf("RustBert does not support extended extraction")
 }
 
 // GetModel returns the model identifier.

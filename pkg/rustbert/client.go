@@ -179,6 +179,23 @@ func (c *Client) Summarize(ctx context.Context, text string) (string, error) {
 	return "", nil
 }
 
+// LoadTextGenerationModel loads the Text Generation model.
+func (c *Client) LoadTextGenerationModel() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.textGenModel != nil {
+		return nil
+	}
+
+	m, err := rustbert.NewTextGenerationModel()
+	if err != nil {
+		return fmt.Errorf("failed to create Text Generation model: %w", err)
+	}
+	c.textGenModel = m
+	return nil
+}
+
 // GenerateText generates text from a prompt.
 func (c *Client) GenerateText(ctx context.Context, prompt string) (string, error) {
 	if c.textGenModel == nil {
