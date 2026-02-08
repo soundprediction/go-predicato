@@ -52,8 +52,8 @@ temp/
 # Build artifacts
 bin/
 graphiti
-predicato
-predicato-test
+/predicato
+/predicato-test
 gliner2-api
 examples/basic/basic
 examples/chat/chat

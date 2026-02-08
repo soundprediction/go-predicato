@@ -167,20 +167,26 @@ type ExtractedNodeDTO struct {
 	ChunkIndex  int       `json:"chunk_index"`
 }
 
-// ExtractedEdgeDTO represents an extracted relationship in API responses
-type ExtractedEdgeDTO struct {
-	CreatedAt      time.Time `json:"created_at"`
-	ID             string    `json:"id"`
-	SourceID       string    `json:"source_id"`
-	GroupID        string    `json:"group_id"`
-	SourceNodeName string    `json:"source_node_name"`
-	SourceNodeType string    `json:"source_node_type,omitempty"`
-	TargetNodeName string    `json:"target_node_name"`
-	TargetNodeType string    `json:"target_node_type,omitempty"`
-	Relation       string    `json:"relation"`
-	Description    string    `json:"description"`
-	Weight         float64   `json:"weight"`
-	ChunkIndex     int       `json:"chunk_index"`
+// ExtractedTripleDTO represents an extracted knowledge triple in API responses
+type ExtractedTripleDTO struct {
+	CreatedAt         time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	SourceID          string    `json:"source_id"`
+	GroupID           string    `json:"group_id"`
+	Subject           string    `json:"subject"`
+	SubjectType       string    `json:"subject_type,omitempty"`
+	Predicate         string    `json:"predicate"`
+	Object            string    `json:"object"`
+	ObjectType        string    `json:"object_type,omitempty"`
+	Description       string    `json:"description,omitempty"`
+	Condition         string    `json:"condition,omitempty"`
+	Temporal          string    `json:"temporal,omitempty"`
+	Location          string    `json:"location,omitempty"`
+	Certainty         string    `json:"certainty,omitempty"`
+	Scope             string    `json:"scope,omitempty"`
+	SourceAttribution string    `json:"source_attribution,omitempty"`
+	Confidence        float64   `json:"confidence,omitempty"`
+	ChunkIndex        int       `json:"chunk_index"`
 }
 
 // ExtractionMetadataDTO contains metadata about the extraction process
@@ -193,13 +199,13 @@ type ExtractionMetadataDTO struct {
 
 // ExtractEpisodeResponse represents the response from extraction
 type ExtractEpisodeResponse struct {
-	Metadata       *ExtractionMetadataDTO `json:"metadata,omitempty"`
-	SourceID       string                 `json:"source_id"`
-	ExtractionTime string                 `json:"extraction_time"`
-	ExtractedNodes []ExtractedNodeDTO     `json:"extracted_nodes"`
-	ExtractedEdges []ExtractedEdgeDTO     `json:"extracted_edges"`
-	ChunkCount     int                    `json:"chunk_count"`
-	Success        bool                   `json:"success"`
+	Metadata         *ExtractionMetadataDTO `json:"metadata,omitempty"`
+	SourceID         string                 `json:"source_id"`
+	ExtractionTime   string                 `json:"extraction_time"`
+	ExtractedNodes   []ExtractedNodeDTO     `json:"extracted_nodes"`
+	ExtractedTriples []ExtractedTripleDTO   `json:"extracted_triples"`
+	ChunkCount       int                    `json:"chunk_count"`
+	Success          bool                   `json:"success"`
 }
 
 // PromoteToGraphRequest represents a request to promote extracted knowledge to the graph

@@ -142,62 +142,70 @@ func main() {
 		},
 	}
 
-	// Extracted edges (relationships)
-	edges := []*types.ExtractedEdge{
+	// Extracted triples (relationships)
+	triples := []*types.ExtractedTriple{
 		{
-			ID:             "edge-001",
-			SourceID:       source.ID,
-			GroupID:        source.GroupID,
-			SourceNodeName: "Alice Smith",
-			TargetNodeName: "Acme Corporation",
-			Relation:       "FOUNDED",
-			Description:    "Alice Smith co-founded Acme Corporation in 2010",
-			Embedding:      generateMockEmbedding("founded created started company"),
-			Weight:         1.0,
-			ChunkIndex:     0,
+			ID:          "triple-001",
+			SourceID:    source.ID,
+			GroupID:     source.GroupID,
+			Subject:     "Alice Smith",
+			SubjectType: "person",
+			Object:      "Acme Corporation",
+			ObjectType:  "organization",
+			Predicate:   "FOUNDED",
+			Description: "Alice Smith co-founded Acme Corporation in 2010",
+			Embedding:   generateMockEmbedding("founded created started company"),
+			Confidence:  1.0,
+			ChunkIndex:  0,
 		},
 		{
-			ID:             "edge-002",
-			SourceID:       source.ID,
-			GroupID:        source.GroupID,
-			SourceNodeName: "Bob Johnson",
-			TargetNodeName: "Acme Corporation",
-			Relation:       "FOUNDED",
-			Description:    "Bob Johnson co-founded Acme Corporation in 2010",
-			Embedding:      generateMockEmbedding("founded created started company"),
-			Weight:         1.0,
-			ChunkIndex:     0,
+			ID:          "triple-002",
+			SourceID:    source.ID,
+			GroupID:     source.GroupID,
+			Subject:     "Bob Johnson",
+			SubjectType: "person",
+			Object:      "Acme Corporation",
+			ObjectType:  "organization",
+			Predicate:   "FOUNDED",
+			Description: "Bob Johnson co-founded Acme Corporation in 2010",
+			Embedding:   generateMockEmbedding("founded created started company"),
+			Confidence:  1.0,
+			ChunkIndex:  0,
 		},
 		{
-			ID:             "edge-003",
-			SourceID:       source.ID,
-			GroupID:        source.GroupID,
-			SourceNodeName: "Alice Smith",
-			TargetNodeName: "Acme Corporation",
-			Relation:       "CEO_OF",
-			Description:    "Alice Smith serves as CEO of Acme Corporation",
-			Embedding:      generateMockEmbedding("CEO chief executive officer leads"),
-			Weight:         1.0,
-			ChunkIndex:     0,
+			ID:          "triple-003",
+			SourceID:    source.ID,
+			GroupID:     source.GroupID,
+			Subject:     "Alice Smith",
+			SubjectType: "person",
+			Object:      "Acme Corporation",
+			ObjectType:  "organization",
+			Predicate:   "CEO_OF",
+			Description: "Alice Smith serves as CEO of Acme Corporation",
+			Embedding:   generateMockEmbedding("CEO chief executive officer leads"),
+			Confidence:  1.0,
+			ChunkIndex:  0,
 		},
 		{
-			ID:             "edge-004",
-			SourceID:       source.ID,
-			GroupID:        source.GroupID,
-			SourceNodeName: "Acme Corporation",
-			TargetNodeName: "CloudAI",
-			Relation:       "PRODUCES",
-			Description:    "Acme Corporation produces CloudAI as their flagship product",
-			Embedding:      generateMockEmbedding("produces creates makes product"),
-			Weight:         1.0,
-			ChunkIndex:     0,
+			ID:          "triple-004",
+			SourceID:    source.ID,
+			GroupID:     source.GroupID,
+			Subject:     "Acme Corporation",
+			SubjectType: "organization",
+			Object:      "CloudAI",
+			ObjectType:  "product",
+			Predicate:   "PRODUCES",
+			Description: "Acme Corporation produces CloudAI as their flagship product",
+			Embedding:   generateMockEmbedding("produces creates makes product"),
+			Confidence:  1.0,
+			ChunkIndex:  0,
 		},
 	}
 
-	if err := db.SaveExtractedKnowledge(ctx, source.ID, nodes, edges); err != nil {
+	if err := db.SaveExtractedKnowledge(ctx, source.ID, nodes, triples); err != nil {
 		log.Fatalf("Failed to save extracted knowledge: %v", err)
 	}
-	fmt.Printf("      Stored %d nodes and %d edges\n", len(nodes), len(edges))
+	fmt.Printf("      Stored %d nodes and %d triples\n", len(nodes), len(triples))
 
 	// ========================================
 	// 3. Perform Hybrid Search
@@ -242,16 +250,16 @@ func main() {
 		fmt.Println()
 	}
 
-	if len(results.Edges) > 0 {
-		fmt.Printf("Found %d edges:\n", len(results.Edges))
+	if len(results.Triples) > 0 {
+		fmt.Printf("Found %d triples:\n", len(results.Triples))
 		fmt.Println("----------------------------------------")
-		for i, edge := range results.Edges {
+		for i, triple := range results.Triples {
 			score := 0.0
-			if i < len(results.EdgeScores) {
-				score = results.EdgeScores[i]
+			if i < len(results.TripleScores) {
+				score = results.TripleScores[i]
 			}
-			fmt.Printf("  %d. [%.3f] %s -[%s]-> %s\n", i+1, score, edge.SourceNodeName, edge.Relation, edge.TargetNodeName)
-			fmt.Printf("     %s\n", truncate(edge.Description, 70))
+			fmt.Printf("  %d. [%.3f] %s -[%s]-> %s\n", i+1, score, triple.Subject, triple.Predicate, triple.Object)
+			fmt.Printf("     %s\n", truncate(triple.Description, 70))
 			fmt.Println()
 		}
 	}
@@ -309,10 +317,10 @@ func buildRAGContext(results *factstore.FactSearchResults) string {
 		context += fmt.Sprintf("- %s (%s): %s\n", node.Name, node.Type, node.Description)
 	}
 
-	if len(results.Edges) > 0 {
+	if len(results.Triples) > 0 {
 		context += "\nRelationships:\n"
-		for _, edge := range results.Edges {
-			context += fmt.Sprintf("- %s %s %s: %s\n", edge.SourceNodeName, edge.Relation, edge.TargetNodeName, edge.Description)
+		for _, triple := range results.Triples {
+			context += fmt.Sprintf("- %s %s %s: %s\n", triple.Subject, triple.Predicate, triple.Object, triple.Description)
 		}
 	}
 
@@ -338,14 +346,14 @@ func demonstrateMockUsage() {
 	fmt.Println()
 	fmt.Println("3. Store extracted knowledge:")
 	fmt.Println("   db.SaveSource(ctx, source)")
-	fmt.Println("   db.SaveExtractedKnowledge(ctx, sourceID, nodes, edges)")
+	fmt.Println("   db.SaveExtractedKnowledge(ctx, sourceID, nodes, triples)")
 	fmt.Println()
 	fmt.Println("4. Search with hybrid (vector + keyword) search:")
 	fmt.Println("   results, err := db.HybridSearch(ctx, query, embedding, config)")
 	fmt.Println()
 	fmt.Println("5. Use results for RAG:")
 	fmt.Println("   - results.Nodes: Matching entities with scores")
-	fmt.Println("   - results.Edges: Matching relationships with scores")
+	fmt.Println("   - results.Triples: Matching relationships with scores")
 	fmt.Println("   - Build context from results for LLM prompts")
 	fmt.Println()
 	fmt.Println("For a complete example with a real database, set:")

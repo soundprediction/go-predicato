@@ -60,13 +60,13 @@ type SearchFactsRequest struct {
 }
 
 // SearchFactsResponse represents the response from a fact store search
-// Uses ExtractedNodeDTO and ExtractedEdgeDTO from ingest.go
+// Uses ExtractedNodeDTO and ExtractedTripleDTO from ingest.go
 type SearchFactsResponse struct {
-	Query      string             `json:"query"`
-	Nodes      []ExtractedNodeDTO `json:"nodes"`
-	Edges      []ExtractedEdgeDTO `json:"edges,omitempty"`
-	NodeScores []float64          `json:"node_scores"`
-	EdgeScores []float64          `json:"edge_scores,omitempty"`
-	Total      int                `json:"total"`
-	Success    bool               `json:"success"`
+	Query        string               `json:"query"`
+	Nodes        []ExtractedNodeDTO   `json:"nodes"`
+	Triples      []ExtractedTripleDTO `json:"triples,omitempty"`
+	NodeScores   []float64            `json:"node_scores"`
+	TripleScores []float64            `json:"triple_scores,omitempty"`
+	Total        int                  `json:"total"`
+	Success      bool                 `json:"success"`
 }

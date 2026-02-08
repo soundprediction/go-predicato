@@ -353,12 +353,12 @@ func (h *IngestHandler) ExtractEpisode(w http.ResponseWriter, r *http.Request) {
 
 	// Convert to DTO
 	response := dto.ExtractEpisodeResponse{
-		Success:        true,
-		SourceID:       results.SourceID,
-		ChunkCount:     results.ChunkCount,
-		ExtractionTime: results.ExtractionTime.String(),
-		ExtractedNodes: make([]dto.ExtractedNodeDTO, 0, len(results.ExtractedNodes)),
-		ExtractedEdges: make([]dto.ExtractedEdgeDTO, 0, len(results.ExtractedEdges)),
+		Success:          true,
+		SourceID:         results.SourceID,
+		ChunkCount:       results.ChunkCount,
+		ExtractionTime:   results.ExtractionTime.String(),
+		ExtractedNodes:   make([]dto.ExtractedNodeDTO, 0, len(results.ExtractedNodes)),
+		ExtractedTriples: make([]dto.ExtractedTripleDTO, 0, len(results.ExtractedTriples)),
 	}
 
 	for _, n := range results.ExtractedNodes {
@@ -374,20 +374,26 @@ func (h *IngestHandler) ExtractEpisode(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	for _, e := range results.ExtractedEdges {
-		response.ExtractedEdges = append(response.ExtractedEdges, dto.ExtractedEdgeDTO{
-			ID:             e.ID,
-			SourceID:       e.SourceID,
-			GroupID:        req.GroupID,
-			SourceNodeName: e.SourceNodeName,
-			SourceNodeType: e.SourceNodeType,
-			TargetNodeName: e.TargetNodeName,
-			TargetNodeType: e.TargetNodeType,
-			Relation:       e.Relation,
-			Description:    e.Description,
-			Weight:         e.Weight,
-			ChunkIndex:     e.ChunkIndex,
-			CreatedAt:      e.CreatedAt,
+	for _, t := range results.ExtractedTriples {
+		response.ExtractedTriples = append(response.ExtractedTriples, dto.ExtractedTripleDTO{
+			ID:                t.ID,
+			SourceID:          t.SourceID,
+			GroupID:           req.GroupID,
+			Subject:           t.Subject,
+			SubjectType:       t.SubjectType,
+			Predicate:         t.Predicate,
+			Object:            t.Object,
+			ObjectType:        t.ObjectType,
+			Description:       t.Description,
+			Condition:         t.Condition,
+			Temporal:          t.Temporal,
+			Location:          t.Location,
+			Certainty:         t.Certainty,
+			Scope:             t.Scope,
+			SourceAttribution: t.SourceAttribution,
+			Confidence:        t.Confidence,
+			ChunkIndex:        t.ChunkIndex,
+			CreatedAt:         t.CreatedAt,
 		})
 	}
 
@@ -400,8 +406,8 @@ func (h *IngestHandler) ExtractEpisode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("Extracted %d nodes and %d edges from episode %s in group %s\n",
-		len(response.ExtractedNodes), len(response.ExtractedEdges), episodeID, req.GroupID)
+	log.Printf("Extracted %d nodes and %d triples from episode %s in group %s\n",
+		len(response.ExtractedNodes), len(response.ExtractedTriples), episodeID, req.GroupID)
 
 	writeJSON(w, http.StatusOK, response)
 }

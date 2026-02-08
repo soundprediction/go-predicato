@@ -19,10 +19,9 @@ func newMockPostgresDB(t *testing.T) (*PostgresDB, sqlmock.Sqlmock) {
 	return &PostgresDB{db: db, embeddingDimensions: 1024, usePgVector: false}, mock
 }
 
-// expectEdgePrepareAndCommit adds the standard edge statement prepare + commit expectations
-// that always happen at the end of SaveExtractedKnowledge.
-func expectEdgePrepareAndCommit(mock sqlmock.Sqlmock) {
-	mock.ExpectPrepare(`INSERT INTO extracted_edges`)
+// expectCommitOnly adds the commit expectation at the end of SaveExtractedKnowledge
+// when no triples are passed (triples == nil skips the prepared statement).
+func expectCommitOnly(mock sqlmock.Sqlmock) {
 	mock.ExpectCommit()
 }
 
@@ -58,7 +57,7 @@ func TestDedupNonPersonEntityAcrossSources(t *testing.T) {
 		WithArgs("node-1", "source-A", 0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	expectEdgePrepareAndCommit(mock)
+	expectCommitOnly(mock)
 
 	err := pdb.SaveExtractedKnowledge(ctx, "source-A", []*ExtractedNode{
 		{
@@ -96,7 +95,7 @@ func TestDedupNonPersonEntityAcrossSources(t *testing.T) {
 		WithArgs("node-1", "source-B", 0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	expectEdgePrepareAndCommit(mock)
+	expectCommitOnly(mock)
 
 	err = pdb.SaveExtractedKnowledge(ctx, "source-B", []*ExtractedNode{
 		{
@@ -148,7 +147,7 @@ func TestDedupPersonEntityDifferentSources(t *testing.T) {
 		WithArgs("person-1", "source-A", 0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	expectEdgePrepareAndCommit(mock)
+	expectCommitOnly(mock)
 
 	err := pdb.SaveExtractedKnowledge(ctx, "source-A", []*ExtractedNode{
 		{
@@ -186,7 +185,7 @@ func TestDedupPersonEntityDifferentSources(t *testing.T) {
 		WithArgs("person-2", "source-B", 0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	expectEdgePrepareAndCommit(mock)
+	expectCommitOnly(mock)
 
 	err = pdb.SaveExtractedKnowledge(ctx, "source-B", []*ExtractedNode{
 		{
@@ -251,7 +250,7 @@ func TestDedupPersonEntitySameSource(t *testing.T) {
 		WithArgs("person-1", "source-A", 1).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	expectEdgePrepareAndCommit(mock)
+	expectCommitOnly(mock)
 
 	err := pdb.SaveExtractedKnowledge(ctx, "source-A", []*ExtractedNode{
 		{
@@ -310,7 +309,7 @@ func TestDedupDescriptionNotOverwrittenWhenShorter(t *testing.T) {
 		WithArgs("node-1", "source-B", 0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	expectEdgePrepareAndCommit(mock)
+	expectCommitOnly(mock)
 
 	err := pdb.SaveExtractedKnowledge(ctx, "source-B", []*ExtractedNode{
 		{

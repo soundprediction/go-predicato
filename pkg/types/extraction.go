@@ -21,24 +21,31 @@ type ExtractedNode struct {
 	ChunkIndex     int       `json:"chunk_index"`
 }
 
-// ExtractedEdge represents a raw relationship extracted from a source.
-// This type is used by both the factstore (for persistence) and the extraction
-// pipeline (for intermediate results).
-type ExtractedEdge struct {
-	CreatedAt      time.Time `json:"created_at"`
-	ID             string    `json:"id"`
-	SourceID       string    `json:"source_id"`
-	GroupID        string    `json:"group_id"`
-	SourceNodeName string    `json:"source_node_name"`
-	SourceNodeType string    `json:"source_node_type"`
-	TargetNodeName string    `json:"target_node_name"`
-	TargetNodeType string    `json:"target_node_type"`
-	Relation       string    `json:"relation"`
-	Description    string    `json:"description"`
-	Model          string    `json:"model,omitempty"`
-	Embedding      []float32 `json:"embedding,omitempty"`
-	Weight         float64   `json:"weight"`
-	ChunkIndex     int       `json:"chunk_index"`
+// ExtractedTriple represents a knowledge triple extracted from a source.
+// Combines entity-relationship data (subject, predicate, object with types)
+// with contextual fields (condition, temporal, location, certainty, scope).
+// All fields are flat columns — no nesting.
+type ExtractedTriple struct {
+	CreatedAt         time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	SourceID          string    `json:"source_id"`
+	GroupID           string    `json:"group_id,omitempty"`
+	Subject           string    `json:"subject"`
+	SubjectType       string    `json:"subject_type,omitempty"`
+	Predicate         string    `json:"predicate"`
+	Object            string    `json:"object"`
+	ObjectType        string    `json:"object_type,omitempty"`
+	Description       string    `json:"description,omitempty"`
+	Condition         string    `json:"condition,omitempty"`
+	Temporal          string    `json:"temporal,omitempty"`
+	Location          string    `json:"location,omitempty"`
+	Certainty         string    `json:"certainty,omitempty"`
+	Scope             string    `json:"scope,omitempty"`
+	SourceAttribution string    `json:"source_attribution,omitempty"`
+	Model             string    `json:"model,omitempty"`
+	Embedding         []float32 `json:"embedding,omitempty"`
+	Confidence        float64   `json:"confidence,omitempty"`
+	ChunkIndex        int       `json:"chunk_index"`
 }
 
 // ExtractionResults is returned when ExtractOnly=true in AddEpisodeOptions.
@@ -54,11 +61,8 @@ type ExtractionResults struct {
 	// ExtractedNodes are raw entities before resolution/deduplication
 	ExtractedNodes []*ExtractedNode `json:"extracted_nodes"`
 
-	// ExtractedEdges are raw relationships before resolution
-	ExtractedEdges []*ExtractedEdge `json:"extracted_edges"`
-
-	// ExtractedTriples are contextualised triples (extended extraction)
-	ExtractedTriples []*ExtractedTriple `json:"extracted_triples,omitempty"`
+	// ExtractedTriples are knowledge triples (subject-predicate-object with context)
+	ExtractedTriples []*ExtractedTriple `json:"extracted_triples"`
 
 	// ExtractedRules are conditional rules (extended extraction)
 	ExtractedRules []*ExtractedRule `json:"extracted_rules,omitempty"`
@@ -93,19 +97,6 @@ func (r *ExtractionResults) NodeCount() int {
 	return len(r.ExtractedNodes)
 }
 
-// EdgeCount returns the number of extracted edges.
-func (r *ExtractionResults) EdgeCount() int {
-	if r == nil {
-		return 0
-	}
-	return len(r.ExtractedEdges)
-}
-
-// IsEmpty returns true if no entities or relationships were extracted.
-func (r *ExtractionResults) IsEmpty() bool {
-	return r.NodeCount() == 0 && r.EdgeCount() == 0
-}
-
 // TripleCount returns the number of extracted triples.
 func (r *ExtractionResults) TripleCount() int {
 	if r == nil {
@@ -114,34 +105,17 @@ func (r *ExtractionResults) TripleCount() int {
 	return len(r.ExtractedTriples)
 }
 
+// IsEmpty returns true if no entities or triples were extracted.
+func (r *ExtractionResults) IsEmpty() bool {
+	return r.NodeCount() == 0 && r.TripleCount() == 0
+}
+
 // RuleCount returns the number of extracted rules.
 func (r *ExtractionResults) RuleCount() int {
 	if r == nil {
 		return 0
 	}
 	return len(r.ExtractedRules)
-}
-
-// ExtractedTriple represents a contextualised predicate triple extracted from a source.
-// Extends the basic (subject, predicate, object) with condition, temporal, location,
-// certainty, scope, and source attribution fields.
-type ExtractedTriple struct {
-	CreatedAt         time.Time `json:"created_at"`
-	ID                string    `json:"id"`
-	SourceID          string    `json:"source_id"`
-	Subject           string    `json:"subject"`
-	Predicate         string    `json:"predicate"`
-	Object            string    `json:"object"`
-	Condition         string    `json:"condition,omitempty"`
-	Temporal          string    `json:"temporal,omitempty"`
-	Location          string    `json:"location,omitempty"`
-	Certainty         string    `json:"certainty,omitempty"`
-	Scope             string    `json:"scope,omitempty"`
-	SourceAttribution string    `json:"source_attribution,omitempty"`
-	Model             string    `json:"model,omitempty"`
-	Embedding         []float32 `json:"embedding,omitempty"`
-	Confidence        float64   `json:"confidence,omitempty"`
-	ChunkIndex        int       `json:"chunk_index"`
 }
 
 // ExtractedRule represents a conditional rule extracted from a source:
