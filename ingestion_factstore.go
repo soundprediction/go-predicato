@@ -99,12 +99,12 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 		for _, n := range nodes {
 			flattenedNodes = append(flattenedNodes, n)
 			nodeModel := ""
-		if c.nlpModels.NodeExtraction != nil {
-			nodeModel = c.nlpModels.NodeExtraction.GetModel()
-		} else if c.nlProcessor != nil {
-			nodeModel = c.nlProcessor.GetModel()
-		}
-		factsNodes = append(factsNodes, &factstore.ExtractedNode{
+			if c.nlpModels.NodeExtraction != nil {
+				nodeModel = c.nlpModels.NodeExtraction.GetModel()
+			} else if c.nlProcessor != nil {
+				nodeModel = c.nlProcessor.GetModel()
+			}
+			factsNodes = append(factsNodes, &factstore.ExtractedNode{
 				ID:             n.Uuid,
 				SourceID:       episode.ID,
 				Name:           n.Name,
@@ -222,7 +222,7 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 					TargetNodeName: utils.NormalizeStringExact(targetName),
 					TargetNodeType: targetType,
 					Relation:       e.Name,
-					Description:    e.Summary,  // Alias for Fact
+					Description:    e.Summary, // Alias for Fact
 					Model:          edgeModel,
 					Weight:         e.Strength, // Use Strength
 					ChunkIndex:     chunkIdx,
