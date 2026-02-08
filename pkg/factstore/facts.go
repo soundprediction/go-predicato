@@ -143,6 +143,14 @@ type ExtractedNode = types.ExtractedNode
 // The canonical definition is in pkg/types/extraction.go.
 type ExtractedEdge = types.ExtractedEdge
 
+// ExtractedTriple is an alias to types.ExtractedTriple for backward compatibility.
+// The canonical definition is in pkg/types/extraction.go.
+type ExtractedTriple = types.ExtractedTriple
+
+// ExtractedRule is an alias to types.ExtractedRule for backward compatibility.
+// The canonical definition is in pkg/types/extraction.go.
+type ExtractedRule = types.ExtractedRule
+
 // FactsDB defines the interface for the intermediate knowledge storage.
 type FactsDB interface {
 	// Initialize ensures the database schema exists.
@@ -193,10 +201,26 @@ type FactsDB interface {
 
 	// HybridSearch performs combined vector and keyword search with RRF fusion.
 	HybridSearch(ctx context.Context, query string, embedding []float32, config *FactSearchConfig) (*FactSearchResults, error)
+
+	// --- Extended Extraction Methods ---
+
+	// SaveExtractedTriples saves contextualised triples for a source.
+	SaveExtractedTriples(ctx context.Context, sourceID string, triples []*ExtractedTriple) error
+
+	// SaveExtractedRules saves conditional rules for a source.
+	SaveExtractedRules(ctx context.Context, sourceID string, rules []*ExtractedRule) error
+
+	// GetExtractedTriples retrieves extracted triples for a source.
+	GetExtractedTriples(ctx context.Context, sourceID string) ([]*ExtractedTriple, error)
+
+	// GetExtractedRules retrieves extracted rules for a source.
+	GetExtractedRules(ctx context.Context, sourceID string) ([]*ExtractedRule, error)
 }
 
 type Stats struct {
 	SourceCount int64
 	NodeCount   int64
 	EdgeCount   int64
+	TripleCount int64
+	RuleCount   int64
 }

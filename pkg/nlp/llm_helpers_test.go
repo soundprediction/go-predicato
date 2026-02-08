@@ -162,6 +162,10 @@ func (m *mockLLMClient) Close() error {
 	return nil
 }
 
+func (m *mockLLMClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*nlp.ExtendedExtractionResult, error) {
+	return &nlp.ExtendedExtractionResult{}, nil
+}
+
 func (m *mockLLMClient) GetCapabilities() []nlp.TaskCapability {
 	return []nlp.TaskCapability{nlp.TaskTextGeneration}
 }

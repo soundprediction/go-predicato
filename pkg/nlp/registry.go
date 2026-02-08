@@ -20,6 +20,8 @@ const (
 	TaskTextGeneration TaskCapability = "text_generation"
 	// TaskTranslation represents text translation.
 	TaskTranslation TaskCapability = "translation"
+	// TaskExtendedExtraction represents structured extraction of extended triples and rules.
+	TaskExtendedExtraction TaskCapability = "extended_extraction"
 )
 
 // ProviderID represents a unique identifier for an AI provider.
@@ -169,7 +171,7 @@ var BuiltInModels = []Model{
 		ID:           "fastino/gliner2-base-v1",
 		Name:         "GLiNER2 Base v1",
 		ProviderID:   ProviderGLiNER2,
-		Capabilities: []TaskCapability{TaskNamedEntityRecognition, TaskRelationExtraction},
+		Capabilities: []TaskCapability{TaskNamedEntityRecognition, TaskRelationExtraction, TaskExtendedExtraction},
 		Description:  "Fastino GLiNER2 base model for entity and relation extraction",
 		Family:       "gliner2",
 	},
@@ -177,7 +179,7 @@ var BuiltInModels = []Model{
 		ID:           "fastino/gliner2-large-v1",
 		Name:         "GLiNER2 Large v1",
 		ProviderID:   ProviderGLiNER2,
-		Capabilities: []TaskCapability{TaskNamedEntityRecognition, TaskRelationExtraction},
+		Capabilities: []TaskCapability{TaskNamedEntityRecognition, TaskRelationExtraction, TaskExtendedExtraction},
 		Description:  "Fastino GLiNER2 large model for enhanced entity and relation extraction",
 		Family:       "gliner2",
 	},
@@ -213,6 +215,11 @@ var BuiltInModels = []Model{
 		Capabilities: []TaskCapability{TaskTextGeneration},
 		Description:  "Default GPT-2 model for text generation",
 	},
+}
+
+// HasCapability checks if a client supports a given capability.
+func HasCapability(client Client, cap TaskCapability) bool {
+	return slices.Contains(client.GetCapabilities(), cap)
 }
 
 // GetProvider returns the provider with the given ID.

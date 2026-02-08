@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/soundprediction/predicato/pkg/types"
@@ -160,7 +161,7 @@ func (a *AzureOpenAIClient) Chat(ctx context.Context, messages []types.Message) 
 
 // GetCapabilities returns the list of capabilities supported by this client.
 func (a *AzureOpenAIClient) GetCapabilities() []TaskCapability {
-	return []TaskCapability{TaskTextGeneration}
+	return []TaskCapability{TaskTextGeneration, TaskExtendedExtraction}
 }
 
 // GetModel returns the model identifier.
@@ -192,4 +193,93 @@ func (a *AzureOpenAIClient) ChatWithStructuredOutput(ctx context.Context, messag
 
 	// AzureOpenAIClient.Chat now returns *types.Response
 	return resp, nil
+}
+
+// Close cleans up resources (no-op for Azure OpenAI client).
+func (a *AzureOpenAIClient) Close() error {
+	return nil
+}
+
+// ExtractEntities implements the Client interface using prompt engineering.
+func (a *AzureOpenAIClient) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]ExtractedEntity, error) {
+	sysPrompt := "You are an entity extraction system. Extract entities from the text. Return JSON output."
+	if len(entityTypes) > 0 {
+		sysPrompt += fmt.Sprintf(" Specific entity types: %s", strings.Join(entityTypes, ", "))
+	}
+
+	messages := []types.Message{
+		NewSystemMessage(sysPrompt),
+		NewUserMessage(fmt.Sprintf("Extract entities from the following text:\n\n%s", text)),
+	}
+
+	resp, err := a.ChatWithStructuredOutput(ctx, messages, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	type EntityResult struct {
+		Entities []ExtractedEntity `json:"entities"`
+	}
+	var result EntityResult
+	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse extraction result: %w", err)
+	}
+	return result.Entities, nil
+}
+
+// ExtractRelations implements the Client interface using prompt engineering.
+func (a *AzureOpenAIClient) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error) {
+	sysPrompt := "You are a relationship extraction system. Extract relationships between entities from the text. Return JSON output."
+	if len(relationTypes) > 0 {
+		sysPrompt += fmt.Sprintf(" Specific relation types: %s", strings.Join(relationTypes, ", "))
+	}
+
+	messages := []types.Message{
+		NewSystemMessage(sysPrompt),
+		NewUserMessage(fmt.Sprintf("Extract relationships from the following text:\n\n%s", text)),
+	}
+
+	resp, err := a.ChatWithStructuredOutput(ctx, messages, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	type RelationResult struct {
+		Relations []ExtractedRelation `json:"relations"`
+	}
+	var result RelationResult
+	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse relation result: %w", err)
+	}
+	return result.Relations, nil
+}
+
+// Summarize implements the Client interface.
+func (a *AzureOpenAIClient) Summarize(ctx context.Context, text string) (string, error) {
+	messages := []types.Message{
+		NewSystemMessage("You are a helpful assistant that summarizes text."),
+		NewUserMessage(fmt.Sprintf("Please summarize the following text:\n\n%s", text)),
+	}
+	resp, err := a.Chat(ctx, messages)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+// GenerateText implements the Client interface.
+func (a *AzureOpenAIClient) GenerateText(ctx context.Context, prompt string) (string, error) {
+	messages := []types.Message{
+		NewUserMessage(prompt),
+	}
+	resp, err := a.Chat(ctx, messages)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+// ExtractExtended performs structured extraction (entities, relations, triples, rules) using prompt engineering.
+func (a *AzureOpenAIClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	return ExtractExtendedHelper(ctx, a, text, entityTypes, relationTypes)
 }

@@ -1,10 +1,13 @@
 package rustbert
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"github.com/soundprediction/go-rust-bert/pkg/rustbert"
+	"github.com/soundprediction/predicato/pkg/nlp"
+	"github.com/soundprediction/predicato/pkg/types"
 )
 
 // Client wraps go-rust-bert models for use in Predicato.
@@ -97,6 +100,10 @@ func (c *Client) Close() {
 		c.summarizationModel.Close()
 		c.summarizationModel = nil
 	}
+	if c.textGenModel != nil {
+		c.textGenModel.Close()
+		c.textGenModel = nil
+	}
 }
 
 // Entity represents an extracted entity
@@ -106,10 +113,9 @@ type Entity struct {
 	Score float64
 }
 
-// ExtractEntities extracts named entities from text.
-// Auto-loads model if not loaded? Better to require explicit load or load on first use.
-// Let's load on first use if not loaded.
-func (c *Client) ExtractEntities(text string) ([]Entity, error) {
+// ExtractEntities extracts named entities from the text using the NER model.
+func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]nlp.ExtractedEntity, error) {
+	// Load on first use if not loaded
 	if c.nerModel == nil {
 		if err := c.LoadNERModel(); err != nil {
 			return nil, err
@@ -124,22 +130,41 @@ func (c *Client) ExtractEntities(text string) ([]Entity, error) {
 		return nil, fmt.Errorf("NER prediction failed: %w", err)
 	}
 
-	entities := make([]Entity, len(results))
-	for i, r := range results {
-		entities[i] = Entity{
-			Text:  r.Word,
-			Label: r.Label,
-			Score: r.Score,
+	var entities []nlp.ExtractedEntity
+	for _, r := range results {
+		// Filter by entityTypes if provided
+		if len(entityTypes) > 0 {
+			found := false
+			for _, t := range entityTypes {
+				if r.Label == t {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
 		}
+
+		entities = append(entities, nlp.ExtractedEntity{
+			Text:       r.Word,
+			Label:      r.Label,
+			Confidence: r.Score,
+		})
 	}
 	return entities, nil
 }
 
+// ExtractRelations is not supported by RustBert currently
+func (c *Client) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]nlp.ExtractedRelation, error) {
+	return nil, fmt.Errorf("RustBert does not support relation extraction")
+}
+
 // Summarize generates a summary of the text.
-func (c *Client) Summarize(text string) ([]string, error) {
+func (c *Client) Summarize(ctx context.Context, text string) (string, error) {
 	if c.summarizationModel == nil {
 		if err := c.LoadSummarizationModel(); err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 
@@ -149,46 +174,13 @@ func (c *Client) Summarize(text string) ([]string, error) {
 	// Summarize returns a list of summaries (usually just 1 for single input)
 	results, err := c.summarizationModel.Summarize(text)
 	if err != nil {
-		return nil, fmt.Errorf("summarization failed: %w", err)
+		return "", fmt.Errorf("summarization failed: %w", err)
 	}
 
-	return results, nil
-}
-
-// LoadQAModel loads the Question Answering model.
-func (c *Client) LoadQAModel() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.qaModel != nil {
-		return nil
+	if len(results) > 0 {
+		return results[0], nil
 	}
-
-	m, err := rustbert.NewQAModel()
-	if err != nil {
-		return fmt.Errorf("failed to create QA model: %w", err)
-	}
-	c.qaModel = m
-	return nil
-}
-
-// AnswerQuestion answers a question based on the context.
-func (c *Client) AnswerQuestion(question, context string) ([]rustbert.Answer, error) {
-	if c.qaModel == nil {
-		if err := c.LoadQAModel(); err != nil {
-			return nil, err
-		}
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	results, err := c.qaModel.Predict(question, context)
-	if err != nil {
-		return nil, fmt.Errorf("QA prediction failed: %w", err)
-	}
-
-	return results, nil
+	return "", nil
 }
 
 // LoadTextGenerationModel loads the Text Generation model.
@@ -209,7 +201,7 @@ func (c *Client) LoadTextGenerationModel() error {
 }
 
 // GenerateText generates text from a prompt.
-func (c *Client) GenerateText(prompt string) (string, error) {
+func (c *Client) GenerateText(ctx context.Context, prompt string) (string, error) {
 	if c.textGenModel == nil {
 		if err := c.LoadTextGenerationModel(); err != nil {
 			return "", err
@@ -225,4 +217,36 @@ func (c *Client) GenerateText(prompt string) (string, error) {
 	}
 
 	return result, nil
+}
+
+// Chat implements the Client interface (not supported by raw RustBert models usually)
+func (c *Client) Chat(ctx context.Context, messages []types.Message) (*types.Response, error) {
+	return nil, fmt.Errorf("RustBert does not support Chat interface")
+}
+
+// ChatWithStructuredOutput implements the Client interface
+func (c *Client) ChatWithStructuredOutput(ctx context.Context, messages []types.Message, schema any) (*types.Response, error) {
+	return nil, fmt.Errorf("RustBert does not support ChatWithStructuredOutput")
+}
+
+// GetModel returns the model identifier
+func (c *Client) GetModel() string {
+	if c.config.NERModelID != "" {
+		return c.config.NERModelID
+	}
+	return "rustbert-default"
+}
+
+// GetCapabilities returns the list of capabilities supported by this client.
+func (c *Client) GetCapabilities() []nlp.TaskCapability {
+	return []nlp.TaskCapability{
+		nlp.TaskNamedEntityRecognition,
+		nlp.TaskSummarization,
+		nlp.TaskTextGeneration,
+	}
+}
+
+// ExtractExtended performs structured extraction (entities, relations, triples, rules) from the text.
+func (c *Client) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*nlp.ExtendedExtractionResult, error) {
+	return nil, fmt.Errorf("RustBert does not support extended extraction")
 }

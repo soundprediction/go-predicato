@@ -211,3 +211,8 @@ func (c *TokenTrackingClient) Close() error {
 func (c *TokenTrackingClient) GetCapabilities() []TaskCapability {
 	return c.client.GetCapabilities()
 }
+
+// ExtractExtended implements Client by delegating to the wrapped client.
+func (c *TokenTrackingClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	return c.client.ExtractExtended(ctx, text, entityTypes, relationTypes)
+}

@@ -135,6 +135,18 @@ func (c *CircuitBreakerClient) GenerateText(ctx context.Context, prompt string) 
 	return resp.(string), nil
 }
 
+// ExtractExtended implements Client
+func (c *CircuitBreakerClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	resp, err := c.cb.Execute(func() (interface{}, error) {
+		return c.client.ExtractExtended(ctx, text, entityTypes, relationTypes)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return resp.(*ExtendedExtractionResult), nil
+}
+
 // GetCapabilities returns the list of capabilities supported by this client.
 func (c *CircuitBreakerClient) GetCapabilities() []TaskCapability {
 	return c.client.GetCapabilities()

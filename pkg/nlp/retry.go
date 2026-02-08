@@ -270,6 +270,33 @@ func (r *RetryClient) GenerateText(ctx context.Context, prompt string) (string, 
 	return "", fmt.Errorf("failed after %d retries: %w", r.config.MaxRetries, lastErr)
 }
 
+// ExtractExtended implements the Client interface with retry logic
+func (r *RetryClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= r.config.MaxRetries; attempt++ {
+		if attempt > 0 {
+			delay := r.calculateDelay(attempt)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
+			}
+		}
+
+		result, err := r.client.ExtractExtended(ctx, text, entityTypes, relationTypes)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+
+		if !isRetryableError(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("failed after %d retries: %w", r.config.MaxRetries, lastErr)
+}
+
 // GetModel returns the model identifier of the wrapped client.
 func (r *RetryClient) GetModel() string {
 	return r.client.GetModel()

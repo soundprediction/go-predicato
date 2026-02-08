@@ -236,6 +236,11 @@ func (c *OpenAIClient) GenerateText(ctx context.Context, prompt string) (string,
 	return resp.Content, nil
 }
 
+// ExtractExtended performs structured extraction (entities, relations, triples, rules) using prompt engineering.
+func (c *OpenAIClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	return ExtractExtendedHelper(ctx, c, text, entityTypes, relationTypes)
+}
+
 // GetCapabilities returns the list of capabilities supported by this client.
 func (c *OpenAIClient) GetCapabilities() []TaskCapability {
 	return []TaskCapability{
@@ -243,6 +248,7 @@ func (c *OpenAIClient) GetCapabilities() []TaskCapability {
 		TaskSummarization,
 		TaskNamedEntityRecognition,
 		TaskRelationExtraction,
+		TaskExtendedExtraction,
 	}
 }
 

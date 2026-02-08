@@ -79,6 +79,14 @@ func (m *mockClient) GenerateText(ctx context.Context, prompt string) (string, e
 	return "generated text", nil
 }
 
+func (m *mockClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	m.callCount++
+	if m.callCount <= m.failUntilCall {
+		return nil, m.errorToReturn
+	}
+	return &ExtendedExtractionResult{}, nil
+}
+
 func (m *mockClient) GetCapabilities() []TaskCapability {
 	return []TaskCapability{TaskTextGeneration}
 }

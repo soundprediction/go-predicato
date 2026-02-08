@@ -59,6 +59,7 @@ func (c *Client) GetCapabilities() []nlp.TaskCapability {
 	return []nlp.TaskCapability{
 		nlp.TaskNamedEntityRecognition,
 		nlp.TaskRelationExtraction,
+		nlp.TaskExtendedExtraction,
 	}
 }
 
@@ -218,4 +219,82 @@ func (c *Client) handleTextClassification(ctx context.Context, userMsg string) (
 	return &types.Response{
 		Content: content,
 	}, nil
+}
+
+// ExtractExtended performs structured extraction (entities, relations, triples, rules) from the text.
+// entityTypes and relationTypes are optional: when nil, built-in defaults are used.
+func (c *Client) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*nlp.ExtendedExtractionResult, error) {
+	switch c.provider {
+	case ProviderNative:
+		return nil, fmt.Errorf("native provider not yet implemented for extended extraction")
+	case ProviderLocal, ProviderFastino:
+		if c.httpClient == nil {
+			return nil, fmt.Errorf("HTTP client not available")
+		}
+
+		result, err := c.httpClient.ExtractExtended(ctx, text, entityTypes, relationTypes)
+		if err != nil {
+			return nil, err
+		}
+
+		// Map gliner2.ExtendedExtractionResult to nlp.ExtendedExtractionResult
+		// Entities map
+		entities := make(map[string][]string)
+		for k, v := range result.Entities {
+			entities[k] = v
+		}
+
+		// Relations
+		var relations []nlp.ExtractedRelation
+		for _, r := range result.Relations {
+			relations = append(relations, nlp.ExtractedRelation{
+				Source:     r.Head.Text,
+				Target:     r.Tail.Text,
+				Type:       r.Relation,
+				Confidence: r.Confidence,
+			})
+		}
+
+		// Triples
+		var triples []nlp.ExtendedTriple
+		for _, t := range result.Triples {
+			triples = append(triples, nlp.ExtendedTriple{
+				Subject:           t.Subject,
+				Predicate:         t.Predicate,
+				Object:            t.Object,
+				Condition:         t.Condition,
+				Temporal:          t.Temporal,
+				Location:          t.Location,
+				Certainty:         t.Certainty,
+				Scope:             t.Scope,
+				SourceAttribution: t.SourceAttribution,
+				Confidence:        t.Confidence,
+			})
+		}
+
+		// Rules
+		var rules []nlp.Rule
+		for _, r := range result.Rules {
+			rules = append(rules, nlp.Rule{
+				Antecedent:        r.Antecedent,
+				Consequent:        r.Consequent,
+				Exception:         r.Exception,
+				RuleType:          r.RuleType,
+				Scope:             r.Scope,
+				SourceAttribution: r.SourceAttribution,
+				Confidence:        r.Confidence,
+			})
+		}
+
+		return &nlp.ExtendedExtractionResult{
+			SourceText: result.SourceText,
+			Entities:   entities,
+			Relations:  relations,
+			Triples:    triples,
+			Rules:      rules,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported provider: %v", c.provider)
+	}
 }

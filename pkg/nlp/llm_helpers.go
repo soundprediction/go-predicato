@@ -680,3 +680,78 @@ func GenerateYAMLResponse[T any](
 
 	return nil, badResponse, fmt.Errorf("failed to generate valid YAML after %d attempts", maxRetries+1)
 }
+
+// ExtractExtendedHelperFunc is a helper for LLM clients to implement ExtractExtended.
+// It constructs a prompt with the expected schema and uses the client's ChatWithStructuredOutput or generation capabilities.
+// entityTypes and relationTypes are optional: when non-nil, they are listed in the prompt to guide extraction.
+func ExtractExtendedHelper(ctx context.Context, client Client, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	// Build entity/relation type guidance if provided
+	var entityGuidance, relationGuidance string
+	if len(entityTypes) > 0 {
+		entityGuidance = fmt.Sprintf("\nFocus on these entity types: %s", strings.Join(entityTypes, ", "))
+	}
+	if len(relationTypes) > 0 {
+		relationGuidance = fmt.Sprintf("\nFocus on these relation types: %s", strings.Join(relationTypes, ", "))
+	}
+
+	systemPrompt := fmt.Sprintf(`You are an expert information extraction system.
+Your task is to extract structured information from the provided text, including:
+1. Entities: Named entities grouped by type.%s
+2. Relations: Relationships between entities.%s
+3. Triples: Extended facts with context (subject, predicate, object, plus condition, temporal, location, certainty, scope, source_attribution).
+4. Rules: Conditional logic found in the text (IF antecedent THEN consequent UNLESS exception).
+
+Return the output as a JSON object matching this structure:
+{
+  "source_text": "Original text segment",
+  "entities": { "type": ["entity1", "entity2"] },
+  "relations": [ { "source": "A", "target": "B", "type": "treats", "confidence": 1.0 } ],
+  "triples": [
+    {
+      "subject": "Metformin", "predicate": "reduces", "object": "glucose",
+      "condition": "in T2DM", "temporal": "", "location": "", "certainty": "established",
+      "scope": "adults with T2DM", "source_attribution": ""
+    }
+  ],
+  "rules": [
+    {
+      "antecedent": "fasting glucose > 95",
+      "consequent": "initiate insulin",
+      "exception": "unless contraindicated",
+      "rule_type": "clinical_decision",
+      "scope": "gestational diabetes",
+      "source_attribution": "ACOG guidelines"
+    }
+  ]
+}
+`, entityGuidance, relationGuidance)
+
+	userPrompt := fmt.Sprintf("Extract structured information from the following text:\n\n%s", text)
+
+	messages := []types.Message{
+		NewSystemMessage(systemPrompt),
+		NewUserMessage(userPrompt),
+	}
+
+	// We use a temporary struct to capture the LLM output, ensuring it aligns with ExtendedExtractionResult
+	var result ExtendedExtractionResult
+
+	// Use the continuation helper to get valid JSON
+	_, err := GenerateJSONResponseWithContinuationMessages(ctx, client, messages, &result, 3)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract extended info with LLM: %w", err)
+	}
+
+	// If unmarshalling inside the helper succeeded (it populated result if targetStruct was passed), we are good.
+	// But GenerateJSONResponseWithContinuationMessages takes interface{}, and populates it if possible.
+	// Let's manually unmarshal again to be sure or just trust the helper.
+	// The helper does: _ = json.Unmarshal([]byte(cleanJSON), targetStruct)
+	// So 'result' should be populated.
+	
+	// Ensure SourceText is set if the LLM didn't return it
+	if result.SourceText == "" {
+		result.SourceText = text
+	}
+
+	return &result, nil
+}
