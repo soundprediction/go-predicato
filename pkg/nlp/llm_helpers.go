@@ -747,7 +747,7 @@ Return the output as a JSON object matching this structure:
 	// Let's manually unmarshal again to be sure or just trust the helper.
 	// The helper does: _ = json.Unmarshal([]byte(cleanJSON), targetStruct)
 	// So 'result' should be populated.
-	
+
 	// Ensure SourceText is set if the LLM didn't return it
 	if result.SourceText == "" {
 		result.SourceText = text

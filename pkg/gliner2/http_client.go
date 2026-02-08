@@ -215,15 +215,15 @@ func (c *HTTPClient) ExtractExtended(ctx context.Context, text string, entityTyp
 
 	// Default entity types if none provided
 	entityMap := map[string]string{
-		"condition":     "Medical condition or disease",
-		"medication":    "Drug or medication name",
-		"symptom":       "Sign or symptom",
-		"procedure":     "Medical procedure or surgery",
-		"anatomy":       "Anatomical structure or body part",
-		"lab_test":      "Laboratory test or diagnostic study",
-		"organism":      "Biological organism or pathogen",
-		"gene_protein":  "Gene or protein name",
-		"substance":     "Chemical substance",
+		"condition":      "Medical condition or disease",
+		"medication":     "Drug or medication name",
+		"symptom":        "Sign or symptom",
+		"procedure":      "Medical procedure or surgery",
+		"anatomy":        "Anatomical structure or body part",
+		"lab_test":       "Laboratory test or diagnostic study",
+		"organism":       "Biological organism or pathogen",
+		"gene_protein":   "Gene or protein name",
+		"substance":      "Chemical substance",
 		"medical_device": "Medical device or equipment",
 	}
 	if len(entityTypes) > 0 {
