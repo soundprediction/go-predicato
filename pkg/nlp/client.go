@@ -22,7 +22,8 @@ type Client interface {
 	ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error)
 
 	// ExtractExtended performs structured extraction (entities, relations, triples, rules) from the text.
-	ExtractExtended(ctx context.Context, text string) (*ExtendedExtractionResult, error)
+	// entityTypes and relationTypes are optional: when nil, built-in defaults are used.
+	ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error)
 
 	// Summarize generates a summary of the provided text.
 	Summarize(ctx context.Context, text string) (string, error)

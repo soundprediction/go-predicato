@@ -257,8 +257,8 @@ func (a *AnthropicClient) Summarize(ctx context.Context, text string) (string, e
 }
 
 // ExtractExtended implements the Client interface
-func (a *AnthropicClient) ExtractExtended(ctx context.Context, text string) (*ExtendedExtractionResult, error) {
-	return ExtractExtendedHelper(ctx, a, text)
+func (a *AnthropicClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	return ExtractExtendedHelper(ctx, a, text, entityTypes, relationTypes)
 }
 
 // GetModel returns the model identifier.

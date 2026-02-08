@@ -117,6 +117,56 @@ func (r *RouterClient) Close() error {
 	return nil
 }
 
+// ExtractEntities implements Client with routing and fallback
+func (r *RouterClient) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]ExtractedEntity, error) {
+	primary, _, fallback := r.getClientForContext(ctx)
+	result, err := primary.ExtractEntities(ctx, text, entityTypes)
+	if err != nil && fallback != nil {
+		return fallback.ExtractEntities(ctx, text, entityTypes)
+	}
+	return result, err
+}
+
+// ExtractRelations implements Client with routing and fallback
+func (r *RouterClient) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error) {
+	primary, _, fallback := r.getClientForContext(ctx)
+	result, err := primary.ExtractRelations(ctx, text, relationTypes)
+	if err != nil && fallback != nil {
+		return fallback.ExtractRelations(ctx, text, relationTypes)
+	}
+	return result, err
+}
+
+// ExtractExtended implements Client with routing and fallback
+func (r *RouterClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	primary, _, fallback := r.getClientForContext(ctx)
+	result, err := primary.ExtractExtended(ctx, text, entityTypes, relationTypes)
+	if err != nil && fallback != nil {
+		return fallback.ExtractExtended(ctx, text, entityTypes, relationTypes)
+	}
+	return result, err
+}
+
+// Summarize implements Client with routing and fallback
+func (r *RouterClient) Summarize(ctx context.Context, text string) (string, error) {
+	primary, _, fallback := r.getClientForContext(ctx)
+	result, err := primary.Summarize(ctx, text)
+	if err != nil && fallback != nil {
+		return fallback.Summarize(ctx, text)
+	}
+	return result, err
+}
+
+// GenerateText implements Client with routing and fallback
+func (r *RouterClient) GenerateText(ctx context.Context, prompt string) (string, error) {
+	primary, _, fallback := r.getClientForContext(ctx)
+	result, err := primary.GenerateText(ctx, prompt)
+	if err != nil && fallback != nil {
+		return fallback.GenerateText(ctx, prompt)
+	}
+	return result, err
+}
+
 // GetCapabilities returns the list of capabilities supported by this client.
 func (r *RouterClient) GetCapabilities() []TaskCapability {
 	// For router, we can return the union of capabilities, or just delegation to default.

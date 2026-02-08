@@ -205,22 +205,222 @@ func (c *HTTPClient) ExtractStructured(ctx context.Context, text string, schema 
 	return &result, nil
 }
 
-func (c *HTTPClient) ExtractExtended(ctx context.Context, text string) (*ExtendedExtractionResult, error) {
-	request := ExtractRequest{
-		Task: "extract_extended",
-		Text: text,
-		// Schema can be used to pass threshold if needed, server uses it.
-		// Passing empty schema usually defaults threshold to 0.4 in server.
-		Schema: map[string]interface{}{"threshold": 0.4},
+// ExtractExtended performs combined entity, relation, triple, and rule extraction
+// using GLiNER2's create_schema().extract() pattern via the extract_json task.
+// entityTypes and relationTypes are optional: when nil, defaults are used.
+func (c *HTTPClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	// Build the combined schema matching GLiNER2's create_schema() pattern.
+	// This combines entities, relations, and structured extraction (fact/rule)
+	// in a single model pass.
+
+	// Default entity types if none provided
+	entityMap := map[string]string{
+		"condition":     "Medical condition or disease",
+		"medication":    "Drug or medication name",
+		"symptom":       "Sign or symptom",
+		"procedure":     "Medical procedure or surgery",
+		"anatomy":       "Anatomical structure or body part",
+		"lab_test":      "Laboratory test or diagnostic study",
+		"organism":      "Biological organism or pathogen",
+		"gene_protein":  "Gene or protein name",
+		"substance":     "Chemical substance",
+		"medical_device": "Medical device or equipment",
+	}
+	if len(entityTypes) > 0 {
+		entityMap = make(map[string]string, len(entityTypes))
+		for _, et := range entityTypes {
+			entityMap[et] = et
+		}
 	}
 
-	var result ExtendedExtractionResult
-	err := c.makeRequest(ctx, request, &result)
+	// Default relation types if none provided
+	relationMap := map[string]string{
+		"treats":           "A treatment or medication that treats a condition",
+		"causes":           "Something that causes a condition or symptom",
+		"diagnoses":        "A test or procedure that diagnoses a condition",
+		"contraindicates":  "A condition that contraindicates a treatment",
+		"interacts_with":   "A drug interaction",
+		"associated_with":  "An association between entities",
+		"prevents":         "Something that prevents a condition",
+		"manifestation_of": "A symptom that is a manifestation of a condition",
+	}
+	if len(relationTypes) > 0 {
+		relationMap = make(map[string]string, len(relationTypes))
+		for _, rt := range relationTypes {
+			relationMap[rt] = rt
+		}
+	}
+
+	// Build combined schema dict matching GLiNER2 create_schema() pattern
+	schema := map[string]interface{}{
+		"entities":  entityMap,
+		"relations": relationMap,
+		"fact": []string{
+			"subject::str::The agent or entity acting",
+			"predicate::str::The verb or relationship",
+			"object::str::The entity being acted on",
+			"condition::str::Conditional qualifier",
+			"temporal::str::Time reference",
+			"location::str::Anatomical site or region",
+			"certainty::[established|likely|possible|uncertain|controversial]::str",
+			"scope::str::Who this applies to",
+			"source_attribution::str::Study or guideline",
+		},
+		"rule": []string{
+			"antecedent::str::The condition or trigger",
+			"consequent::str::The action or conclusion",
+			"exception::str::Exception clause",
+			"rule_type::[clinical_decision|diagnostic_criterion|contraindication|dosing|monitoring|referral|screening]::str",
+			"scope::str::Who this rule applies to",
+			"source_attribution::str::Guideline behind this rule",
+		},
+	}
+
+	request := ExtractRequest{
+		Task:      "extract_json",
+		Text:      text,
+		Schema:    schema,
+		Threshold: 0.4,
+	}
+
+	// The raw response from extract_json is a StructuredResult with keys like
+	// "entities", "relation_extraction", "fact", "rule".
+	var rawResult map[string]interface{}
+	err := c.makeRequest(ctx, request, &rawResult)
 	if err != nil {
 		return nil, fmt.Errorf("extended extraction failed: %w", err)
 	}
 
-	return &result, nil
+	// Parse the combined response into ExtendedExtractionResult
+	result := &ExtendedExtractionResult{
+		SourceText: text,
+		Entities:   make(map[string][]string),
+	}
+
+	// Parse entities: {"entities": {"condition": [{"text": "...", ...}], ...}}
+	if entitiesRaw, ok := rawResult["entities"]; ok {
+		if entitiesMap, ok := entitiesRaw.(map[string]interface{}); ok {
+			for entityType, entityListRaw := range entitiesMap {
+				if entityList, ok := entityListRaw.([]interface{}); ok {
+					var names []string
+					for _, e := range entityList {
+						switch v := e.(type) {
+						case string:
+							names = append(names, v)
+						case map[string]interface{}:
+							if text, ok := v["text"].(string); ok {
+								names = append(names, text)
+							}
+						}
+					}
+					if len(names) > 0 {
+						result.Entities[entityType] = names
+					}
+				}
+			}
+		}
+	}
+
+	// Parse relations: {"relation_extraction": {"treats": [{"head": ..., "tail": ...}], ...}}
+	if relRaw, ok := rawResult["relation_extraction"]; ok {
+		if relMap, ok := relRaw.(map[string]interface{}); ok {
+			for relType, tupleListRaw := range relMap {
+				if tupleList, ok := tupleListRaw.([]interface{}); ok {
+					for _, tupleRaw := range tupleList {
+						if tuple, ok := tupleRaw.(map[string]interface{}); ok {
+							rel := Relation{Relation: relType}
+							rel.Head = parseSpanOrString(tuple["head"])
+							rel.Tail = parseSpanOrString(tuple["tail"])
+							if conf, ok := tuple["confidence"].(float64); ok {
+								rel.Confidence = conf
+							}
+							result.Relations = append(result.Relations, rel)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Parse facts/triples: {"fact": [{"subject": "...", "predicate": "...", ...}]}
+	if factsRaw, ok := rawResult["fact"]; ok {
+		if factList, ok := factsRaw.([]interface{}); ok {
+			for _, factRaw := range factList {
+				if factMap, ok := factRaw.(map[string]interface{}); ok {
+					triple := ExtendedTriple{
+						Subject:           getStringField(factMap, "subject"),
+						Predicate:         getStringField(factMap, "predicate"),
+						Object:            getStringField(factMap, "object"),
+						Condition:         getStringField(factMap, "condition"),
+						Temporal:          getStringField(factMap, "temporal"),
+						Location:          getStringField(factMap, "location"),
+						Certainty:         getStringField(factMap, "certainty"),
+						Scope:             getStringField(factMap, "scope"),
+						SourceAttribution: getStringField(factMap, "source_attribution"),
+					}
+					if conf, ok := factMap["confidence"].(float64); ok {
+						triple.Confidence = conf
+					}
+					result.Triples = append(result.Triples, triple)
+				}
+			}
+		}
+	}
+
+	// Parse rules: {"rule": [{"antecedent": "...", "consequent": "...", ...}]}
+	if rulesRaw, ok := rawResult["rule"]; ok {
+		if ruleList, ok := rulesRaw.([]interface{}); ok {
+			for _, ruleRaw := range ruleList {
+				if ruleMap, ok := ruleRaw.(map[string]interface{}); ok {
+					rule := Rule{
+						Antecedent:        getStringField(ruleMap, "antecedent"),
+						Consequent:        getStringField(ruleMap, "consequent"),
+						Exception:         getStringField(ruleMap, "exception"),
+						RuleType:          getStringField(ruleMap, "rule_type"),
+						Scope:             getStringField(ruleMap, "scope"),
+						SourceAttribution: getStringField(ruleMap, "source_attribution"),
+					}
+					if conf, ok := ruleMap["confidence"].(float64); ok {
+						rule.Confidence = conf
+					}
+					result.Rules = append(result.Rules, rule)
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// getStringField safely extracts a string field from a map.
+func getStringField(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// parseSpanOrString converts a raw interface{} to SpanOrString.
+func parseSpanOrString(v interface{}) SpanOrString {
+	switch val := v.(type) {
+	case string:
+		return SpanOrString{Text: val}
+	case map[string]interface{}:
+		s := SpanOrString{}
+		if text, ok := val["text"].(string); ok {
+			s.Text = text
+		}
+		if start, ok := val["start"].(float64); ok {
+			s.Start = int(start)
+		}
+		if end, ok := val["end"].(float64); ok {
+			s.End = int(end)
+		}
+		return s
+	}
+	return SpanOrString{}
 }
 
 func (c *HTTPClient) Close() error {

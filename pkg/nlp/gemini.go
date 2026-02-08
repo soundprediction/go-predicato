@@ -282,8 +282,8 @@ func (g *GeminiClient) Summarize(ctx context.Context, text string) (string, erro
 }
 
 // ExtractExtended implements the Client interface
-func (g *GeminiClient) ExtractExtended(ctx context.Context, text string) (*ExtendedExtractionResult, error) {
-	return ExtractExtendedHelper(ctx, g, text)
+func (g *GeminiClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	return ExtractExtendedHelper(ctx, g, text, entityTypes, relationTypes)
 }
 
 // GetModel returns the model identifier.

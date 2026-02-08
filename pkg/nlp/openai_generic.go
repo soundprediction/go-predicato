@@ -243,8 +243,8 @@ func (c *OpenAIGenericClient) ExtractRelations(ctx context.Context, text string,
 }
 
 // ExtractExtended implements the Client interface
-func (c *OpenAIGenericClient) ExtractExtended(ctx context.Context, text string) (*ExtendedExtractionResult, error) {
-	return ExtractExtendedHelper(ctx, c, text)
+func (c *OpenAIGenericClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	return ExtractExtendedHelper(ctx, c, text, entityTypes, relationTypes)
 }
 
 // Summarize implements the Client interface

@@ -55,6 +55,12 @@ type ExtractionResults struct {
 	// ExtractedEdges are raw relationships before resolution
 	ExtractedEdges []*ExtractedEdge `json:"extracted_edges"`
 
+	// ExtractedTriples are contextualised triples (extended extraction)
+	ExtractedTriples []*ExtractedTriple `json:"extracted_triples,omitempty"`
+
+	// ExtractedRules are conditional rules (extended extraction)
+	ExtractedRules []*ExtractedRule `json:"extracted_rules,omitempty"`
+
 	// ChunkCount is the number of chunks the episode was split into
 	ChunkCount int `json:"chunk_count"`
 
@@ -96,4 +102,58 @@ func (r *ExtractionResults) EdgeCount() int {
 // IsEmpty returns true if no entities or relationships were extracted.
 func (r *ExtractionResults) IsEmpty() bool {
 	return r.NodeCount() == 0 && r.EdgeCount() == 0
+}
+
+// TripleCount returns the number of extracted triples.
+func (r *ExtractionResults) TripleCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.ExtractedTriples)
+}
+
+// RuleCount returns the number of extracted rules.
+func (r *ExtractionResults) RuleCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.ExtractedRules)
+}
+
+// ExtractedTriple represents a contextualised predicate triple extracted from a source.
+// Extends the basic (subject, predicate, object) with condition, temporal, location,
+// certainty, scope, and source attribution fields.
+type ExtractedTriple struct {
+	CreatedAt         time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	SourceID          string    `json:"source_id"`
+	Subject           string    `json:"subject"`
+	Predicate         string    `json:"predicate"`
+	Object            string    `json:"object"`
+	Condition         string    `json:"condition,omitempty"`
+	Temporal          string    `json:"temporal,omitempty"`
+	Location          string    `json:"location,omitempty"`
+	Certainty         string    `json:"certainty,omitempty"`
+	Scope             string    `json:"scope,omitempty"`
+	SourceAttribution string    `json:"source_attribution,omitempty"`
+	Embedding         []float32 `json:"embedding,omitempty"`
+	Confidence        float64   `json:"confidence,omitempty"`
+	ChunkIndex        int       `json:"chunk_index"`
+}
+
+// ExtractedRule represents a conditional rule extracted from a source:
+// IF antecedent THEN consequent [UNLESS exception].
+type ExtractedRule struct {
+	CreatedAt         time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	SourceID          string    `json:"source_id"`
+	Antecedent        string    `json:"antecedent"`
+	Consequent        string    `json:"consequent"`
+	Exception         string    `json:"exception,omitempty"`
+	RuleType          string    `json:"rule_type,omitempty"`
+	Scope             string    `json:"scope,omitempty"`
+	SourceAttribution string    `json:"source_attribution,omitempty"`
+	Embedding         []float32 `json:"embedding,omitempty"`
+	Confidence        float64   `json:"confidence,omitempty"`
+	ChunkIndex        int       `json:"chunk_index"`
 }

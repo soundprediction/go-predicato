@@ -1,10 +1,13 @@
 package rustbert
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"github.com/soundprediction/go-rust-bert/pkg/rustbert"
+	"github.com/soundprediction/predicato/pkg/nlp"
+	"github.com/soundprediction/predicato/pkg/types"
 )
 
 // Client wraps go-rust-bert models for use in Predicato.
@@ -106,6 +109,8 @@ type Entity struct {
 	Score float64
 }
 
+// ExtractEntities extracts named entities from the text using the NER model.
+func (c *Client) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]nlp.ExtractedEntity, error) {
 	// Load on first use if not loaded
 	if c.nerModel == nil {
 		if err := c.LoadNERModel(); err != nil {
@@ -221,6 +226,6 @@ func (c *Client) GetCapabilities() []nlp.TaskCapability {
 }
 
 // ExtractExtended performs structured extraction (entities, relations, triples, rules) from the text.
-func (c *Client) ExtractExtended(ctx context.Context, text string) (*nlp.ExtendedExtractionResult, error) {
+func (c *Client) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*nlp.ExtendedExtractionResult, error) {
 	return nil, fmt.Errorf("RustBert does not support extended extraction")
 }

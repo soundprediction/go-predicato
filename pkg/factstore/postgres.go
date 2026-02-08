@@ -220,6 +220,8 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 		"CREATE INDEX IF NOT EXISTS idx_nodes_type ON extracted_nodes(type)",
 		"CREATE INDEX IF NOT EXISTS idx_edges_source ON extracted_edges(source_id)",
 		"CREATE INDEX IF NOT EXISTS idx_edges_group ON extracted_edges(group_id)",
+		"CREATE INDEX IF NOT EXISTS idx_triples_source ON extracted_triples(source_id)",
+		"CREATE INDEX IF NOT EXISTS idx_rules_source ON extracted_rules(source_id)",
 	}
 
 	for _, idx := range indices {
@@ -246,6 +248,90 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 			// Log warning but don't fail
 			fmt.Printf("Warning: failed to create GIN index (keyword search may be slower): %v\n", err)
 		}
+	}
+
+	// Create extracted_triples table
+	var triplesTable string
+	if p.usePgVector {
+		triplesTable = fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS extracted_triples (
+				id VARCHAR(255) PRIMARY KEY,
+				source_id VARCHAR(255) REFERENCES sources(id),
+				subject TEXT,
+				predicate TEXT,
+				object TEXT,
+				condition TEXT,
+				temporal TEXT,
+				location TEXT,
+				certainty TEXT,
+				scope TEXT,
+				source_attribution TEXT,
+				confidence FLOAT,
+				embedding vector(%d),
+				chunk_index INT,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			)`, p.embeddingDimensions)
+	} else {
+		triplesTable = `
+			CREATE TABLE IF NOT EXISTS extracted_triples (
+				id VARCHAR(255) PRIMARY KEY,
+				source_id VARCHAR(255) REFERENCES sources(id),
+				subject TEXT,
+				predicate TEXT,
+				object TEXT,
+				condition TEXT,
+				temporal TEXT,
+				location TEXT,
+				certainty TEXT,
+				scope TEXT,
+				source_attribution TEXT,
+				confidence FLOAT,
+				embedding JSONB,
+				chunk_index INT,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			)`
+	}
+	if _, err := p.db.ExecContext(ctx, triplesTable); err != nil {
+		return fmt.Errorf("failed to create extracted_triples table: %w", err)
+	}
+
+	// Create extracted_rules table
+	var rulesTable string
+	if p.usePgVector {
+		rulesTable = fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS extracted_rules (
+				id VARCHAR(255) PRIMARY KEY,
+				source_id VARCHAR(255) REFERENCES sources(id),
+				antecedent TEXT,
+				consequent TEXT,
+				exception TEXT,
+				rule_type TEXT,
+				scope TEXT,
+				source_attribution TEXT,
+				confidence FLOAT,
+				embedding vector(%d),
+				chunk_index INT,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			)`, p.embeddingDimensions)
+	} else {
+		rulesTable = `
+			CREATE TABLE IF NOT EXISTS extracted_rules (
+				id VARCHAR(255) PRIMARY KEY,
+				source_id VARCHAR(255) REFERENCES sources(id),
+				antecedent TEXT,
+				consequent TEXT,
+				exception TEXT,
+				rule_type TEXT,
+				scope TEXT,
+				source_attribution TEXT,
+				confidence FLOAT,
+				embedding JSONB,
+				chunk_index INT,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			)`
+	}
+	if _, err := p.db.ExecContext(ctx, rulesTable); err != nil {
+		return fmt.Errorf("failed to create extracted_rules table: %w", err)
 	}
 
 	// --- Entity dedup migrations ---
@@ -628,12 +714,220 @@ func (p *PostgresDB) GetStats(ctx context.Context) (*Stats, error) {
 	if err := p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_edges").Scan(&stats.EdgeCount); err != nil {
 		return nil, fmt.Errorf("failed to count edges: %w", err)
 	}
+	// Triple and rule counts are optional (tables may not exist on older schemas)
+	_ = p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_triples").Scan(&stats.TripleCount)
+	_ = p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_rules").Scan(&stats.RuleCount)
 
 	return stats, nil
 }
 
 func (p *PostgresDB) Close() error {
 	return p.db.Close()
+}
+
+// --- Extended Extraction Methods ---
+
+func (p *PostgresDB) SaveExtractedTriples(ctx context.Context, sourceID string, triples []*ExtractedTriple) error {
+	if len(triples) == 0 {
+		return nil
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO extracted_triples (id, source_id, subject, predicate, object, condition, temporal, location, certainty, scope, source_attribution, confidence, embedding, chunk_index, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		ON CONFLICT (id) DO UPDATE SET
+			subject = EXCLUDED.subject,
+			predicate = EXCLUDED.predicate,
+			object = EXCLUDED.object,
+			condition = EXCLUDED.condition,
+			temporal = EXCLUDED.temporal,
+			location = EXCLUDED.location,
+			certainty = EXCLUDED.certainty,
+			scope = EXCLUDED.scope,
+			source_attribution = EXCLUDED.source_attribution,
+			confidence = EXCLUDED.confidence,
+			embedding = EXCLUDED.embedding,
+			chunk_index = EXCLUDED.chunk_index`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare triple statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, t := range triples {
+		var embeddingVal interface{}
+		if len(t.Embedding) > 0 {
+			embeddingVal = p.embeddingToString(t.Embedding)
+		}
+		createdAt := t.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = time.Now()
+		}
+
+		if _, err := stmt.ExecContext(ctx,
+			t.ID, sourceID, t.Subject, t.Predicate, t.Object,
+			t.Condition, t.Temporal, t.Location, t.Certainty, t.Scope, t.SourceAttribution,
+			t.Confidence, embeddingVal, t.ChunkIndex, createdAt); err != nil {
+			return fmt.Errorf("failed to insert triple %s: %w", t.ID, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (p *PostgresDB) SaveExtractedRules(ctx context.Context, sourceID string, rules []*ExtractedRule) error {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO extracted_rules (id, source_id, antecedent, consequent, exception, rule_type, scope, source_attribution, confidence, embedding, chunk_index, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (id) DO UPDATE SET
+			antecedent = EXCLUDED.antecedent,
+			consequent = EXCLUDED.consequent,
+			exception = EXCLUDED.exception,
+			rule_type = EXCLUDED.rule_type,
+			scope = EXCLUDED.scope,
+			source_attribution = EXCLUDED.source_attribution,
+			confidence = EXCLUDED.confidence,
+			embedding = EXCLUDED.embedding,
+			chunk_index = EXCLUDED.chunk_index`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare rule statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, r := range rules {
+		var embeddingVal interface{}
+		if len(r.Embedding) > 0 {
+			embeddingVal = p.embeddingToString(r.Embedding)
+		}
+		createdAt := r.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = time.Now()
+		}
+
+		if _, err := stmt.ExecContext(ctx,
+			r.ID, sourceID, r.Antecedent, r.Consequent, r.Exception,
+			r.RuleType, r.Scope, r.SourceAttribution,
+			r.Confidence, embeddingVal, r.ChunkIndex, createdAt); err != nil {
+			return fmt.Errorf("failed to insert rule %s: %w", r.ID, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (p *PostgresDB) GetExtractedTriples(ctx context.Context, sourceID string) ([]*ExtractedTriple, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT id, source_id, subject, predicate, object, condition, temporal, location,
+		       certainty, scope, source_attribution, confidence, embedding, chunk_index, created_at
+		FROM extracted_triples WHERE source_id = $1`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query extracted triples: %w", err)
+	}
+	defer rows.Close()
+
+	var triples []*ExtractedTriple
+	for rows.Next() {
+		var t ExtractedTriple
+		var embeddingStr sql.NullString
+		var condition, temporal, location, certainty, scope, sourceAttr sql.NullString
+		var confidence sql.NullFloat64
+
+		if err := rows.Scan(&t.ID, &t.SourceID, &t.Subject, &t.Predicate, &t.Object,
+			&condition, &temporal, &location, &certainty, &scope, &sourceAttr,
+			&confidence, &embeddingStr, &t.ChunkIndex, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+
+		if condition.Valid {
+			t.Condition = condition.String
+		}
+		if temporal.Valid {
+			t.Temporal = temporal.String
+		}
+		if location.Valid {
+			t.Location = location.String
+		}
+		if certainty.Valid {
+			t.Certainty = certainty.String
+		}
+		if scope.Valid {
+			t.Scope = scope.String
+		}
+		if sourceAttr.Valid {
+			t.SourceAttribution = sourceAttr.String
+		}
+		if confidence.Valid {
+			t.Confidence = confidence.Float64
+		}
+		if embeddingStr.Valid {
+			t.Embedding = p.parseEmbedding(embeddingStr.String)
+		}
+
+		triples = append(triples, &t)
+	}
+	return triples, nil
+}
+
+func (p *PostgresDB) GetExtractedRules(ctx context.Context, sourceID string) ([]*ExtractedRule, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT id, source_id, antecedent, consequent, exception, rule_type, scope,
+		       source_attribution, confidence, embedding, chunk_index, created_at
+		FROM extracted_rules WHERE source_id = $1`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query extracted rules: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []*ExtractedRule
+	for rows.Next() {
+		var r ExtractedRule
+		var embeddingStr sql.NullString
+		var exception, ruleType, scope, sourceAttr sql.NullString
+		var confidence sql.NullFloat64
+
+		if err := rows.Scan(&r.ID, &r.SourceID, &r.Antecedent, &r.Consequent,
+			&exception, &ruleType, &scope, &sourceAttr,
+			&confidence, &embeddingStr, &r.ChunkIndex, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+
+		if exception.Valid {
+			r.Exception = exception.String
+		}
+		if ruleType.Valid {
+			r.RuleType = ruleType.String
+		}
+		if scope.Valid {
+			r.Scope = scope.String
+		}
+		if sourceAttr.Valid {
+			r.SourceAttribution = sourceAttr.String
+		}
+		if confidence.Valid {
+			r.Confidence = confidence.Float64
+		}
+		if embeddingStr.Valid {
+			r.Embedding = p.parseEmbedding(embeddingStr.String)
+		}
+
+		rules = append(rules, &r)
+	}
+	return rules, nil
 }
 
 // --- Search Methods ---

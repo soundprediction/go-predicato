@@ -43,20 +43,17 @@ func (a *LLMAdapter) Chat(ctx context.Context, messages []types.Message) (*types
 
 	switch a.task {
 	case "summarization":
-		summaries, err := a.client.Summarize(input)
+		output, err = a.client.Summarize(ctx, input)
 		if err != nil {
 			return nil, err
 		}
-		if len(summaries) > 0 {
-			output = summaries[0]
-		}
 	case "text_generation", "generation":
-		output, err = a.client.GenerateText(input)
+		output, err = a.client.GenerateText(ctx, input)
 		if err != nil {
 			return nil, err
 		}
 	case "ner":
-		entities, err := a.client.ExtractEntities(input)
+		entities, err := a.client.ExtractEntities(ctx, input, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -101,22 +98,7 @@ func (a *LLMAdapter) ExtractEntities(ctx context.Context, text string, entityTyp
 		return nil, fmt.Errorf("task mismatch: adapter configured for %s, requested ExtractEntities", a.task)
 	}
 
-	entities, err := a.client.ExtractEntities(text)
-	if err != nil {
-		return nil, err
-	}
-
-	var extracted []nlp.ExtractedEntity
-	for _, e := range entities {
-		extracted = append(extracted, nlp.ExtractedEntity{
-			Text:       e.Text,
-			Label:      e.Label,
-			Confidence: e.Score,
-			Start:      0, // RustBert client doesn't expose offsets in Entity struct currently?
-			End:        0,
-		})
-	}
-	return extracted, nil
+	return a.client.ExtractEntities(ctx, text, entityTypes)
 }
 
 // ExtractRelations provides direct access to relationship extraction

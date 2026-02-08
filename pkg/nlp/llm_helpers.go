@@ -683,40 +683,48 @@ func GenerateYAMLResponse[T any](
 
 // ExtractExtendedHelperFunc is a helper for LLM clients to implement ExtractExtended.
 // It constructs a prompt with the expected schema and uses the client's ChatWithStructuredOutput or generation capabilities.
-func ExtractExtendedHelper(ctx context.Context, client Client, text string) (*ExtendedExtractionResult, error) {
-	// Define the schema/structure we want the LLM to populate
-	// We use the JSON tags from the structs in client_types.go
-	// Since we can't easily pass the Go struct definition to the prompt as a schema object in all cases,
-	// we'll describe it in the system prompt or rely on the client's ability to handle the struct.
-	
-	systemPrompt := `You are an expert medical information extraction system.
+// entityTypes and relationTypes are optional: when non-nil, they are listed in the prompt to guide extraction.
+func ExtractExtendedHelper(ctx context.Context, client Client, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
+	// Build entity/relation type guidance if provided
+	var entityGuidance, relationGuidance string
+	if len(entityTypes) > 0 {
+		entityGuidance = fmt.Sprintf("\nFocus on these entity types: %s", strings.Join(entityTypes, ", "))
+	}
+	if len(relationTypes) > 0 {
+		relationGuidance = fmt.Sprintf("\nFocus on these relation types: %s", strings.Join(relationTypes, ", "))
+	}
+
+	systemPrompt := fmt.Sprintf(`You are an expert information extraction system.
 Your task is to extract structured information from the provided text, including:
-1. Entities: Named entities grouped by type (e.g., condition, medication, symptom).
-2. Relations: Relationships between entities (e.g., medication treats condition).
-3. Triples: Extended facts with context (subject, predicate, object, plus condition, temporal, certainty, etc.).
-4. Rules: Conditional logic found in the text (IF antecedent THEN consequent).
+1. Entities: Named entities grouped by type.%s
+2. Relations: Relationships between entities.%s
+3. Triples: Extended facts with context (subject, predicate, object, plus condition, temporal, location, certainty, scope, source_attribution).
+4. Rules: Conditional logic found in the text (IF antecedent THEN consequent UNLESS exception).
 
 Return the output as a JSON object matching this structure:
 {
   "source_text": "Original text segment",
   "entities": { "type": ["entity1", "entity2"] },
   "relations": [ { "source": "A", "target": "B", "type": "treats", "confidence": 1.0 } ],
-  "triples": [ 
-    { 
-      "subject": "Metformin", "predicate": "reduces", "object": "glucose", 
-      "condition": "in T2DM", "temporal": "", "certainty": "high" 
-    } 
+  "triples": [
+    {
+      "subject": "Metformin", "predicate": "reduces", "object": "glucose",
+      "condition": "in T2DM", "temporal": "", "location": "", "certainty": "established",
+      "scope": "adults with T2DM", "source_attribution": ""
+    }
   ],
   "rules": [
     {
       "antecedent": "fasting glucose > 95",
       "consequent": "initiate insulin",
       "exception": "unless contraindicated",
-      "rule_type": "clinical_decision"
+      "rule_type": "clinical_decision",
+      "scope": "gestational diabetes",
+      "source_attribution": "ACOG guidelines"
     }
   ]
 }
-`
+`, entityGuidance, relationGuidance)
 
 	userPrompt := fmt.Sprintf("Extract structured information from the following text:\n\n%s", text)
 

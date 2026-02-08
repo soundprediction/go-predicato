@@ -552,6 +552,25 @@ func (d *DoltDB) Close() error {
 	return d.db.Close()
 }
 
+// --- Extended Extraction Stubs (DoltDB does not persist triples/rules) ---
+
+func (d *DoltDB) SaveExtractedTriples(ctx context.Context, sourceID string, triples []*ExtractedTriple) error {
+	// DoltDB does not support extended extraction tables; silently skip.
+	return nil
+}
+
+func (d *DoltDB) SaveExtractedRules(ctx context.Context, sourceID string, rules []*ExtractedRule) error {
+	return nil
+}
+
+func (d *DoltDB) GetExtractedTriples(ctx context.Context, sourceID string) ([]*ExtractedTriple, error) {
+	return nil, nil
+}
+
+func (d *DoltDB) GetExtractedRules(ctx context.Context, sourceID string) ([]*ExtractedRule, error) {
+	return nil, nil
+}
+
 // --- Search Methods (In-memory implementation for DoltDB) ---
 // Note: These methods use in-memory search since Dolt doesn't have VectorChord.
 // For production use with large datasets, migrate to PostgresDB/DoltGres with VectorChord.

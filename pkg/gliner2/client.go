@@ -221,7 +221,8 @@ func (c *Client) handleTextClassification(ctx context.Context, userMsg string) (
 }
 
 // ExtractExtended performs structured extraction (entities, relations, triples, rules) from the text.
-func (c *Client) ExtractExtended(ctx context.Context, text string) (*nlp.ExtendedExtractionResult, error) {
+// entityTypes and relationTypes are optional: when nil, built-in defaults are used.
+func (c *Client) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*nlp.ExtendedExtractionResult, error) {
 	switch c.provider {
 	case ProviderNative:
 		return nil, fmt.Errorf("native provider not yet implemented for extended extraction")
@@ -230,7 +231,7 @@ func (c *Client) ExtractExtended(ctx context.Context, text string) (*nlp.Extende
 			return nil, fmt.Errorf("HTTP client not available")
 		}
 
-		result, err := c.httpClient.ExtractExtended(ctx, text)
+		result, err := c.httpClient.ExtractExtended(ctx, text, entityTypes, relationTypes)
 		if err != nil {
 			return nil, err
 		}

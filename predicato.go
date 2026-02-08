@@ -236,6 +236,12 @@ type AddEpisodeOptions struct {
 	// Requires DbConfig to be configured.
 	ExtractOnly bool
 
+	// ExtendedExtraction enables extraction of contextualised triples and
+	// conditional rules in addition to standard entities and edges.
+	// When true, ExtractExtended is called on each chunk and the results
+	// are persisted via SaveExtractedTriples / SaveExtractedRules.
+	ExtendedExtraction bool
+
 	// Verbose enables detailed logging of extracted entities, relations, and summaries
 	// during ingestion. Useful for debugging and monitoring ingestion pipelines.
 	Verbose bool
