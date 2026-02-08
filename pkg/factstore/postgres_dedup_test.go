@@ -343,10 +343,10 @@ func TestGetExtractedNodesJoinsThroughNodeSources(t *testing.T) {
 	// Expect the join query through node_sources
 	rows := sqlmock.NewRows([]string{
 		"id", "source_id", "group_id", "name", "normalized_name", "type",
-		"description", "embedding", "chunk_index", "created_at",
+		"description", "embedding", "chunk_index", "model", "created_at",
 	}).AddRow(
 		"node-1", "source-A", "group-1", "Acme Corporation", "acme corporation",
-		"organization", "A tech company", nil, 0, now,
+		"organization", "A tech company", nil, 0, nil, now,
 	)
 
 	mock.ExpectQuery(`SELECT en\.id, en\.source_id, en\.group_id, en\.name, en\.normalized_name, en\.type`).
