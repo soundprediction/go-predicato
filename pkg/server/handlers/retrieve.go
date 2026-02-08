@@ -418,33 +418,39 @@ func (h *RetrieveHandler) SearchFacts(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, nodeDTO)
 	}
 
-	var edges []dto.ExtractedEdgeDTO
-	for _, edge := range searchResults.Edges {
-		edgeDTO := dto.ExtractedEdgeDTO{
-			ID:             edge.ID,
-			SourceID:       edge.SourceID,
-			GroupID:        edge.GroupID,
-			SourceNodeName: edge.SourceNodeName,
-			SourceNodeType: edge.SourceNodeType,
-			TargetNodeName: edge.TargetNodeName,
-			TargetNodeType: edge.TargetNodeType,
-			Relation:       edge.Relation,
-			Description:    edge.Description,
-			Weight:         edge.Weight,
-			ChunkIndex:     edge.ChunkIndex,
-			CreatedAt:      edge.CreatedAt,
+	var triples []dto.ExtractedTripleDTO
+	for _, t := range searchResults.Triples {
+		tripleDTO := dto.ExtractedTripleDTO{
+			ID:                t.ID,
+			SourceID:          t.SourceID,
+			GroupID:           t.GroupID,
+			Subject:           t.Subject,
+			SubjectType:       t.SubjectType,
+			Predicate:         t.Predicate,
+			Object:            t.Object,
+			ObjectType:        t.ObjectType,
+			Description:       t.Description,
+			Condition:         t.Condition,
+			Temporal:          t.Temporal,
+			Location:          t.Location,
+			Certainty:         t.Certainty,
+			Scope:             t.Scope,
+			SourceAttribution: t.SourceAttribution,
+			Confidence:        t.Confidence,
+			ChunkIndex:        t.ChunkIndex,
+			CreatedAt:         t.CreatedAt,
 		}
-		edges = append(edges, edgeDTO)
+		triples = append(triples, tripleDTO)
 	}
 
 	response := dto.SearchFactsResponse{
-		Success:    true,
-		Nodes:      nodes,
-		Edges:      edges,
-		NodeScores: searchResults.NodeScores,
-		EdgeScores: searchResults.EdgeScores,
-		Query:      searchResults.Query,
-		Total:      searchResults.Total,
+		Success:      true,
+		Nodes:        nodes,
+		Triples:      triples,
+		NodeScores:   searchResults.NodeScores,
+		TripleScores: searchResults.TripleScores,
+		Query:        searchResults.Query,
+		Total:        searchResults.Total,
 	}
 
 	writeJSON(w, http.StatusOK, response)

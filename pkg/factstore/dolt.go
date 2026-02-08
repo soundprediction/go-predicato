@@ -110,19 +110,26 @@ func (d *DoltDB) Initialize(ctx context.Context) error {
 			created_at TIMESTAMP,
 			FOREIGN KEY (source_id) REFERENCES sources(id)
 		)`,
-		`CREATE TABLE IF NOT EXISTS extracted_edges (
+		`CREATE TABLE IF NOT EXISTS extracted_triples (
 			id VARCHAR(255) PRIMARY KEY,
 			source_id VARCHAR(255),
 			group_id VARCHAR(255),
-			source_node_name TEXT,
-			source_node_type VARCHAR(50),
-			target_node_name TEXT,
-			target_node_type VARCHAR(50),
-			relation TEXT,
+			subject TEXT,
+			subject_type VARCHAR(50),
+			predicate TEXT,
+			object TEXT,
+			object_type VARCHAR(50),
 			description TEXT,
+			` + "`condition`" + ` TEXT,
+			temporal TEXT,
+			location TEXT,
+			certainty TEXT,
+			scope TEXT,
+			source_attribution TEXT,
+			confidence FLOAT,
 			embedding JSON,
-			weight FLOAT,
 			chunk_index INT,
+			model VARCHAR(255),
 			created_at TIMESTAMP,
 			FOREIGN KEY (source_id) REFERENCES sources(id)
 		)`,
@@ -186,21 +193,21 @@ func (d *DoltDB) SaveSource(ctx context.Context, source *Source) error {
 	return nil
 }
 
-func (d *DoltDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, nodes []*ExtractedNode, edges []*ExtractedEdge) error {
+func (d *DoltDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, nodes []*ExtractedNode, triples []*ExtractedTriple) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Get source's group_id for nodes/edges
+	// Get source's group_id for nodes/triples
 	var groupID string
 	err = tx.QueryRowContext(ctx, "SELECT group_id FROM sources WHERE id = ?", sourceID).Scan(&groupID)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("failed to get source group_id: %w", err)
 	}
 
-	// Track original node ID -> canonical (deduplicated) node ID for edge consistency
+	// Track original node ID -> canonical (deduplicated) node ID
 	nodeIDMap := make(map[string]string)
 
 	for _, node := range nodes {
@@ -293,29 +300,9 @@ func (d *DoltDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, no
 		}
 	}
 
-	edgeStmt, err := tx.PrepareContext(ctx, `INSERT INTO extracted_edges (id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare edge statement: %w", err)
-	}
-	defer edgeStmt.Close()
-
-	for _, edge := range edges {
-		embeddingJSON, err := json.Marshal(edge.Embedding)
-		if err != nil {
-			return fmt.Errorf("failed to marshal embedding for edge %s: %w", edge.ID, err)
-		}
-		edgeGroupID := edge.GroupID
-		if edgeGroupID == "" {
-			edgeGroupID = groupID
-		}
-		createdAt := edge.CreatedAt
-		if createdAt.IsZero() {
-			createdAt = time.Now()
-		}
-		if _, err := edgeStmt.ExecContext(ctx, edge.ID, sourceID, edgeGroupID, edge.SourceNodeName, edge.SourceNodeType, edge.TargetNodeName, edge.TargetNodeType, edge.Relation, edge.Description, embeddingJSON, edge.Weight, edge.ChunkIndex, createdAt); err != nil {
-			return fmt.Errorf("failed to insert edge %s: %w", edge.ID, err)
-		}
-	}
+	// Insert triples (DoltDB stub — silently skip since Dolt does not persist triples)
+	_ = triples
+	_ = nodeIDMap
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
@@ -384,36 +371,9 @@ func (d *DoltDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]*Ext
 	return nodes, nil
 }
 
-func (d *DoltDB) GetExtractedEdges(ctx context.Context, sourceID string) ([]*ExtractedEdge, error) {
-	rows, err := d.db.QueryContext(ctx, "SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges WHERE source_id = ?", sourceID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query extracted edges: %w", err)
-	}
-	defer rows.Close()
-
-	var edges []*ExtractedEdge
-	for rows.Next() {
-		var e ExtractedEdge
-		var embeddingBytes []byte
-		var groupID sql.NullString
-		var createdAt sql.NullTime
-		if err := rows.Scan(&e.ID, &e.SourceID, &groupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType, &e.Relation, &e.Description, &embeddingBytes, &e.Weight, &e.ChunkIndex, &createdAt); err != nil {
-			return nil, err
-		}
-		if groupID.Valid {
-			e.GroupID = groupID.String
-		}
-		if createdAt.Valid {
-			e.CreatedAt = createdAt.Time
-		}
-		if len(embeddingBytes) > 0 {
-			if err := json.Unmarshal(embeddingBytes, &e.Embedding); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal embedding: %w", err)
-			}
-		}
-		edges = append(edges, &e)
-	}
-	return edges, nil
+func (d *DoltDB) GetExtractedTriples(ctx context.Context, sourceID string) ([]*ExtractedTriple, error) {
+	// DoltDB does not persist triples; return empty.
+	return nil, nil
 }
 
 func (d *DoltDB) GetAllSources(ctx context.Context, limit int) ([]*Source, error) {
@@ -492,44 +452,9 @@ func (d *DoltDB) GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNode, 
 	return nodes, nil
 }
 
-func (d *DoltDB) GetAllEdges(ctx context.Context, limit int) ([]*ExtractedEdge, error) {
-	query := "SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at FROM extracted_edges"
-	var rows *sql.Rows
-	var err error
-	if limit > 0 {
-		query += " LIMIT ?"
-		rows, err = d.db.QueryContext(ctx, query, limit)
-	} else {
-		rows, err = d.db.QueryContext(ctx, query)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to query edges: %w", err)
-	}
-	defer rows.Close()
-
-	var edges []*ExtractedEdge
-	for rows.Next() {
-		var e ExtractedEdge
-		var embeddingBytes []byte
-		var groupID sql.NullString
-		var createdAt sql.NullTime
-		if err := rows.Scan(&e.ID, &e.SourceID, &groupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType, &e.Relation, &e.Description, &embeddingBytes, &e.Weight, &e.ChunkIndex, &createdAt); err != nil {
-			return nil, err
-		}
-		if groupID.Valid {
-			e.GroupID = groupID.String
-		}
-		if createdAt.Valid {
-			e.CreatedAt = createdAt.Time
-		}
-		if len(embeddingBytes) > 0 {
-			if err := json.Unmarshal(embeddingBytes, &e.Embedding); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal embedding: %w", err)
-			}
-		}
-		edges = append(edges, &e)
-	}
-	return edges, nil
+func (d *DoltDB) GetAllTriples(ctx context.Context, limit int) ([]*ExtractedTriple, error) {
+	// DoltDB does not persist triples; return empty.
+	return nil, nil
 }
 
 func (d *DoltDB) GetStats(ctx context.Context) (*Stats, error) {
@@ -541,9 +466,7 @@ func (d *DoltDB) GetStats(ctx context.Context) (*Stats, error) {
 	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_nodes").Scan(&stats.NodeCount); err != nil {
 		return nil, fmt.Errorf("failed to count nodes: %w", err)
 	}
-	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_edges").Scan(&stats.EdgeCount); err != nil {
-		return nil, fmt.Errorf("failed to count edges: %w", err)
-	}
+	// DoltDB does not persist triples; TripleCount stays 0.
 
 	return stats, nil
 }
@@ -554,17 +477,8 @@ func (d *DoltDB) Close() error {
 
 // --- Extended Extraction Stubs (DoltDB does not persist triples/rules) ---
 
-func (d *DoltDB) SaveExtractedTriples(ctx context.Context, sourceID string, triples []*ExtractedTriple) error {
-	// DoltDB does not support extended extraction tables; silently skip.
-	return nil
-}
-
 func (d *DoltDB) SaveExtractedRules(ctx context.Context, sourceID string, rules []*ExtractedRule) error {
 	return nil
-}
-
-func (d *DoltDB) GetExtractedTriples(ctx context.Context, sourceID string) ([]*ExtractedTriple, error) {
-	return nil, nil
 }
 
 func (d *DoltDB) GetExtractedRules(ctx context.Context, sourceID string) ([]*ExtractedRule, error) {
@@ -661,74 +575,9 @@ func (d *DoltDB) SearchNodes(ctx context.Context, query string, embedding []floa
 	return nodes, scores, nil
 }
 
-func (d *DoltDB) SearchEdges(ctx context.Context, query string, embedding []float32, config *FactSearchConfig) ([]*ExtractedEdge, []float64, error) {
-	if config == nil {
-		config = &FactSearchConfig{Limit: 10}
-	}
-	if config.Limit <= 0 {
-		config.Limit = 10
-	}
-
-	allEdges, err := d.GetAllEdges(ctx, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	type scoredEdge struct {
-		edge  *ExtractedEdge
-		score float64
-	}
-
-	var scored []scoredEdge
-
-	for _, edge := range allEdges {
-		if config.GroupID != "" && edge.GroupID != config.GroupID {
-			continue
-		}
-		if config.TimeRange != nil {
-			if !config.TimeRange.Start.IsZero() && edge.CreatedAt.Before(config.TimeRange.Start) {
-				continue
-			}
-			if !config.TimeRange.End.IsZero() && edge.CreatedAt.After(config.TimeRange.End) {
-				continue
-			}
-		}
-
-		var score float64 = 0
-
-		// Vector similarity
-		if len(embedding) > 0 && len(edge.Embedding) > 0 {
-			score = cosineSimilarity(embedding, edge.Embedding)
-		}
-
-		// Keyword matching
-		if query != "" {
-			queryLower := strings.ToLower(query)
-			textLower := strings.ToLower(edge.Relation + " " + edge.Description)
-			if strings.Contains(textLower, queryLower) {
-				score += 0.5
-			}
-		}
-
-		if score >= config.MinScore {
-			scored = append(scored, scoredEdge{edge: edge, score: score})
-		}
-	}
-
-	// Sort using O(n log n) sort
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].score > scored[j].score
-	})
-
-	var edges []*ExtractedEdge
-	var scores []float64
-
-	for i := 0; i < len(scored) && i < config.Limit; i++ {
-		edges = append(edges, scored[i].edge)
-		scores = append(scores, scored[i].score)
-	}
-
-	return edges, scores, nil
+func (d *DoltDB) SearchTriples(ctx context.Context, query string, embedding []float32, config *FactSearchConfig) ([]*ExtractedTriple, []float64, error) {
+	// DoltDB does not persist triples; return empty results.
+	return []*ExtractedTriple{}, []float64{}, nil
 }
 
 func (d *DoltDB) SearchSources(ctx context.Context, query string, config *FactSearchConfig) ([]*Source, []float64, error) {
@@ -804,17 +653,17 @@ func (d *DoltDB) HybridSearch(ctx context.Context, query string, embedding []flo
 		return nil, fmt.Errorf("node search failed: %w", err)
 	}
 
-	edges, edgeScores, err := d.SearchEdges(ctx, query, embedding, config)
+	triples, tripleScores, err := d.SearchTriples(ctx, query, embedding, config)
 	if err != nil {
-		return nil, fmt.Errorf("edge search failed: %w", err)
+		return nil, fmt.Errorf("triple search failed: %w", err)
 	}
 
 	return &FactSearchResults{
-		Nodes:      nodes,
-		Edges:      edges,
-		NodeScores: nodeScores,
-		EdgeScores: edgeScores,
-		Query:      query,
-		Total:      len(nodes) + len(edges),
+		Nodes:        nodes,
+		Triples:      triples,
+		NodeScores:   nodeScores,
+		TripleScores: tripleScores,
+		Query:        query,
+		Total:        len(nodes) + len(triples),
 	}, nil
 }

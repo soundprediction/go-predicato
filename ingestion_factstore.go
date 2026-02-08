@@ -132,7 +132,7 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 		}
 	}
 
-	// 6. Extract Edges (Raw) and Prepare Facts Data
+	// 6. Extract Relationships (Raw) and Prepare Knowledge Triples
 	edgeOps := maintenance.NewEdgeOperations(c.driver, c.nlProcessor, c.embedder, prompts.NewLibrary())
 	edgeOps.ExtractionNLP = c.nlpModels.EdgeExtraction
 	edgeOps.ResolutionNLP = c.nlpModels.EdgeResolution
@@ -151,7 +151,7 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 		}
 	}
 
-	var factsEdges []*factstore.ExtractedEdge
+	var knowledgeTriples []*factstore.ExtractedTriple
 
 	edgeModel := ""
 	if c.nlpModels.EdgeExtraction != nil {
@@ -170,8 +170,6 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 
 			for _, e := range extracted {
 				// Resolve Names for Facts DB
-				// e.SourceNodeID and e.TargetNodeID are UUIDs from the extraction context (nodes + previous)
-
 				var sourceName, sourceType, targetName, targetType string
 
 				// Lookup in current chunk nodes (most likely)
@@ -200,7 +198,7 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 					}
 				}
 
-				// If still not found, check previousEpisodes?
+				// If still not found, check previousEpisodes
 				if sourceName == "" || targetName == "" {
 					for _, n := range previousEpisodes {
 						if n.Uuid == e.SourceNodeID {
@@ -214,41 +212,44 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 					}
 				}
 
-				factsEdges = append(factsEdges, &factstore.ExtractedEdge{
-					ID:             e.Uuid,
-					SourceID:       episode.ID,
-					SourceNodeName: utils.NormalizeStringExact(sourceName),
-					SourceNodeType: sourceType,
-					TargetNodeName: utils.NormalizeStringExact(targetName),
-					TargetNodeType: targetType,
-					Relation:       e.Name,
-					Description:    e.Summary, // Alias for Fact
-					Model:          edgeModel,
-					Weight:         e.Strength, // Use Strength
-					ChunkIndex:     chunkIdx,
+				knowledgeTriples = append(knowledgeTriples, &factstore.ExtractedTriple{
+					ID:          e.Uuid,
+					SourceID:    episode.ID,
+					Subject:     utils.NormalizeStringExact(sourceName),
+					SubjectType: sourceType,
+					Predicate:   e.Name,
+					Object:      utils.NormalizeStringExact(targetName),
+					ObjectType:  targetType,
+					Description: e.Summary,
+					Model:       edgeModel,
+					Confidence:  e.Strength,
+					ChunkIndex:  chunkIdx,
 				})
 			}
 		}
 	}
 
-	// 6b. Generate Edge Embeddings
-	if c.embedder != nil && len(factsEdges) > 0 {
-		texts := make([]string, len(factsEdges))
-		for i, e := range factsEdges {
-			texts[i] = e.Description
+	// 6b. Generate Triple Embeddings
+	if c.embedder != nil && len(knowledgeTriples) > 0 {
+		texts := make([]string, len(knowledgeTriples))
+		for i, t := range knowledgeTriples {
+			texts[i] = t.Subject + " " + t.Predicate + " " + t.Object
+			if t.Description != "" {
+				texts[i] = t.Description
+			}
 		}
 		embeddings, err := c.embedder.Embed(ctx, texts)
 		if err != nil {
-			c.logger.Warn("Failed to generate edge embeddings, continuing without",
+			c.logger.Warn("Failed to generate triple embeddings, continuing without",
 				"error", err,
 				"episode_id", episode.ID)
 		} else {
 			for i, emb := range embeddings {
-				factsEdges[i].Embedding = emb
+				knowledgeTriples[i].Embedding = emb
 			}
 		}
-	} else if c.embedder == nil && len(factsEdges) > 0 {
-		c.logger.Warn("No embedder configured, skipping edge embedding generation",
+	} else if c.embedder == nil && len(knowledgeTriples) > 0 {
+		c.logger.Warn("No embedder configured, skipping triple embedding generation",
 			"episode_id", episode.ID)
 	}
 
@@ -256,20 +257,19 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 	if options.Verbose {
 		c.logger.Info("[VERBOSE] Extracted relations",
 			"episode_id", episode.ID,
-			"relation_count", len(factsEdges))
-		for _, e := range factsEdges {
+			"relation_count", len(knowledgeTriples))
+		for _, t := range knowledgeTriples {
 			c.logger.Info("[VERBOSE] Relation",
-				"source", e.SourceNodeName,
-				"relation", e.Relation,
-				"target", e.TargetNodeName,
-				"description", e.Description,
-				"chunk", e.ChunkIndex)
+				"subject", t.Subject,
+				"predicate", t.Predicate,
+				"object", t.Object,
+				"description", t.Description,
+				"chunk", t.ChunkIndex)
 		}
 	}
 
-	// 6c. Extended Extraction (triples and rules) — optional
-	var factsTriples []*factstore.ExtractedTriple
-	var factsRules []*factstore.ExtractedRule
+	// 6c. Extended Extraction (enriches triples with context, extracts rules) — optional
+	var knowledgeRules []*factstore.ExtractedRule
 
 	if options.ExtendedExtraction {
 		extractionClient := c.nlpModels.NodeExtraction
@@ -311,8 +311,8 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 
 				// Convert nlp.ExtendedTriple → types.ExtractedTriple
 				for _, t := range result.Triples {
-					factsTriples = append(factsTriples, &types.ExtractedTriple{
-						ID:                fmt.Sprintf("%s-triple-%d-%d", episode.ID, chunkIdx, len(factsTriples)),
+					knowledgeTriples = append(knowledgeTriples, &types.ExtractedTriple{
+						ID:                fmt.Sprintf("%s-triple-%d-%d", episode.ID, chunkIdx, len(knowledgeTriples)),
 						SourceID:          episode.ID,
 						Subject:           t.Subject,
 						Predicate:         t.Predicate,
@@ -332,8 +332,8 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 
 				// Convert nlp.Rule → types.ExtractedRule
 				for _, r := range result.Rules {
-					factsRules = append(factsRules, &types.ExtractedRule{
-						ID:                fmt.Sprintf("%s-rule-%d-%d", episode.ID, chunkIdx, len(factsRules)),
+					knowledgeRules = append(knowledgeRules, &types.ExtractedRule{
+						ID:                fmt.Sprintf("%s-rule-%d-%d", episode.ID, chunkIdx, len(knowledgeRules)),
 						SourceID:          episode.ID,
 						Antecedent:        r.Antecedent,
 						Consequent:        r.Consequent,
@@ -349,27 +349,37 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 				}
 			}
 
-			// Generate embeddings for triples
-			if c.embedder != nil && len(factsTriples) > 0 {
-				texts := make([]string, len(factsTriples))
-				for i, t := range factsTriples {
-					texts[i] = t.Subject + " " + t.Predicate + " " + t.Object
+			// Generate embeddings for extended triples (only the newly added ones)
+			if c.embedder != nil && len(knowledgeTriples) > 0 {
+				// Find triples that don't have embeddings yet (from extended extraction)
+				var needsEmbedding []int
+				for i, t := range knowledgeTriples {
+					if len(t.Embedding) == 0 {
+						needsEmbedding = append(needsEmbedding, i)
+					}
 				}
-				embeddings, err := c.embedder.Embed(ctx, texts)
-				if err != nil {
-					c.logger.Warn("Failed to generate triple embeddings, continuing without",
-						"error", err, "episode_id", episode.ID)
-				} else {
-					for i, emb := range embeddings {
-						factsTriples[i].Embedding = emb
+				if len(needsEmbedding) > 0 {
+					texts := make([]string, len(needsEmbedding))
+					for j, idx := range needsEmbedding {
+						t := knowledgeTriples[idx]
+						texts[j] = t.Subject + " " + t.Predicate + " " + t.Object
+					}
+					embeddings, err := c.embedder.Embed(ctx, texts)
+					if err != nil {
+						c.logger.Warn("Failed to generate extended triple embeddings, continuing without",
+							"error", err, "episode_id", episode.ID)
+					} else {
+						for j, emb := range embeddings {
+							knowledgeTriples[needsEmbedding[j]].Embedding = emb
+						}
 					}
 				}
 			}
 
 			// Generate embeddings for rules
-			if c.embedder != nil && len(factsRules) > 0 {
-				texts := make([]string, len(factsRules))
-				for i, r := range factsRules {
+			if c.embedder != nil && len(knowledgeRules) > 0 {
+				texts := make([]string, len(knowledgeRules))
+				for i, r := range knowledgeRules {
 					texts[i] = r.Antecedent + " " + r.Consequent
 				}
 				embeddings, err := c.embedder.Embed(ctx, texts)
@@ -378,7 +388,7 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 						"error", err, "episode_id", episode.ID)
 				} else {
 					for i, emb := range embeddings {
-						factsRules[i].Embedding = emb
+						knowledgeRules[i].Embedding = emb
 					}
 				}
 			}
@@ -386,8 +396,8 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 			if options.Verbose {
 				c.logger.Info("[VERBOSE] Extended extraction complete",
 					"episode_id", episode.ID,
-					"triple_count", len(factsTriples),
-					"rule_count", len(factsRules))
+					"triple_count", len(knowledgeTriples),
+					"rule_count", len(knowledgeRules))
 			}
 		} // end capability check else
 	}
@@ -415,19 +425,13 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 		return nil, err
 	}
 
-	if err := c.factStore.SaveExtractedKnowledge(ctx, episode.ID, factsNodes, factsEdges); err != nil {
+	if err := c.factStore.SaveExtractedKnowledge(ctx, episode.ID, factsNodes, knowledgeTriples); err != nil {
 		return nil, err
 	}
 
-	// Save extended extraction results (triples and rules)
-	if len(factsTriples) > 0 {
-		if err := c.factStore.SaveExtractedTriples(ctx, episode.ID, factsTriples); err != nil {
-			c.logger.Warn("Failed to save extracted triples, continuing",
-				"error", err, "episode_id", episode.ID)
-		}
-	}
-	if len(factsRules) > 0 {
-		if err := c.factStore.SaveExtractedRules(ctx, episode.ID, factsRules); err != nil {
+	// Save rules
+	if len(knowledgeRules) > 0 {
+		if err := c.factStore.SaveExtractedRules(ctx, episode.ID, knowledgeRules); err != nil {
 			c.logger.Warn("Failed to save extracted rules, continuing",
 				"error", err, "episode_id", episode.ID)
 		}
@@ -437,9 +441,8 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 	return &types.ExtractionResults{
 		SourceID:         episode.ID,
 		ExtractedNodes:   factsNodes,
-		ExtractedEdges:   factsEdges,
-		ExtractedTriples: factsTriples,
-		ExtractedRules:   factsRules,
+		ExtractedTriples: knowledgeTriples,
+		ExtractedRules:   knowledgeRules,
 		ChunkCount:       len(chunks),
 		ExtractionTime:   time.Since(startTime),
 	}, nil
@@ -543,7 +546,7 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		return nil, err
 	}
 
-	extEdges, err := c.factStore.GetExtractedEdges(ctx, sourceID)
+	extTriples, err := c.factStore.GetExtractedTriples(ctx, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -596,15 +599,15 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		allExtractedNodes = append(allExtractedNodes, tn)
 	}
 
-	// 4. Reconstruct Edges from Facts
+	// 4. Reconstruct Edges from Triples
 	var allExtractedEdges []*types.Edge
-	for _, e := range extEdges {
+	for _, t := range extTriples {
 		var sUUID, tUUID string
 		for _, n := range uuidToNode {
-			if n.Name == e.SourceNodeName {
+			if n.Name == t.Subject {
 				sUUID = n.Uuid
 			}
-			if n.Name == e.TargetNodeName {
+			if n.Name == t.Object {
 				tUUID = n.Uuid
 			}
 		}
@@ -612,16 +615,16 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		if sUUID != "" && tUUID != "" {
 			te := &types.Edge{
 				BaseEdge: types.BaseEdge{
-					Uuid:         e.ID,
+					Uuid:         t.ID,
 					SourceNodeID: sUUID,
 					TargetNodeID: tUUID,
 					GroupID:      source.GroupID,
 					CreatedAt:    time.Now(),
 				},
-				Name:     e.Relation,
-				Summary:  e.Description,
-				Fact:     e.Description,
-				Strength: e.Weight,
+				Name:     t.Predicate,
+				Summary:  t.Description,
+				Fact:     t.Description,
+				Strength: t.Confidence,
 				Type:     types.EntityEdgeType,
 				SourceID: sUUID,
 				TargetID: tUUID,

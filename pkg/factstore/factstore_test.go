@@ -62,22 +62,22 @@ func TestFactSearchResultsJSON(t *testing.T) {
 				CreatedAt:   now,
 			},
 		},
-		Edges: []*ExtractedEdge{
+		Triples: []*ExtractedTriple{
 			{
-				ID:             "edge-1",
-				SourceID:       "source-1",
-				GroupID:        "group-1",
-				SourceNodeName: "Test Entity",
-				TargetNodeName: "Other Entity",
-				Relation:       "knows",
-				Description:    "Test relationship",
-				Weight:         1.0,
-				ChunkIndex:     0,
-				CreatedAt:      now,
+				ID:         "triple-1",
+				SourceID:   "source-1",
+				GroupID:    "group-1",
+				Subject:    "Test Entity",
+				Object:     "Other Entity",
+				Predicate:  "knows",
+				Description: "Test relationship",
+				Confidence: 1.0,
+				ChunkIndex: 0,
+				CreatedAt:  now,
 			},
 		},
-		NodeScores: []float64{0.95},
-		EdgeScores: []float64{0.85},
+		NodeScores:   []float64{0.95},
+		TripleScores: []float64{0.85},
 		Query:      "test query",
 		Total:      2,
 	}
@@ -95,8 +95,8 @@ func TestFactSearchResultsJSON(t *testing.T) {
 	if len(unmarshaled.Nodes) != 1 {
 		t.Errorf("Expected 1 node, got %d", len(unmarshaled.Nodes))
 	}
-	if len(unmarshaled.Edges) != 1 {
-		t.Errorf("Expected 1 edge, got %d", len(unmarshaled.Edges))
+	if len(unmarshaled.Triples) != 1 {
+		t.Errorf("Expected 1 triple, got %d", len(unmarshaled.Triples))
 	}
 	if unmarshaled.Query != "test query" {
 		t.Errorf("Expected query 'test query', got %s", unmarshaled.Query)
@@ -217,40 +217,42 @@ func TestExtractedNodeJSON(t *testing.T) {
 	}
 }
 
-// TestExtractedEdgeJSON tests ExtractedEdge serialization
-func TestExtractedEdgeJSON(t *testing.T) {
-	edge := &ExtractedEdge{
-		ID:             "edge-123",
-		SourceID:       "source-456",
-		GroupID:        "group-789",
-		SourceNodeName: "Node A",
-		TargetNodeName: "Node B",
-		Relation:       "relates_to",
-		Description:    "A relates to B",
-		Embedding:      []float32{0.5, 0.4, 0.3, 0.2, 0.1},
-		Weight:         0.85,
-		ChunkIndex:     1,
-		CreatedAt:      time.Now().Truncate(time.Second),
+// TestExtractedTripleJSON tests ExtractedTriple serialization
+func TestExtractedTripleJSON(t *testing.T) {
+	triple := &ExtractedTriple{
+		ID:          "triple-123",
+		SourceID:    "source-456",
+		GroupID:     "group-789",
+		Subject:     "Node A",
+		SubjectType: "concept",
+		Object:      "Node B",
+		ObjectType:  "concept",
+		Predicate:   "relates_to",
+		Description: "A relates to B",
+		Embedding:   []float32{0.5, 0.4, 0.3, 0.2, 0.1},
+		Confidence:  0.85,
+		ChunkIndex:  1,
+		CreatedAt:   time.Now().Truncate(time.Second),
 	}
 
-	b, err := json.Marshal(edge)
+	b, err := json.Marshal(triple)
 	if err != nil {
-		t.Fatalf("Failed to marshal edge: %v", err)
+		t.Fatalf("Failed to marshal triple: %v", err)
 	}
 
-	var unmarshaled ExtractedEdge
+	var unmarshaled ExtractedTriple
 	if err := json.Unmarshal(b, &unmarshaled); err != nil {
-		t.Fatalf("Failed to unmarshal edge: %v", err)
+		t.Fatalf("Failed to unmarshal triple: %v", err)
 	}
 
-	if unmarshaled.ID != edge.ID {
-		t.Errorf("ID mismatch: expected %s, got %s", edge.ID, unmarshaled.ID)
+	if unmarshaled.ID != triple.ID {
+		t.Errorf("ID mismatch: expected %s, got %s", triple.ID, unmarshaled.ID)
 	}
-	if unmarshaled.Relation != edge.Relation {
-		t.Errorf("Relation mismatch: expected %s, got %s", edge.Relation, unmarshaled.Relation)
+	if unmarshaled.Predicate != triple.Predicate {
+		t.Errorf("Predicate mismatch: expected %s, got %s", triple.Predicate, unmarshaled.Predicate)
 	}
-	if unmarshaled.Weight != edge.Weight {
-		t.Errorf("Weight mismatch: expected %f, got %f", edge.Weight, unmarshaled.Weight)
+	if unmarshaled.Confidence != triple.Confidence {
+		t.Errorf("Confidence mismatch: expected %f, got %f", triple.Confidence, unmarshaled.Confidence)
 	}
 }
 
@@ -361,7 +363,7 @@ func TestStatsJSON(t *testing.T) {
 	stats := &Stats{
 		SourceCount: 10,
 		NodeCount:   100,
-		EdgeCount:   50,
+		TripleCount: 50,
 	}
 
 	b, err := json.Marshal(stats)

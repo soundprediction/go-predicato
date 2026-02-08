@@ -171,45 +171,59 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to create extracted_nodes table: %w", err)
 	}
 
-	// Create extracted_edges table
-	var edgesTable string
+	// Create extracted_triples table (unified: replaces former extracted_edges + extracted_triples)
+	var triplesTable string
 	if p.usePgVector {
-		edgesTable = fmt.Sprintf(`
-			CREATE TABLE IF NOT EXISTS extracted_edges (
+		triplesTable = fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS extracted_triples (
 				id VARCHAR(255) PRIMARY KEY,
 				source_id VARCHAR(255) REFERENCES sources(id),
 				group_id VARCHAR(255),
-				source_node_name TEXT,
-				source_node_type VARCHAR(50),
-				target_node_name TEXT,
-				target_node_type VARCHAR(50),
-				relation TEXT,
+				subject TEXT,
+				subject_type VARCHAR(50),
+				predicate TEXT,
+				object TEXT,
+				object_type VARCHAR(50),
 				description TEXT,
+				condition TEXT,
+				temporal TEXT,
+				location TEXT,
+				certainty TEXT,
+				scope TEXT,
+				source_attribution TEXT,
+				confidence FLOAT,
 				embedding vector(%d),
-				weight FLOAT,
 				chunk_index INT,
+				model VARCHAR(255),
 				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 			)`, p.embeddingDimensions)
 	} else {
-		edgesTable = `
-			CREATE TABLE IF NOT EXISTS extracted_edges (
+		triplesTable = `
+			CREATE TABLE IF NOT EXISTS extracted_triples (
 				id VARCHAR(255) PRIMARY KEY,
 				source_id VARCHAR(255) REFERENCES sources(id),
 				group_id VARCHAR(255),
-				source_node_name TEXT,
-				source_node_type VARCHAR(50),
-				target_node_name TEXT,
-				target_node_type VARCHAR(50),
-				relation TEXT,
+				subject TEXT,
+				subject_type VARCHAR(50),
+				predicate TEXT,
+				object TEXT,
+				object_type VARCHAR(50),
 				description TEXT,
+				condition TEXT,
+				temporal TEXT,
+				location TEXT,
+				certainty TEXT,
+				scope TEXT,
+				source_attribution TEXT,
+				confidence FLOAT,
 				embedding JSONB,
-				weight FLOAT,
 				chunk_index INT,
+				model VARCHAR(255),
 				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 			)`
 	}
-	if _, err := p.db.ExecContext(ctx, edgesTable); err != nil {
-		return fmt.Errorf("failed to create extracted_edges table: %w", err)
+	if _, err := p.db.ExecContext(ctx, triplesTable); err != nil {
+		return fmt.Errorf("failed to create extracted_triples table: %w", err)
 	}
 
 	// Create indices for better query performance
@@ -218,9 +232,8 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 		"CREATE INDEX IF NOT EXISTS idx_nodes_source ON extracted_nodes(source_id)",
 		"CREATE INDEX IF NOT EXISTS idx_nodes_group ON extracted_nodes(group_id)",
 		"CREATE INDEX IF NOT EXISTS idx_nodes_type ON extracted_nodes(type)",
-		"CREATE INDEX IF NOT EXISTS idx_edges_source ON extracted_edges(source_id)",
-		"CREATE INDEX IF NOT EXISTS idx_edges_group ON extracted_edges(group_id)",
 		"CREATE INDEX IF NOT EXISTS idx_triples_source ON extracted_triples(source_id)",
+		"CREATE INDEX IF NOT EXISTS idx_triples_group ON extracted_triples(group_id)",
 		"CREATE INDEX IF NOT EXISTS idx_rules_source ON extracted_rules(source_id)",
 	}
 
@@ -232,67 +245,19 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 	}
 
 	// Create GIN indices for full-text search (keyword search performance)
-	// These are optional but significantly improve keyword search performance
 	ginIndices := []string{
-		`CREATE INDEX IF NOT EXISTS idx_nodes_fts ON extracted_nodes 
+		`CREATE INDEX IF NOT EXISTS idx_nodes_fts ON extracted_nodes
 		 USING GIN (to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, '')))`,
-		`CREATE INDEX IF NOT EXISTS idx_edges_fts ON extracted_edges 
-		 USING GIN (to_tsvector('english', COALESCE(relation, '') || ' ' || COALESCE(description, '')))`,
-		`CREATE INDEX IF NOT EXISTS idx_sources_fts ON sources 
+		`CREATE INDEX IF NOT EXISTS idx_triples_fts ON extracted_triples
+		 USING GIN (to_tsvector('english', COALESCE(subject, '') || ' ' || COALESCE(predicate, '') || ' ' || COALESCE(object, '') || ' ' || COALESCE(description, '')))`,
+		`CREATE INDEX IF NOT EXISTS idx_sources_fts ON sources
 		 USING GIN (to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(content, '')))`,
 	}
 
 	for _, idx := range ginIndices {
 		if _, err := p.db.ExecContext(ctx, idx); err != nil {
-			// GIN indices may not be supported in all configurations (e.g., DoltGres)
-			// Log warning but don't fail
 			fmt.Printf("Warning: failed to create GIN index (keyword search may be slower): %v\n", err)
 		}
-	}
-
-	// Create extracted_triples table
-	var triplesTable string
-	if p.usePgVector {
-		triplesTable = fmt.Sprintf(`
-			CREATE TABLE IF NOT EXISTS extracted_triples (
-				id VARCHAR(255) PRIMARY KEY,
-				source_id VARCHAR(255) REFERENCES sources(id),
-				subject TEXT,
-				predicate TEXT,
-				object TEXT,
-				condition TEXT,
-				temporal TEXT,
-				location TEXT,
-				certainty TEXT,
-				scope TEXT,
-				source_attribution TEXT,
-				confidence FLOAT,
-				embedding vector(%d),
-				chunk_index INT,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			)`, p.embeddingDimensions)
-	} else {
-		triplesTable = `
-			CREATE TABLE IF NOT EXISTS extracted_triples (
-				id VARCHAR(255) PRIMARY KEY,
-				source_id VARCHAR(255) REFERENCES sources(id),
-				subject TEXT,
-				predicate TEXT,
-				object TEXT,
-				condition TEXT,
-				temporal TEXT,
-				location TEXT,
-				certainty TEXT,
-				scope TEXT,
-				source_attribution TEXT,
-				confidence FLOAT,
-				embedding JSONB,
-				chunk_index INT,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			)`
-	}
-	if _, err := p.db.ExecContext(ctx, triplesTable); err != nil {
-		return fmt.Errorf("failed to create extracted_triples table: %w", err)
 	}
 
 	// Create extracted_rules table
@@ -372,17 +337,29 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 		fmt.Printf("Warning: failed to backfill node_sources: %v\n", err)
 	}
 
-	// --- Model provenance migrations ---
+	// --- Model provenance migration ---
 	// Track which LLM model produced each extracted item
 	modelMigrations := []string{
 		`ALTER TABLE extracted_nodes ADD COLUMN IF NOT EXISTS model VARCHAR(255)`,
-		`ALTER TABLE extracted_edges ADD COLUMN IF NOT EXISTS model VARCHAR(255)`,
-		`ALTER TABLE extracted_triples ADD COLUMN IF NOT EXISTS model VARCHAR(255)`,
 		`ALTER TABLE extracted_rules ADD COLUMN IF NOT EXISTS model VARCHAR(255)`,
 	}
 	for _, migration := range modelMigrations {
 		if _, err := p.db.ExecContext(ctx, migration); err != nil {
 			fmt.Printf("Warning: failed to add model column: %v\n", err)
+		}
+	}
+
+	// --- Consolidation migration: add new triple columns if missing ---
+	tripleConsolidation := []string{
+		`ALTER TABLE extracted_triples ADD COLUMN IF NOT EXISTS group_id VARCHAR(255)`,
+		`ALTER TABLE extracted_triples ADD COLUMN IF NOT EXISTS subject_type VARCHAR(50)`,
+		`ALTER TABLE extracted_triples ADD COLUMN IF NOT EXISTS object_type VARCHAR(50)`,
+		`ALTER TABLE extracted_triples ADD COLUMN IF NOT EXISTS description TEXT`,
+		`ALTER TABLE extracted_triples ADD COLUMN IF NOT EXISTS model VARCHAR(255)`,
+	}
+	for _, migration := range tripleConsolidation {
+		if _, err := p.db.ExecContext(ctx, migration); err != nil {
+			fmt.Printf("Warning: failed to add triple consolidation column: %v\n", err)
 		}
 	}
 
@@ -405,12 +382,12 @@ func (p *PostgresDB) CreateVectorIndices(ctx context.Context, lists int) error {
 		return fmt.Errorf("failed to create node vector index: %w", err)
 	}
 
-	edgeIdx := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS idx_edges_embedding 
-		ON extracted_edges USING ivfflat (embedding vector_cosine_ops)
+	tripleIdx := fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS idx_triples_embedding
+		ON extracted_triples USING ivfflat (embedding vector_cosine_ops)
 		WITH (lists = %d)`, lists)
-	if _, err := p.db.ExecContext(ctx, edgeIdx); err != nil {
-		return fmt.Errorf("failed to create edge vector index: %w", err)
+	if _, err := p.db.ExecContext(ctx, tripleIdx); err != nil {
+		return fmt.Errorf("failed to create triple vector index: %w", err)
 	}
 
 	return nil
@@ -444,21 +421,21 @@ func (p *PostgresDB) SaveSource(ctx context.Context, source *Source) error {
 	return nil
 }
 
-func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, nodes []*ExtractedNode, edges []*ExtractedEdge) error {
+func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string, nodes []*ExtractedNode, triples []*ExtractedTriple) error {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Get source's group_id for nodes/edges
+	// Get source's group_id for nodes/triples
 	var groupID string
 	err = tx.QueryRowContext(ctx, "SELECT group_id FROM sources WHERE id = $1", sourceID).Scan(&groupID)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("failed to get source group_id: %w", err)
 	}
 
-	// Track original node ID -> canonical (deduplicated) node ID for edge consistency
+	// Track original node ID -> canonical (deduplicated) node ID
 	nodeIDMap := make(map[string]string)
 
 	for _, node := range nodes {
@@ -560,44 +537,55 @@ func (p *PostgresDB) SaveExtractedKnowledge(ctx context.Context, sourceID string
 		}
 	}
 
-	// Insert edges
-	edgeStmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO extracted_edges (id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, model, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		ON CONFLICT (id) DO UPDATE SET
-			source_node_name = EXCLUDED.source_node_name,
-			source_node_type = EXCLUDED.source_node_type,
-			target_node_name = EXCLUDED.target_node_name,
-			target_node_type = EXCLUDED.target_node_type,
-			relation = EXCLUDED.relation,
-			description = EXCLUDED.description,
-			embedding = EXCLUDED.embedding,
-			weight = EXCLUDED.weight,
-			chunk_index = EXCLUDED.chunk_index,
-			model = EXCLUDED.model`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare edge statement: %w", err)
-	}
-	defer edgeStmt.Close()
+	// Insert triples
+	if len(triples) > 0 {
+		tripleStmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO extracted_triples (id, source_id, group_id, subject, subject_type, predicate, object, object_type,
+				description, condition, temporal, location, certainty, scope, source_attribution,
+				confidence, embedding, chunk_index, model, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+			ON CONFLICT (id) DO UPDATE SET
+				subject = EXCLUDED.subject,
+				subject_type = EXCLUDED.subject_type,
+				predicate = EXCLUDED.predicate,
+				object = EXCLUDED.object,
+				object_type = EXCLUDED.object_type,
+				description = EXCLUDED.description,
+				condition = EXCLUDED.condition,
+				temporal = EXCLUDED.temporal,
+				location = EXCLUDED.location,
+				certainty = EXCLUDED.certainty,
+				scope = EXCLUDED.scope,
+				source_attribution = EXCLUDED.source_attribution,
+				confidence = EXCLUDED.confidence,
+				embedding = EXCLUDED.embedding,
+				chunk_index = EXCLUDED.chunk_index,
+				model = EXCLUDED.model`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare triple statement: %w", err)
+		}
+		defer tripleStmt.Close()
 
-	for _, edge := range edges {
-		var embeddingVal interface{}
-		if len(edge.Embedding) > 0 {
-			embeddingVal = p.embeddingToString(edge.Embedding)
-		}
-		edgeGroupID := edge.GroupID
-		if edgeGroupID == "" {
-			edgeGroupID = groupID
-		}
-		createdAt := edge.CreatedAt
-		if createdAt.IsZero() {
-			createdAt = time.Now()
-		}
+		for _, t := range triples {
+			var embeddingVal interface{}
+			if len(t.Embedding) > 0 {
+				embeddingVal = p.embeddingToString(t.Embedding)
+			}
+			tripleGroupID := t.GroupID
+			if tripleGroupID == "" {
+				tripleGroupID = groupID
+			}
+			createdAt := t.CreatedAt
+			if createdAt.IsZero() {
+				createdAt = time.Now()
+			}
 
-		if _, err := edgeStmt.ExecContext(ctx,
-			edge.ID, sourceID, edgeGroupID, edge.SourceNodeName, edge.SourceNodeType, edge.TargetNodeName, edge.TargetNodeType,
-			edge.Relation, edge.Description, embeddingVal, edge.Weight, edge.ChunkIndex, edge.Model, createdAt); err != nil {
-			return fmt.Errorf("failed to insert edge %s: %w", edge.ID, err)
+			if _, err := tripleStmt.ExecContext(ctx,
+				t.ID, sourceID, tripleGroupID, t.Subject, t.SubjectType, t.Predicate, t.Object, t.ObjectType,
+				t.Description, t.Condition, t.Temporal, t.Location, t.Certainty, t.Scope, t.SourceAttribution,
+				t.Confidence, embeddingVal, t.ChunkIndex, t.Model, createdAt); err != nil {
+				return fmt.Errorf("failed to insert triple %s: %w", t.ID, err)
+			}
 		}
 	}
 
@@ -647,16 +635,18 @@ func (p *PostgresDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]
 	return p.scanNodes(rows)
 }
 
-func (p *PostgresDB) GetExtractedEdges(ctx context.Context, sourceID string) ([]*ExtractedEdge, error) {
-	rows, err := p.db.QueryContext(ctx,
-		"SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, model, created_at FROM extracted_edges WHERE source_id = $1",
-		sourceID)
+func (p *PostgresDB) GetExtractedTriples(ctx context.Context, sourceID string) ([]*ExtractedTriple, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT id, source_id, group_id, subject, subject_type, predicate, object, object_type,
+		       description, condition, temporal, location, certainty, scope, source_attribution,
+		       confidence, embedding, chunk_index, model, created_at
+		FROM extracted_triples WHERE source_id = $1`, sourceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query extracted edges: %w", err)
+		return nil, fmt.Errorf("failed to query extracted triples: %w", err)
 	}
 	defer rows.Close()
 
-	return p.scanEdges(rows)
+	return p.scanTriples(rows)
 }
 
 func (p *PostgresDB) GetAllSources(ctx context.Context, limit int) ([]*Source, error) {
@@ -703,19 +693,22 @@ func (p *PostgresDB) GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNo
 	return p.scanNodes(rows)
 }
 
-func (p *PostgresDB) GetAllEdges(ctx context.Context, limit int) ([]*ExtractedEdge, error) {
-	query := "SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, model, created_at FROM extracted_edges"
+func (p *PostgresDB) GetAllTriples(ctx context.Context, limit int) ([]*ExtractedTriple, error) {
+	query := `SELECT id, source_id, group_id, subject, subject_type, predicate, object, object_type,
+	                 description, condition, temporal, location, certainty, scope, source_attribution,
+	                 confidence, embedding, chunk_index, model, created_at
+	          FROM extracted_triples`
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
 	rows, err := p.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query edges: %w", err)
+		return nil, fmt.Errorf("failed to query triples: %w", err)
 	}
 	defer rows.Close()
 
-	return p.scanEdges(rows)
+	return p.scanTriples(rows)
 }
 
 func (p *PostgresDB) GetStats(ctx context.Context) (*Stats, error) {
@@ -727,11 +720,9 @@ func (p *PostgresDB) GetStats(ctx context.Context) (*Stats, error) {
 	if err := p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_nodes").Scan(&stats.NodeCount); err != nil {
 		return nil, fmt.Errorf("failed to count nodes: %w", err)
 	}
-	if err := p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_edges").Scan(&stats.EdgeCount); err != nil {
-		return nil, fmt.Errorf("failed to count edges: %w", err)
+	if err := p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_triples").Scan(&stats.TripleCount); err != nil {
+		return nil, fmt.Errorf("failed to count triples: %w", err)
 	}
-	// Triple and rule counts are optional (tables may not exist on older schemas)
-	_ = p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_triples").Scan(&stats.TripleCount)
 	_ = p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM extracted_rules").Scan(&stats.RuleCount)
 
 	return stats, nil
@@ -742,60 +733,6 @@ func (p *PostgresDB) Close() error {
 }
 
 // --- Extended Extraction Methods ---
-
-func (p *PostgresDB) SaveExtractedTriples(ctx context.Context, sourceID string, triples []*ExtractedTriple) error {
-	if len(triples) == 0 {
-		return nil
-	}
-
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO extracted_triples (id, source_id, subject, predicate, object, condition, temporal, location, certainty, scope, source_attribution, confidence, embedding, chunk_index, model, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-		ON CONFLICT (id) DO UPDATE SET
-			subject = EXCLUDED.subject,
-			predicate = EXCLUDED.predicate,
-			object = EXCLUDED.object,
-			condition = EXCLUDED.condition,
-			temporal = EXCLUDED.temporal,
-			location = EXCLUDED.location,
-			certainty = EXCLUDED.certainty,
-			scope = EXCLUDED.scope,
-			source_attribution = EXCLUDED.source_attribution,
-			confidence = EXCLUDED.confidence,
-			embedding = EXCLUDED.embedding,
-			chunk_index = EXCLUDED.chunk_index,
-			model = EXCLUDED.model`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare triple statement: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, t := range triples {
-		var embeddingVal interface{}
-		if len(t.Embedding) > 0 {
-			embeddingVal = p.embeddingToString(t.Embedding)
-		}
-		createdAt := t.CreatedAt
-		if createdAt.IsZero() {
-			createdAt = time.Now()
-		}
-
-		if _, err := stmt.ExecContext(ctx,
-			t.ID, sourceID, t.Subject, t.Predicate, t.Object,
-			t.Condition, t.Temporal, t.Location, t.Certainty, t.Scope, t.SourceAttribution,
-			t.Confidence, embeddingVal, t.ChunkIndex, t.Model, createdAt); err != nil {
-			return fmt.Errorf("failed to insert triple %s: %w", t.ID, err)
-		}
-	}
-
-	return tx.Commit()
-}
 
 func (p *PostgresDB) SaveExtractedRules(ctx context.Context, sourceID string, rules []*ExtractedRule) error {
 	if len(rules) == 0 {
@@ -846,63 +783,6 @@ func (p *PostgresDB) SaveExtractedRules(ctx context.Context, sourceID string, ru
 	}
 
 	return tx.Commit()
-}
-
-func (p *PostgresDB) GetExtractedTriples(ctx context.Context, sourceID string) ([]*ExtractedTriple, error) {
-	rows, err := p.db.QueryContext(ctx, `
-		SELECT id, source_id, subject, predicate, object, condition, temporal, location,
-		       certainty, scope, source_attribution, confidence, embedding, chunk_index, model, created_at
-		FROM extracted_triples WHERE source_id = $1`, sourceID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query extracted triples: %w", err)
-	}
-	defer rows.Close()
-
-	var triples []*ExtractedTriple
-	for rows.Next() {
-		var t ExtractedTriple
-		var embeddingStr sql.NullString
-		var condition, temporal, location, certainty, scope, sourceAttr sql.NullString
-		var confidence sql.NullFloat64
-
-		var model sql.NullString
-		if err := rows.Scan(&t.ID, &t.SourceID, &t.Subject, &t.Predicate, &t.Object,
-			&condition, &temporal, &location, &certainty, &scope, &sourceAttr,
-			&confidence, &embeddingStr, &t.ChunkIndex, &model, &t.CreatedAt); err != nil {
-			return nil, err
-		}
-
-		if condition.Valid {
-			t.Condition = condition.String
-		}
-		if temporal.Valid {
-			t.Temporal = temporal.String
-		}
-		if location.Valid {
-			t.Location = location.String
-		}
-		if certainty.Valid {
-			t.Certainty = certainty.String
-		}
-		if scope.Valid {
-			t.Scope = scope.String
-		}
-		if sourceAttr.Valid {
-			t.SourceAttribution = sourceAttr.String
-		}
-		if confidence.Valid {
-			t.Confidence = confidence.Float64
-		}
-		if embeddingStr.Valid {
-			t.Embedding = p.parseEmbedding(embeddingStr.String)
-		}
-		if model.Valid {
-			t.Model = model.String
-		}
-
-		triples = append(triples, &t)
-	}
-	return triples, nil
 }
 
 func (p *PostgresDB) GetExtractedRules(ctx context.Context, sourceID string) ([]*ExtractedRule, error) {
@@ -1007,7 +887,7 @@ func (p *PostgresDB) SearchNodes(ctx context.Context, query string, embedding []
 	return p.keywordSearchNodes(ctx, query, config)
 }
 
-func (p *PostgresDB) SearchEdges(ctx context.Context, query string, embedding []float32, config *FactSearchConfig) ([]*ExtractedEdge, []float64, error) {
+func (p *PostgresDB) SearchTriples(ctx context.Context, query string, embedding []float32, config *FactSearchConfig) ([]*ExtractedTriple, []float64, error) {
 	if config == nil {
 		config = &FactSearchConfig{Limit: 10}
 	}
@@ -1032,26 +912,26 @@ func (p *PostgresDB) SearchEdges(ctx context.Context, query string, embedding []
 	}
 
 	if !useVector && !useKeyword {
-		return []*ExtractedEdge{}, []float64{}, nil
+		return []*ExtractedTriple{}, []float64{}, nil
 	}
 
 	if useVector && useKeyword {
-		vectorEdges, vectorScores, err := p.vectorSearchEdges(ctx, embedding, config)
+		vectorTriples, vectorScores, err := p.vectorSearchTriples(ctx, embedding, config)
 		if err != nil {
 			return nil, nil, err
 		}
-		keywordEdges, keywordScores, err := p.keywordSearchEdges(ctx, query, config)
+		keywordTriples, keywordScores, err := p.keywordSearchTriples(ctx, query, config)
 		if err != nil {
 			return nil, nil, err
 		}
-		return p.rrfMergeEdges(vectorEdges, vectorScores, keywordEdges, keywordScores, config.Limit, config.MinScore)
+		return p.rrfMergeTriples(vectorTriples, vectorScores, keywordTriples, keywordScores, config.Limit, config.MinScore)
 	}
 
 	if useVector {
-		return p.vectorSearchEdges(ctx, embedding, config)
+		return p.vectorSearchTriples(ctx, embedding, config)
 	}
 
-	return p.keywordSearchEdges(ctx, query, config)
+	return p.keywordSearchTriples(ctx, query, config)
 }
 
 func (p *PostgresDB) SearchSources(ctx context.Context, query string, config *FactSearchConfig) ([]*Source, []float64, error) {
@@ -1145,19 +1025,19 @@ func (p *PostgresDB) HybridSearch(ctx context.Context, query string, embedding [
 		return nil, fmt.Errorf("node search failed: %w", err)
 	}
 
-	// Search edges
-	edges, edgeScores, err := p.SearchEdges(ctx, query, embedding, config)
+	// Search triples
+	triples, tripleScores, err := p.SearchTriples(ctx, query, embedding, config)
 	if err != nil {
-		return nil, fmt.Errorf("edge search failed: %w", err)
+		return nil, fmt.Errorf("triple search failed: %w", err)
 	}
 
 	return &FactSearchResults{
-		Nodes:      nodes,
-		Edges:      edges,
-		NodeScores: nodeScores,
-		EdgeScores: edgeScores,
-		Query:      query,
-		Total:      len(nodes) + len(edges),
+		Nodes:        nodes,
+		Triples:      triples,
+		NodeScores:   nodeScores,
+		TripleScores: tripleScores,
+		Query:        query,
+		Total:        len(nodes) + len(triples),
 	}, nil
 }
 
@@ -1456,18 +1336,20 @@ func (p *PostgresDB) keywordSearchNodes(ctx context.Context, query string, confi
 	return nodes, scores, nil
 }
 
-func (p *PostgresDB) vectorSearchEdges(ctx context.Context, embedding []float32, config *FactSearchConfig) ([]*ExtractedEdge, []float64, error) {
+func (p *PostgresDB) vectorSearchTriples(ctx context.Context, embedding []float32, config *FactSearchConfig) ([]*ExtractedTriple, []float64, error) {
 	// For DoltGres (no VectorChord), use in-memory cosine similarity
 	if !p.usePgVector {
-		return p.inMemoryVectorSearchEdges(ctx, embedding, config)
+		return p.inMemoryVectorSearchTriples(ctx, embedding, config)
 	}
 
 	embeddingStr := p.embeddingToString(embedding)
 
 	sqlQuery := `
-		SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at,
-			   1 - (embedding <=> $1::vector) AS score
-		FROM extracted_edges
+		SELECT id, source_id, group_id, subject, subject_type, predicate, object, object_type,
+		       description, condition, temporal, location, certainty, scope, source_attribution,
+		       confidence, embedding, chunk_index, model, created_at,
+		       1 - (embedding <=> $1::vector) AS score
+		FROM extracted_triples
 		WHERE embedding IS NOT NULL`
 
 	args := []interface{}{embeddingStr}
@@ -1498,20 +1380,23 @@ func (p *PostgresDB) vectorSearchEdges(ctx context.Context, embedding []float32,
 
 	rows, err := p.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to execute edge vector search: %w", err)
+		return nil, nil, fmt.Errorf("failed to execute triple vector search: %w", err)
 	}
 	defer rows.Close()
 
-	var edges []*ExtractedEdge
+	var triples []*ExtractedTriple
 	var scores []float64
 
 	for rows.Next() {
-		var e ExtractedEdge
-		var embeddingStr sql.NullString
+		var t ExtractedTriple
+		var embStr sql.NullString
+		var subjectType, objectType, description, condition, temporal, location, certainty, scope, sourceAttr, model sql.NullString
+		var confidence sql.NullFloat64
 		var score float64
 
-		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType,
-			&e.Relation, &e.Description, &embeddingStr, &e.Weight, &e.ChunkIndex, &e.CreatedAt, &score); err != nil {
+		if err := rows.Scan(&t.ID, &t.SourceID, &t.GroupID, &t.Subject, &subjectType, &t.Predicate, &t.Object, &objectType,
+			&description, &condition, &temporal, &location, &certainty, &scope, &sourceAttr,
+			&confidence, &embStr, &t.ChunkIndex, &model, &t.CreatedAt, &score); err != nil {
 			return nil, nil, err
 		}
 
@@ -1519,27 +1404,62 @@ func (p *PostgresDB) vectorSearchEdges(ctx context.Context, embedding []float32,
 			continue
 		}
 
-		if embeddingStr.Valid {
-			e.Embedding = p.parseEmbedding(embeddingStr.String)
+		if subjectType.Valid {
+			t.SubjectType = subjectType.String
+		}
+		if objectType.Valid {
+			t.ObjectType = objectType.String
+		}
+		if description.Valid {
+			t.Description = description.String
+		}
+		if condition.Valid {
+			t.Condition = condition.String
+		}
+		if temporal.Valid {
+			t.Temporal = temporal.String
+		}
+		if location.Valid {
+			t.Location = location.String
+		}
+		if certainty.Valid {
+			t.Certainty = certainty.String
+		}
+		if scope.Valid {
+			t.Scope = scope.String
+		}
+		if sourceAttr.Valid {
+			t.SourceAttribution = sourceAttr.String
+		}
+		if confidence.Valid {
+			t.Confidence = confidence.Float64
+		}
+		if embStr.Valid {
+			t.Embedding = p.parseEmbedding(embStr.String)
+		}
+		if model.Valid {
+			t.Model = model.String
 		}
 
-		edges = append(edges, &e)
+		triples = append(triples, &t)
 		scores = append(scores, score)
 
-		if len(edges) >= config.Limit {
+		if len(triples) >= config.Limit {
 			break
 		}
 	}
 
-	return edges, scores, nil
+	return triples, scores, nil
 }
 
-// inMemoryVectorSearchEdges performs vector search on edges by loading embeddings
+// inMemoryVectorSearchTriples performs vector search on triples by loading embeddings
 // and computing cosine similarity in Go. Used for DoltGres.
-func (p *PostgresDB) inMemoryVectorSearchEdges(ctx context.Context, embedding []float32, config *FactSearchConfig) ([]*ExtractedEdge, []float64, error) {
+func (p *PostgresDB) inMemoryVectorSearchTriples(ctx context.Context, embedding []float32, config *FactSearchConfig) ([]*ExtractedTriple, []float64, error) {
 	sqlQuery := `
-		SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at
-		FROM extracted_edges
+		SELECT id, source_id, group_id, subject, subject_type, predicate, object, object_type,
+		       description, condition, temporal, location, certainty, scope, source_attribution,
+		       confidence, embedding, chunk_index, model, created_at
+		FROM extracted_triples
 		WHERE embedding IS NOT NULL`
 
 	args := []interface{}{}
@@ -1565,38 +1485,35 @@ func (p *PostgresDB) inMemoryVectorSearchEdges(ctx context.Context, embedding []
 
 	rows, err := p.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to query edges: %w", err)
+		return nil, nil, fmt.Errorf("failed to query triples: %w", err)
 	}
 	defer rows.Close()
 
-	type edgeWithScore struct {
-		edge  *ExtractedEdge
-		score float64
+	type tripleWithScore struct {
+		triple *ExtractedTriple
+		score  float64
 	}
-	var candidates []edgeWithScore
+	var candidates []tripleWithScore
 
 	for rows.Next() {
-		var e ExtractedEdge
-		var embeddingJSON sql.NullString
-
-		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType,
-			&e.Relation, &e.Description, &embeddingJSON, &e.Weight, &e.ChunkIndex, &e.CreatedAt); err != nil {
+		t, embJSON, err := p.scanTripleRow(rows)
+		if err != nil {
 			return nil, nil, err
 		}
 
-		if !embeddingJSON.Valid || embeddingJSON.String == "" {
+		if embJSON == "" {
 			continue
 		}
 
-		edgeEmbedding := p.parseEmbeddingJSON(embeddingJSON.String)
-		if len(edgeEmbedding) == 0 {
+		tripleEmbedding := p.parseEmbeddingJSON(embJSON)
+		if len(tripleEmbedding) == 0 {
 			continue
 		}
 
-		score := cosineSimilarity(embedding, edgeEmbedding)
+		score := cosineSimilarity(embedding, tripleEmbedding)
 		if score >= config.MinScore {
-			e.Embedding = edgeEmbedding
-			candidates = append(candidates, edgeWithScore{edge: &e, score: score})
+			t.Embedding = tripleEmbedding
+			candidates = append(candidates, tripleWithScore{triple: t, score: score})
 		}
 	}
 
@@ -1605,24 +1522,26 @@ func (p *PostgresDB) inMemoryVectorSearchEdges(ctx context.Context, embedding []
 		return candidates[i].score > candidates[j].score
 	})
 
-	var edges []*ExtractedEdge
+	var triples []*ExtractedTriple
 	var scores []float64
 	for i := 0; i < len(candidates) && i < config.Limit; i++ {
-		edges = append(edges, candidates[i].edge)
+		triples = append(triples, candidates[i].triple)
 		scores = append(scores, candidates[i].score)
 	}
 
-	return edges, scores, nil
+	return triples, scores, nil
 }
 
-func (p *PostgresDB) keywordSearchEdges(ctx context.Context, query string, config *FactSearchConfig) ([]*ExtractedEdge, []float64, error) {
+func (p *PostgresDB) keywordSearchTriples(ctx context.Context, query string, config *FactSearchConfig) ([]*ExtractedTriple, []float64, error) {
 	sqlQuery := `
-		SELECT id, source_id, group_id, source_node_name, source_node_type, target_node_name, target_node_type, relation, description, embedding, weight, chunk_index, created_at,
-			   ts_rank(to_tsvector('english', COALESCE(relation, '') || ' ' || COALESCE(description, '')), 
-			          plainto_tsquery('english', $1)) AS score
-		FROM extracted_edges
-		WHERE to_tsvector('english', COALESCE(relation, '') || ' ' || COALESCE(description, '')) 
-			  @@ plainto_tsquery('english', $1)`
+		SELECT id, source_id, group_id, subject, subject_type, predicate, object, object_type,
+		       description, condition, temporal, location, certainty, scope, source_attribution,
+		       confidence, embedding, chunk_index, model, created_at,
+		       ts_rank(to_tsvector('english', COALESCE(subject, '') || ' ' || COALESCE(predicate, '') || ' ' || COALESCE(object, '') || ' ' || COALESCE(description, '')),
+		              plainto_tsquery('english', $1)) AS score
+		FROM extracted_triples
+		WHERE to_tsvector('english', COALESCE(subject, '') || ' ' || COALESCE(predicate, '') || ' ' || COALESCE(object, '') || ' ' || COALESCE(description, ''))
+		      @@ plainto_tsquery('english', $1)`
 
 	args := []interface{}{query}
 	argIdx := 2
@@ -1652,20 +1571,23 @@ func (p *PostgresDB) keywordSearchEdges(ctx context.Context, query string, confi
 
 	rows, err := p.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to execute edge keyword search: %w", err)
+		return nil, nil, fmt.Errorf("failed to execute triple keyword search: %w", err)
 	}
 	defer rows.Close()
 
-	var edges []*ExtractedEdge
+	var triples []*ExtractedTriple
 	var scores []float64
 
 	for rows.Next() {
-		var e ExtractedEdge
-		var embeddingStr sql.NullString
+		var t ExtractedTriple
+		var embStr sql.NullString
+		var subjectType, objectType, description, condition, temporal, location, certainty, scope, sourceAttr, model sql.NullString
+		var confidence sql.NullFloat64
 		var score float64
 
-		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType,
-			&e.Relation, &e.Description, &embeddingStr, &e.Weight, &e.ChunkIndex, &e.CreatedAt, &score); err != nil {
+		if err := rows.Scan(&t.ID, &t.SourceID, &t.GroupID, &t.Subject, &subjectType, &t.Predicate, &t.Object, &objectType,
+			&description, &condition, &temporal, &location, &certainty, &scope, &sourceAttr,
+			&confidence, &embStr, &t.ChunkIndex, &model, &t.CreatedAt, &score); err != nil {
 			return nil, nil, err
 		}
 
@@ -1673,19 +1595,52 @@ func (p *PostgresDB) keywordSearchEdges(ctx context.Context, query string, confi
 			continue
 		}
 
-		if embeddingStr.Valid {
-			e.Embedding = p.parseEmbedding(embeddingStr.String)
+		if subjectType.Valid {
+			t.SubjectType = subjectType.String
+		}
+		if objectType.Valid {
+			t.ObjectType = objectType.String
+		}
+		if description.Valid {
+			t.Description = description.String
+		}
+		if condition.Valid {
+			t.Condition = condition.String
+		}
+		if temporal.Valid {
+			t.Temporal = temporal.String
+		}
+		if location.Valid {
+			t.Location = location.String
+		}
+		if certainty.Valid {
+			t.Certainty = certainty.String
+		}
+		if scope.Valid {
+			t.Scope = scope.String
+		}
+		if sourceAttr.Valid {
+			t.SourceAttribution = sourceAttr.String
+		}
+		if confidence.Valid {
+			t.Confidence = confidence.Float64
+		}
+		if embStr.Valid {
+			t.Embedding = p.parseEmbedding(embStr.String)
+		}
+		if model.Valid {
+			t.Model = model.String
 		}
 
-		edges = append(edges, &e)
+		triples = append(triples, &t)
 		scores = append(scores, score)
 
-		if len(edges) >= config.Limit {
+		if len(triples) >= config.Limit {
 			break
 		}
 	}
 
-	return edges, scores, nil
+	return triples, scores, nil
 }
 
 // --- RRF Merge ---
@@ -1742,34 +1697,34 @@ func (p *PostgresDB) rrfMergeNodes(vectorNodes []*ExtractedNode, vectorScores []
 	return nodes, scores, nil
 }
 
-func (p *PostgresDB) rrfMergeEdges(vectorEdges []*ExtractedEdge, vectorScores []float64,
-	keywordEdges []*ExtractedEdge, keywordScores []float64,
-	limit int, minScore float64) ([]*ExtractedEdge, []float64, error) {
+func (p *PostgresDB) rrfMergeTriples(vectorTriples []*ExtractedTriple, vectorScores []float64,
+	keywordTriples []*ExtractedTriple, keywordScores []float64,
+	limit int, minScore float64) ([]*ExtractedTriple, []float64, error) {
 
 	const k = 60
 
 	rrfScores := make(map[string]float64)
-	edgeMap := make(map[string]*ExtractedEdge)
+	tripleMap := make(map[string]*ExtractedTriple)
 
-	for i, edge := range vectorEdges {
-		rrfScores[edge.ID] += 1.0 / float64(k+i+1)
-		edgeMap[edge.ID] = edge
+	for i, t := range vectorTriples {
+		rrfScores[t.ID] += 1.0 / float64(k+i+1)
+		tripleMap[t.ID] = t
 	}
 
-	for i, edge := range keywordEdges {
-		rrfScores[edge.ID] += 1.0 / float64(k+i+1)
-		edgeMap[edge.ID] = edge
+	for i, t := range keywordTriples {
+		rrfScores[t.ID] += 1.0 / float64(k+i+1)
+		tripleMap[t.ID] = t
 	}
 
-	type scoredEdge struct {
-		edge  *ExtractedEdge
-		score float64
+	type scoredTriple struct {
+		triple *ExtractedTriple
+		score  float64
 	}
 
-	var scored []scoredEdge
+	var scored []scoredTriple
 	for id, score := range rrfScores {
 		if score >= minScore {
-			scored = append(scored, scoredEdge{edge: edgeMap[id], score: score})
+			scored = append(scored, scoredTriple{triple: tripleMap[id], score: score})
 		}
 	}
 
@@ -1777,15 +1732,15 @@ func (p *PostgresDB) rrfMergeEdges(vectorEdges []*ExtractedEdge, vectorScores []
 		return scored[i].score > scored[j].score
 	})
 
-	var edges []*ExtractedEdge
+	var triples []*ExtractedTriple
 	var scores []float64
 
 	for i := 0; i < len(scored) && i < limit; i++ {
-		edges = append(edges, scored[i].edge)
+		triples = append(triples, scored[i].triple)
 		scores = append(scores, scored[i].score)
 	}
 
-	return edges, scores, nil
+	return triples, scores, nil
 }
 
 // --- Helper methods ---
@@ -1873,28 +1828,115 @@ func (p *PostgresDB) scanNodes(rows *sql.Rows) ([]*ExtractedNode, error) {
 	return nodes, nil
 }
 
-func (p *PostgresDB) scanEdges(rows *sql.Rows) ([]*ExtractedEdge, error) {
-	var edges []*ExtractedEdge
+func (p *PostgresDB) scanTriples(rows *sql.Rows) ([]*ExtractedTriple, error) {
+	var triples []*ExtractedTriple
 
 	for rows.Next() {
-		var e ExtractedEdge
-		var embeddingStr sql.NullString
+		var t ExtractedTriple
+		var embStr sql.NullString
+		var subjectType, objectType, description, condition, temporal, location, certainty, scope, sourceAttr, model sql.NullString
+		var confidence sql.NullFloat64
 
-		var model sql.NullString
-		if err := rows.Scan(&e.ID, &e.SourceID, &e.GroupID, &e.SourceNodeName, &e.SourceNodeType, &e.TargetNodeName, &e.TargetNodeType,
-			&e.Relation, &e.Description, &embeddingStr, &e.Weight, &e.ChunkIndex, &model, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.SourceID, &t.GroupID, &t.Subject, &subjectType, &t.Predicate, &t.Object, &objectType,
+			&description, &condition, &temporal, &location, &certainty, &scope, &sourceAttr,
+			&confidence, &embStr, &t.ChunkIndex, &model, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 
-		if embeddingStr.Valid {
-			e.Embedding = p.parseEmbedding(embeddingStr.String)
+		if subjectType.Valid {
+			t.SubjectType = subjectType.String
+		}
+		if objectType.Valid {
+			t.ObjectType = objectType.String
+		}
+		if description.Valid {
+			t.Description = description.String
+		}
+		if condition.Valid {
+			t.Condition = condition.String
+		}
+		if temporal.Valid {
+			t.Temporal = temporal.String
+		}
+		if location.Valid {
+			t.Location = location.String
+		}
+		if certainty.Valid {
+			t.Certainty = certainty.String
+		}
+		if scope.Valid {
+			t.Scope = scope.String
+		}
+		if sourceAttr.Valid {
+			t.SourceAttribution = sourceAttr.String
+		}
+		if confidence.Valid {
+			t.Confidence = confidence.Float64
+		}
+		if embStr.Valid {
+			t.Embedding = p.parseEmbedding(embStr.String)
 		}
 		if model.Valid {
-			e.Model = model.String
+			t.Model = model.String
 		}
 
-		edges = append(edges, &e)
+		triples = append(triples, &t)
 	}
 
-	return edges, nil
+	return triples, nil
+}
+
+// scanTripleRow scans a single triple row for in-memory vector search.
+// Returns the triple and the raw embedding string for manual parsing.
+func (p *PostgresDB) scanTripleRow(rows *sql.Rows) (*ExtractedTriple, string, error) {
+	var t ExtractedTriple
+	var embJSON sql.NullString
+	var subjectType, objectType, description, condition, temporal, location, certainty, scope, sourceAttr, model sql.NullString
+	var confidence sql.NullFloat64
+
+	if err := rows.Scan(&t.ID, &t.SourceID, &t.GroupID, &t.Subject, &subjectType, &t.Predicate, &t.Object, &objectType,
+		&description, &condition, &temporal, &location, &certainty, &scope, &sourceAttr,
+		&confidence, &embJSON, &t.ChunkIndex, &model, &t.CreatedAt); err != nil {
+		return nil, "", err
+	}
+
+	if subjectType.Valid {
+		t.SubjectType = subjectType.String
+	}
+	if objectType.Valid {
+		t.ObjectType = objectType.String
+	}
+	if description.Valid {
+		t.Description = description.String
+	}
+	if condition.Valid {
+		t.Condition = condition.String
+	}
+	if temporal.Valid {
+		t.Temporal = temporal.String
+	}
+	if location.Valid {
+		t.Location = location.String
+	}
+	if certainty.Valid {
+		t.Certainty = certainty.String
+	}
+	if scope.Valid {
+		t.Scope = scope.String
+	}
+	if sourceAttr.Valid {
+		t.SourceAttribution = sourceAttr.String
+	}
+	if confidence.Valid {
+		t.Confidence = confidence.Float64
+	}
+	if model.Valid {
+		t.Model = model.String
+	}
+
+	embString := ""
+	if embJSON.Valid {
+		embString = embJSON.String
+	}
+	return &t, embString, nil
 }

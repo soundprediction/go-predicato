@@ -55,14 +55,14 @@ type FactSearchResults struct {
 	// Nodes are the matching extracted nodes
 	Nodes []*ExtractedNode `json:"nodes"`
 
-	// Edges are the matching extracted edges
-	Edges []*ExtractedEdge `json:"edges,omitempty"`
+	// Triples are the matching extracted triples
+	Triples []*ExtractedTriple `json:"triples,omitempty"`
 
 	// NodeScores are the relevance scores for each node (same order as Nodes)
 	NodeScores []float64 `json:"node_scores"`
 
-	// EdgeScores are the relevance scores for each edge (same order as Edges)
-	EdgeScores []float64 `json:"edge_scores,omitempty"`
+	// TripleScores are the relevance scores for each triple (same order as Triples)
+	TripleScores []float64 `json:"triple_scores,omitempty"`
 
 	// Total is the total number of results
 	Total int `json:"total"`
@@ -139,10 +139,6 @@ type Source struct {
 // The canonical definition is in pkg/types/extraction.go.
 type ExtractedNode = types.ExtractedNode
 
-// ExtractedEdge is an alias to types.ExtractedEdge for backward compatibility.
-// The canonical definition is in pkg/types/extraction.go.
-type ExtractedEdge = types.ExtractedEdge
-
 // ExtractedTriple is an alias to types.ExtractedTriple for backward compatibility.
 // The canonical definition is in pkg/types/extraction.go.
 type ExtractedTriple = types.ExtractedTriple
@@ -159,8 +155,8 @@ type FactsDB interface {
 	// SaveSource saves the source metadata.
 	SaveSource(ctx context.Context, source *Source) error
 
-	// SaveExtractedKnowledge saves the raw extraction results.
-	SaveExtractedKnowledge(ctx context.Context, sourceID string, nodes []*ExtractedNode, edges []*ExtractedEdge) error
+	// SaveExtractedKnowledge saves the raw extraction results (nodes and triples).
+	SaveExtractedKnowledge(ctx context.Context, sourceID string, nodes []*ExtractedNode, triples []*ExtractedTriple) error
 
 	// GetSource retrieves a source by ID.
 	GetSource(ctx context.Context, sourceID string) (*Source, error)
@@ -168,8 +164,8 @@ type FactsDB interface {
 	// GetExtractedNodes retrieves extracted nodes for a source.
 	GetExtractedNodes(ctx context.Context, sourceID string) ([]*ExtractedNode, error)
 
-	// GetExtractedEdges retrieves extracted edges for a source.
-	GetExtractedEdges(ctx context.Context, sourceID string) ([]*ExtractedEdge, error)
+	// GetExtractedTriples retrieves extracted triples for a source.
+	GetExtractedTriples(ctx context.Context, sourceID string) ([]*ExtractedTriple, error)
 
 	// GetAllSources retrieves all sources.
 	GetAllSources(ctx context.Context, limit int) ([]*Source, error)
@@ -177,8 +173,8 @@ type FactsDB interface {
 	// GetAllNodes retrieves all nodes (with optional limit).
 	GetAllNodes(ctx context.Context, limit int) ([]*ExtractedNode, error)
 
-	// GetAllEdges retrieves all edges (with optional limit).
-	GetAllEdges(ctx context.Context, limit int) ([]*ExtractedEdge, error)
+	// GetAllTriples retrieves all triples (with optional limit).
+	GetAllTriples(ctx context.Context, limit int) ([]*ExtractedTriple, error)
 
 	// GetStats retrieves statistics about the fact store.
 	GetStats(ctx context.Context) (*Stats, error)
@@ -193,8 +189,8 @@ type FactsDB interface {
 	// If query is empty, only vector search is performed.
 	SearchNodes(ctx context.Context, query string, embedding []float32, config *FactSearchConfig) ([]*ExtractedNode, []float64, error)
 
-	// SearchEdges performs similarity and/or keyword search on extracted edges.
-	SearchEdges(ctx context.Context, query string, embedding []float32, config *FactSearchConfig) ([]*ExtractedEdge, []float64, error)
+	// SearchTriples performs similarity and/or keyword search on extracted triples.
+	SearchTriples(ctx context.Context, query string, embedding []float32, config *FactSearchConfig) ([]*ExtractedTriple, []float64, error)
 
 	// SearchSources performs keyword search on source content.
 	SearchSources(ctx context.Context, query string, config *FactSearchConfig) ([]*Source, []float64, error)
@@ -204,14 +200,8 @@ type FactsDB interface {
 
 	// --- Extended Extraction Methods ---
 
-	// SaveExtractedTriples saves contextualised triples for a source.
-	SaveExtractedTriples(ctx context.Context, sourceID string, triples []*ExtractedTriple) error
-
 	// SaveExtractedRules saves conditional rules for a source.
 	SaveExtractedRules(ctx context.Context, sourceID string, rules []*ExtractedRule) error
-
-	// GetExtractedTriples retrieves extracted triples for a source.
-	GetExtractedTriples(ctx context.Context, sourceID string) ([]*ExtractedTriple, error)
 
 	// GetExtractedRules retrieves extracted rules for a source.
 	GetExtractedRules(ctx context.Context, sourceID string) ([]*ExtractedRule, error)
@@ -220,7 +210,6 @@ type FactsDB interface {
 type Stats struct {
 	SourceCount int64
 	NodeCount   int64
-	EdgeCount   int64
 	TripleCount int64
 	RuleCount   int64
 }

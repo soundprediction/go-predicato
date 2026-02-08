@@ -255,7 +255,7 @@ func (c *Client) AddEpisode(ctx context.Context, episode types.Episode, options 
 			c.logger.Info("ExtractOnly mode - skipping graph promotion",
 				"episode_id", episode.ID,
 				"nodes", extractionResult.NodeCount(),
-				"edges", extractionResult.EdgeCount())
+				"triples", extractionResult.TripleCount())
 			return &types.AddEpisodeResults{
 				Nodes: []*types.Node{},
 				Edges: []*types.Edge{},
