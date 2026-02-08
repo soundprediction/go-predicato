@@ -146,7 +146,7 @@ func (a *AnthropicClient) Chat(ctx context.Context, messages []types.Message) (*
 
 // GetCapabilities returns the list of capabilities supported by this client.
 func (a *AnthropicClient) GetCapabilities() []TaskCapability {
-	return []TaskCapability{TaskTextGeneration}
+	return []TaskCapability{TaskTextGeneration, TaskExtendedExtraction}
 }
 
 // ChatWithStructuredOutput implements structured output for Anthropic.

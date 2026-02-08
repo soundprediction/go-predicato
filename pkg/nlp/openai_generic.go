@@ -283,6 +283,7 @@ func (c *OpenAIGenericClient) GetCapabilities() []TaskCapability {
 		TaskSummarization,
 		TaskNamedEntityRecognition,
 		TaskRelationExtraction,
+		TaskExtendedExtraction,
 	}
 }
 

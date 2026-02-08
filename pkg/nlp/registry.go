@@ -217,6 +217,11 @@ var BuiltInModels = []Model{
 	},
 }
 
+// HasCapability checks if a client supports a given capability.
+func HasCapability(client Client, cap TaskCapability) bool {
+	return slices.Contains(client.GetCapabilities(), cap)
+}
+
 // GetProvider returns the provider with the given ID.
 func GetProvider(id ProviderID) (Provider, bool) {
 	p, ok := BuiltInProviders[id]

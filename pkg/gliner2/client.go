@@ -59,6 +59,7 @@ func (c *Client) GetCapabilities() []nlp.TaskCapability {
 	return []nlp.TaskCapability{
 		nlp.TaskNamedEntityRecognition,
 		nlp.TaskRelationExtraction,
+		nlp.TaskExtendedExtraction,
 	}
 }
 

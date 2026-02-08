@@ -175,7 +175,7 @@ func (g *GeminiClient) Chat(ctx context.Context, messages []types.Message) (*typ
 
 // GetCapabilities returns the list of capabilities supported by this client.
 func (g *GeminiClient) GetCapabilities() []TaskCapability {
-	return []TaskCapability{TaskTextGeneration}
+	return []TaskCapability{TaskTextGeneration, TaskExtendedExtraction}
 }
 
 // ChatWithStructuredOutput implements structured output for Gemini.

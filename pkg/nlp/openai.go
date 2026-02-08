@@ -248,6 +248,7 @@ func (c *OpenAIClient) GetCapabilities() []TaskCapability {
 		TaskSummarization,
 		TaskNamedEntityRecognition,
 		TaskRelationExtraction,
+		TaskExtendedExtraction,
 	}
 }
 

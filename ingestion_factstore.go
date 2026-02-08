@@ -7,6 +7,7 @@ import (
 
 	"github.com/soundprediction/predicato/pkg/factstore"
 	"github.com/soundprediction/predicato/pkg/modeler"
+	"github.com/soundprediction/predicato/pkg/nlp"
 	"github.com/soundprediction/predicato/pkg/prompts"
 	"github.com/soundprediction/predicato/pkg/types"
 	"github.com/soundprediction/predicato/pkg/utils"
@@ -261,107 +262,115 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 			extractionClient = c.nlProcessor
 		}
 
-		// Collect entity/relation type keys from config for schema guidance
-		var entityTypeKeys, relationTypeKeys []string
-		if options.EntityTypes != nil {
-			for k := range options.EntityTypes {
-				entityTypeKeys = append(entityTypeKeys, k)
-			}
-		}
-		if options.EdgeTypes != nil {
-			for k := range options.EdgeTypes {
-				relationTypeKeys = append(relationTypeKeys, k)
-			}
-		}
+		// Check if the extraction client supports extended extraction
+		if !nlp.HasCapability(extractionClient, nlp.TaskExtendedExtraction) {
+			c.logger.Warn("Extended extraction enabled but the configured extraction model does not support it — falling back to regular extraction pipeline",
+				"model", extractionClient.GetModel(),
+				"episode_id", episode.ID)
+		} else {
 
-		for chunkIdx, chunk := range chunks {
-			result, err := extractionClient.ExtractExtended(ctx, chunk, entityTypeKeys, relationTypeKeys)
-			if err != nil {
-				c.logger.Warn("Extended extraction failed for chunk, skipping",
+			// Collect entity/relation type keys from config for schema guidance
+			var entityTypeKeys, relationTypeKeys []string
+			if options.EntityTypes != nil {
+				for k := range options.EntityTypes {
+					entityTypeKeys = append(entityTypeKeys, k)
+				}
+			}
+			if options.EdgeTypes != nil {
+				for k := range options.EdgeTypes {
+					relationTypeKeys = append(relationTypeKeys, k)
+				}
+			}
+
+			for chunkIdx, chunk := range chunks {
+				result, err := extractionClient.ExtractExtended(ctx, chunk, entityTypeKeys, relationTypeKeys)
+				if err != nil {
+					c.logger.Warn("Extended extraction failed for chunk, skipping",
+						"episode_id", episode.ID,
+						"chunk", chunkIdx,
+						"error", err)
+					continue
+				}
+
+				// Convert nlp.ExtendedTriple → types.ExtractedTriple
+				for _, t := range result.Triples {
+					factsTriples = append(factsTriples, &types.ExtractedTriple{
+						ID:                fmt.Sprintf("%s-triple-%d-%d", episode.ID, chunkIdx, len(factsTriples)),
+						SourceID:          episode.ID,
+						Subject:           t.Subject,
+						Predicate:         t.Predicate,
+						Object:            t.Object,
+						Condition:         t.Condition,
+						Temporal:          t.Temporal,
+						Location:          t.Location,
+						Certainty:         t.Certainty,
+						Scope:             t.Scope,
+						SourceAttribution: t.SourceAttribution,
+						Confidence:        t.Confidence,
+						ChunkIndex:        chunkIdx,
+						CreatedAt:         time.Now(),
+					})
+				}
+
+				// Convert nlp.Rule → types.ExtractedRule
+				for _, r := range result.Rules {
+					factsRules = append(factsRules, &types.ExtractedRule{
+						ID:                fmt.Sprintf("%s-rule-%d-%d", episode.ID, chunkIdx, len(factsRules)),
+						SourceID:          episode.ID,
+						Antecedent:        r.Antecedent,
+						Consequent:        r.Consequent,
+						Exception:         r.Exception,
+						RuleType:          r.RuleType,
+						Scope:             r.Scope,
+						SourceAttribution: r.SourceAttribution,
+						Confidence:        r.Confidence,
+						ChunkIndex:        chunkIdx,
+						CreatedAt:         time.Now(),
+					})
+				}
+			}
+
+			// Generate embeddings for triples
+			if c.embedder != nil && len(factsTriples) > 0 {
+				texts := make([]string, len(factsTriples))
+				for i, t := range factsTriples {
+					texts[i] = t.Subject + " " + t.Predicate + " " + t.Object
+				}
+				embeddings, err := c.embedder.Embed(ctx, texts)
+				if err != nil {
+					c.logger.Warn("Failed to generate triple embeddings, continuing without",
+						"error", err, "episode_id", episode.ID)
+				} else {
+					for i, emb := range embeddings {
+						factsTriples[i].Embedding = emb
+					}
+				}
+			}
+
+			// Generate embeddings for rules
+			if c.embedder != nil && len(factsRules) > 0 {
+				texts := make([]string, len(factsRules))
+				for i, r := range factsRules {
+					texts[i] = r.Antecedent + " " + r.Consequent
+				}
+				embeddings, err := c.embedder.Embed(ctx, texts)
+				if err != nil {
+					c.logger.Warn("Failed to generate rule embeddings, continuing without",
+						"error", err, "episode_id", episode.ID)
+				} else {
+					for i, emb := range embeddings {
+						factsRules[i].Embedding = emb
+					}
+				}
+			}
+
+			if options.Verbose {
+				c.logger.Info("[VERBOSE] Extended extraction complete",
 					"episode_id", episode.ID,
-					"chunk", chunkIdx,
-					"error", err)
-				continue
+					"triple_count", len(factsTriples),
+					"rule_count", len(factsRules))
 			}
-
-			// Convert nlp.ExtendedTriple → types.ExtractedTriple
-			for _, t := range result.Triples {
-				factsTriples = append(factsTriples, &types.ExtractedTriple{
-					ID:                fmt.Sprintf("%s-triple-%d-%d", episode.ID, chunkIdx, len(factsTriples)),
-					SourceID:          episode.ID,
-					Subject:           t.Subject,
-					Predicate:         t.Predicate,
-					Object:            t.Object,
-					Condition:         t.Condition,
-					Temporal:          t.Temporal,
-					Location:          t.Location,
-					Certainty:         t.Certainty,
-					Scope:             t.Scope,
-					SourceAttribution: t.SourceAttribution,
-					Confidence:        t.Confidence,
-					ChunkIndex:        chunkIdx,
-					CreatedAt:         time.Now(),
-				})
-			}
-
-			// Convert nlp.Rule → types.ExtractedRule
-			for _, r := range result.Rules {
-				factsRules = append(factsRules, &types.ExtractedRule{
-					ID:                fmt.Sprintf("%s-rule-%d-%d", episode.ID, chunkIdx, len(factsRules)),
-					SourceID:          episode.ID,
-					Antecedent:        r.Antecedent,
-					Consequent:        r.Consequent,
-					Exception:         r.Exception,
-					RuleType:          r.RuleType,
-					Scope:             r.Scope,
-					SourceAttribution: r.SourceAttribution,
-					Confidence:        r.Confidence,
-					ChunkIndex:        chunkIdx,
-					CreatedAt:         time.Now(),
-				})
-			}
-		}
-
-		// Generate embeddings for triples
-		if c.embedder != nil && len(factsTriples) > 0 {
-			texts := make([]string, len(factsTriples))
-			for i, t := range factsTriples {
-				texts[i] = t.Subject + " " + t.Predicate + " " + t.Object
-			}
-			embeddings, err := c.embedder.Embed(ctx, texts)
-			if err != nil {
-				c.logger.Warn("Failed to generate triple embeddings, continuing without",
-					"error", err, "episode_id", episode.ID)
-			} else {
-				for i, emb := range embeddings {
-					factsTriples[i].Embedding = emb
-				}
-			}
-		}
-
-		// Generate embeddings for rules
-		if c.embedder != nil && len(factsRules) > 0 {
-			texts := make([]string, len(factsRules))
-			for i, r := range factsRules {
-				texts[i] = r.Antecedent + " " + r.Consequent
-			}
-			embeddings, err := c.embedder.Embed(ctx, texts)
-			if err != nil {
-				c.logger.Warn("Failed to generate rule embeddings, continuing without",
-					"error", err, "episode_id", episode.ID)
-			} else {
-				for i, emb := range embeddings {
-					factsRules[i].Embedding = emb
-				}
-			}
-		}
-
-		if options.Verbose {
-			c.logger.Info("[VERBOSE] Extended extraction complete",
-				"episode_id", episode.ID,
-				"triple_count", len(factsTriples),
-				"rule_count", len(factsRules))
-		}
+		} // end capability check else
 	}
 
 	// 7. Save to Facts

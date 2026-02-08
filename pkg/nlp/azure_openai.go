@@ -161,7 +161,7 @@ func (a *AzureOpenAIClient) Chat(ctx context.Context, messages []types.Message) 
 
 // GetCapabilities returns the list of capabilities supported by this client.
 func (a *AzureOpenAIClient) GetCapabilities() []TaskCapability {
-	return []TaskCapability{TaskTextGeneration}
+	return []TaskCapability{TaskTextGeneration, TaskExtendedExtraction}
 }
 
 // GetModel returns the model identifier.
