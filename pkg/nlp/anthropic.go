@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/soundprediction/predicato/pkg/types"
@@ -170,6 +171,94 @@ func (a *AnthropicClient) ChatWithStructuredOutput(ctx context.Context, messages
 
 	// AnthropicClient.Chat now returns *types.Response
 	return resp, nil
+}
+
+// ExtractEntities implements the Client interface using prompt engineering
+func (a *AnthropicClient) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]ExtractedEntity, error) {
+	// Construct a prompt to extract entities
+	sysPrompt := "You are an entity extraction system. Extract entities from the text. Return JSON output."
+	if len(entityTypes) > 0 {
+		sysPrompt += fmt.Sprintf(" specific entity types: %s", strings.Join(entityTypes, ", "))
+	}
+
+	prompt := fmt.Sprintf("Extract entities from the following text:\n\n%s", text)
+
+	// Use a structured output schema provided by the new types
+	type EntityResult struct {
+		Entities []ExtractedEntity `json:"entities"`
+	}
+
+	messages := []types.Message{
+		NewSystemMessage(sysPrompt),
+		NewUserMessage(prompt),
+	}
+
+	// We use the helper to get structured JSON
+	resp, err := a.ChatWithStructuredOutput(ctx, messages, EntityResult{})
+	if err != nil {
+		return nil, err
+	}
+
+	var result EntityResult
+	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse extraction result: %w", err)
+	}
+
+	return result.Entities, nil
+}
+
+// ExtractRelations implements the Client interface using prompt engineering
+func (a *AnthropicClient) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error) {
+	sysPrompt := "You are a relationship extraction system. Extract relationships between entities from the text. Return JSON output."
+	if len(relationTypes) > 0 {
+		sysPrompt += fmt.Sprintf(" specific relation types: %s", strings.Join(relationTypes, ", "))
+	}
+
+	prompt := fmt.Sprintf("Extract relationships from the following text:\n\n%s", text)
+
+	type RelationResult struct {
+		Relations []ExtractedRelation `json:"relations"`
+	}
+
+	messages := []types.Message{
+		NewSystemMessage(sysPrompt),
+		NewUserMessage(prompt),
+	}
+
+	resp, err := a.ChatWithStructuredOutput(ctx, messages, RelationResult{})
+	if err != nil {
+		return nil, err
+	}
+
+	var result RelationResult
+	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse relation result: %w", err)
+	}
+
+	return result.Relations, nil
+}
+
+// GenerateText implements the Client interface
+func (a *AnthropicClient) GenerateText(ctx context.Context, prompt string) (string, error) {
+	messages := []types.Message{
+		NewUserMessage(prompt),
+	}
+	resp, err := a.Chat(ctx, messages)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+// Summarize implements the Client interface
+func (a *AnthropicClient) Summarize(ctx context.Context, text string) (string, error) {
+	prompt := fmt.Sprintf("Please summarize the following text:\n\n%s", text)
+	return a.GenerateText(ctx, prompt)
+}
+
+// ExtractExtended implements the Client interface
+func (a *AnthropicClient) ExtractExtended(ctx context.Context, text string) (*ExtendedExtractionResult, error) {
+	return ExtractExtendedHelper(ctx, a, text)
 }
 
 // GetModel returns the model identifier.

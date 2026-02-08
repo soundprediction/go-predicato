@@ -242,6 +242,11 @@ func (c *OpenAIGenericClient) ExtractRelations(ctx context.Context, text string,
 	return result.Relations, nil
 }
 
+// ExtractExtended implements the Client interface
+func (c *OpenAIGenericClient) ExtractExtended(ctx context.Context, text string) (*ExtendedExtractionResult, error) {
+	return ExtractExtendedHelper(ctx, c, text)
+}
+
 // Summarize implements the Client interface
 func (c *OpenAIGenericClient) Summarize(ctx context.Context, text string) (string, error) {
 	messages := []types.Message{

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/soundprediction/predicato/pkg/types"
@@ -198,6 +199,91 @@ func (g *GeminiClient) ChatWithStructuredOutput(ctx context.Context, messages []
 
 	// GeminiClient.Chat now returns *types.Response
 	return resp, nil
+}
+
+// ExtractEntities implements the Client interface using prompt engineering
+func (g *GeminiClient) ExtractEntities(ctx context.Context, text string, entityTypes []string) ([]ExtractedEntity, error) {
+	sysPrompt := "You are an entity extraction system. Extract entities from the text. Return JSON output."
+	if len(entityTypes) > 0 {
+		sysPrompt += fmt.Sprintf(" specific entity types: %s", strings.Join(entityTypes, ", "))
+	}
+
+	prompt := fmt.Sprintf("Extract entities from the following text:\n\n%s", text)
+
+	type EntityResult struct {
+		Entities []ExtractedEntity `json:"entities"`
+	}
+
+	messages := []types.Message{
+		NewSystemMessage(sysPrompt),
+		NewUserMessage(prompt),
+	}
+
+	resp, err := g.ChatWithStructuredOutput(ctx, messages, EntityResult{})
+	if err != nil {
+		return nil, err
+	}
+
+	var result EntityResult
+	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse extraction result: %w", err)
+	}
+
+	return result.Entities, nil
+}
+
+// ExtractRelations implements the Client interface using prompt engineering
+func (g *GeminiClient) ExtractRelations(ctx context.Context, text string, relationTypes []string) ([]ExtractedRelation, error) {
+	sysPrompt := "You are a relationship extraction system. Extract relationships between entities from the text. Return JSON output."
+	if len(relationTypes) > 0 {
+		sysPrompt += fmt.Sprintf(" specific relation types: %s", strings.Join(relationTypes, ", "))
+	}
+
+	prompt := fmt.Sprintf("Extract relationships from the following text:\n\n%s", text)
+
+	type RelationResult struct {
+		Relations []ExtractedRelation `json:"relations"`
+	}
+
+	messages := []types.Message{
+		NewSystemMessage(sysPrompt),
+		NewUserMessage(prompt),
+	}
+
+	resp, err := g.ChatWithStructuredOutput(ctx, messages, RelationResult{})
+	if err != nil {
+		return nil, err
+	}
+
+	var result RelationResult
+	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse relation result: %w", err)
+	}
+
+	return result.Relations, nil
+}
+
+// GenerateText implements the Client interface
+func (g *GeminiClient) GenerateText(ctx context.Context, prompt string) (string, error) {
+	messages := []types.Message{
+		NewUserMessage(prompt),
+	}
+	resp, err := g.Chat(ctx, messages)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+// Summarize implements the Client interface
+func (g *GeminiClient) Summarize(ctx context.Context, text string) (string, error) {
+	prompt := fmt.Sprintf("Please summarize the following text:\n\n%s", text)
+	return g.GenerateText(ctx, prompt)
+}
+
+// ExtractExtended implements the Client interface
+func (g *GeminiClient) ExtractExtended(ctx context.Context, text string) (*ExtendedExtractionResult, error) {
+	return ExtractExtendedHelper(ctx, g, text)
 }
 
 // GetModel returns the model identifier.

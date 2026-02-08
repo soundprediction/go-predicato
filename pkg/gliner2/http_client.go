@@ -205,6 +205,24 @@ func (c *HTTPClient) ExtractStructured(ctx context.Context, text string, schema 
 	return &result, nil
 }
 
+func (c *HTTPClient) ExtractExtended(ctx context.Context, text string) (*ExtendedExtractionResult, error) {
+	request := ExtractRequest{
+		Task: "extract_extended",
+		Text: text,
+		// Schema can be used to pass threshold if needed, server uses it.
+		// Passing empty schema usually defaults threshold to 0.4 in server.
+		Schema: map[string]interface{}{"threshold": 0.4},
+	}
+
+	var result ExtendedExtractionResult
+	err := c.makeRequest(ctx, request, &result)
+	if err != nil {
+		return nil, fmt.Errorf("extended extraction failed: %w", err)
+	}
+
+	return &result, nil
+}
+
 func (c *HTTPClient) Close() error {
 	// No explicit cleanup needed for HTTP client
 	return nil

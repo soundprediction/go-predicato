@@ -100,6 +100,37 @@ type StructuredResult struct {
 	Structured map[string][]map[string]interface{} `json:"structured"`
 }
 
+type ExtendedTriple struct {
+	Subject           string  `json:"subject"`
+	Predicate         string  `json:"predicate"`
+	Object            string  `json:"object"`
+	Condition         string  `json:"condition,omitempty"`
+	Temporal          string  `json:"temporal,omitempty"`
+	Location          string  `json:"location,omitempty"`
+	Certainty         string  `json:"certainty,omitempty"`
+	Scope             string  `json:"scope,omitempty"`
+	SourceAttribution string  `json:"source_attribution,omitempty"`
+	Confidence        float64 `json:"confidence,omitempty"`
+}
+
+type Rule struct {
+	Antecedent        string  `json:"antecedent"`
+	Consequent        string  `json:"consequent"`
+	Exception         string  `json:"exception,omitempty"`
+	RuleType          string  `json:"rule_type,omitempty"`
+	Scope             string  `json:"scope,omitempty"`
+	SourceAttribution string  `json:"source_attribution,omitempty"`
+	Confidence        float64 `json:"confidence,omitempty"`
+}
+
+type ExtendedExtractionResult struct {
+	SourceText string              `json:"source_text"`
+	Entities   map[string][]string `json:"entities"`
+	Relations  []Relation          `json:"relations"`
+	Triples    []ExtendedTriple    `json:"triples"`
+	Rules      []Rule              `json:"rules"`
+}
+
 // Health check
 type HealthResponse struct {
 	Timestamp time.Time `json:"timestamp"`
