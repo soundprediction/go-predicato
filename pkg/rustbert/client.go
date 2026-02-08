@@ -100,6 +100,10 @@ func (c *Client) Close() {
 		c.summarizationModel.Close()
 		c.summarizationModel = nil
 	}
+	if c.textGenModel != nil {
+		c.textGenModel.Close()
+		c.textGenModel = nil
+	}
 }
 
 // Entity represents an extracted entity

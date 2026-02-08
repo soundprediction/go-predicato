@@ -181,6 +181,14 @@ func (a *LLMAdapter) GenerateText(ctx context.Context, prompt string) (string, e
 	return "", fmt.Errorf("GenerateText not supported: no base client")
 }
 
+// ExtractExtended implements Client — not supported by legacy GLiNER v1 adapter.
+func (a *LLMAdapter) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*nlp.ExtendedExtractionResult, error) {
+	if a.baseClient != nil {
+		return a.baseClient.ExtractExtended(ctx, text, entityTypes, relationTypes)
+	}
+	return nil, fmt.Errorf("ExtractExtended not supported: upgrade to GLiNER2 or provide a base LLM client")
+}
+
 // ---- Extraction Handlers ----
 
 // parseSection extracts content between <TAG> and </TAG>
