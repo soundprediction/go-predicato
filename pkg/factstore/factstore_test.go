@@ -64,22 +64,22 @@ func TestFactSearchResultsJSON(t *testing.T) {
 		},
 		Triples: []*ExtractedTriple{
 			{
-				ID:         "triple-1",
-				SourceID:   "source-1",
-				GroupID:    "group-1",
-				Subject:    "Test Entity",
-				Object:     "Other Entity",
-				Predicate:  "knows",
+				ID:          "triple-1",
+				SourceID:    "source-1",
+				GroupID:     "group-1",
+				Subject:     "Test Entity",
+				Object:      "Other Entity",
+				Predicate:   "knows",
 				Description: "Test relationship",
-				Confidence: 1.0,
-				ChunkIndex: 0,
-				CreatedAt:  now,
+				Confidence:  1.0,
+				ChunkIndex:  0,
+				CreatedAt:   now,
 			},
 		},
 		NodeScores:   []float64{0.95},
 		TripleScores: []float64{0.85},
-		Query:      "test query",
-		Total:      2,
+		Query:        "test query",
+		Total:        2,
 	}
 
 	b, err := json.Marshal(results)

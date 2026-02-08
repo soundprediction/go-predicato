@@ -353,11 +353,11 @@ func (h *IngestHandler) ExtractEpisode(w http.ResponseWriter, r *http.Request) {
 
 	// Convert to DTO
 	response := dto.ExtractEpisodeResponse{
-		Success:        true,
-		SourceID:       results.SourceID,
-		ChunkCount:     results.ChunkCount,
-		ExtractionTime: results.ExtractionTime.String(),
-		ExtractedNodes: make([]dto.ExtractedNodeDTO, 0, len(results.ExtractedNodes)),
+		Success:          true,
+		SourceID:         results.SourceID,
+		ChunkCount:       results.ChunkCount,
+		ExtractionTime:   results.ExtractionTime.String(),
+		ExtractedNodes:   make([]dto.ExtractedNodeDTO, 0, len(results.ExtractedNodes)),
 		ExtractedTriples: make([]dto.ExtractedTripleDTO, 0, len(results.ExtractedTriples)),
 	}
 

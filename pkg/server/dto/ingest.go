@@ -199,13 +199,13 @@ type ExtractionMetadataDTO struct {
 
 // ExtractEpisodeResponse represents the response from extraction
 type ExtractEpisodeResponse struct {
-	Metadata       *ExtractionMetadataDTO `json:"metadata,omitempty"`
-	SourceID       string                 `json:"source_id"`
-	ExtractionTime string                 `json:"extraction_time"`
-	ExtractedNodes []ExtractedNodeDTO     `json:"extracted_nodes"`
+	Metadata         *ExtractionMetadataDTO `json:"metadata,omitempty"`
+	SourceID         string                 `json:"source_id"`
+	ExtractionTime   string                 `json:"extraction_time"`
+	ExtractedNodes   []ExtractedNodeDTO     `json:"extracted_nodes"`
 	ExtractedTriples []ExtractedTripleDTO   `json:"extracted_triples"`
-	ChunkCount     int                    `json:"chunk_count"`
-	Success        bool                   `json:"success"`
+	ChunkCount       int                    `json:"chunk_count"`
+	Success          bool                   `json:"success"`
 }
 
 // PromoteToGraphRequest represents a request to promote extracted knowledge to the graph
