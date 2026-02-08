@@ -24,6 +24,13 @@ Predicato implements a **two-layer architecture** that separates raw fact extrac
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Entity Extraction                             │
 │         (GLiNER for NER, NLP models for relationships)           │
+│                              │                                   │
+│            ┌─────────────────┴──────────────────┐                │
+│            ▼                                    ▼                │
+│   Standard Extraction              Extended Extraction           │
+│   • Entities (nodes)               • Contextual triples          │
+│   • Relationships (triples)        • Conditional rules           │
+│   • Embeddings                     • Temporal/spatial context    │
 └─────────────────────────────────────────────────────────────────┘
                               │
               ┌───────────────┴───────────────┐
@@ -32,19 +39,20 @@ Predicato implements a **two-layer architecture** that separates raw fact extrac
 │      Fact Store         │     │        GraphModeler              │
 │  (PostgreSQL/DoltGres)  │     │    (pluggable interface)         │
 │                         │     │                                  │
-│  • Raw extracted nodes  │     │  ┌───────────────────────────┐   │
-│  • Raw extracted edges  │     │  │  • ResolveEntities        │   │
-│  • Source documents     │     │  │  • ResolveRelationships   │   │
-│  • Vector embeddings    │     │  │  • BuildCommunities       │   │
-│                         │     │  └───────────────────────────┘   │
-│  ExtractOnly=true       │     │            │                     │
-│  stops here ───────────►│     │            ▼                     │
-│                         │     │  ┌───────────────────────────┐   │
-│  ┌───────────────────┐  │     │  │    Knowledge Graph        │   │
-│  │   RAG Search      │  │     │  │  (Ladybug/Neo4j/Memgraph) │   │
-│  │ (VectorChord/JSONB)│  │     │  │  • Resolved entities      │   │
-│  └───────────────────┘  │     │  │  • Temporal relationships │   │
-│                         │     │  │  • Communities            │   │
+│  • Extracted nodes      │     │  ┌───────────────────────────┐   │
+│  • Knowledge triples    │     │  │  • ResolveEntities        │   │
+│  • Conditional rules    │     │  │  • ResolveRelationships   │   │
+│  • Source documents     │     │  │  • BuildCommunities       │   │
+│  • Vector embeddings    │     │  └───────────────────────────┘   │
+│                         │     │            │                     │
+│  ExtractOnly=true       │     │            ▼                     │
+│  stops here ───────────►│     │  ┌───────────────────────────┐   │
+│                         │     │  │    Knowledge Graph        │   │
+│  ┌───────────────────┐  │     │  │  (Ladybug/Neo4j/Memgraph) │   │
+│  │   RAG Search      │  │     │  │  • Resolved entities      │   │
+│  │ (VectorChord/JSONB)│  │     │  │  • Temporal relationships │   │
+│  └───────────────────┘  │     │  │  • Communities            │   │
+│                         │     │  │                           │   │
 └─────────────────────────┘     │  └───────────────────────────┘   │
                                 └─────────────────────────────────┘
 ```
@@ -54,10 +62,11 @@ Predicato implements a **two-layer architecture** that separates raw fact extrac
 Entity extraction is the expensive step — it requires LLM calls and embedding generation for every chunk of every document. By persisting the raw extraction results in the Fact Store, this work is done once and never repeated. The graph can then be built, torn down, and rebuilt with different parameters without re-extracting.
 
 **Fact Store (Layer 1)** - Stores raw extractions exactly as they were found:
-- Preserves source provenance (which document, which chunk)
-- Enables re-processing with different models or parameters
-- Supports simple RAG without graph complexity
-- Uses PostgreSQL/VectorChord for production-grade vector search
+- **Extracted nodes** (entities) with types, descriptions, and embeddings
+- **Knowledge triples** (subject-predicate-object) with contextual fields: condition, temporal, location, certainty, scope, source attribution
+- **Conditional rules** (IF-THEN-UNLESS patterns) from extended extraction
+- Preserves source provenance (which document, which chunk, which model)
+- Uses PostgreSQL/VectorChord for production-grade hybrid search
 
 **Knowledge Graph (Layer 2)** - Stores resolved, interconnected knowledge:
 - Entity resolution merges duplicates ("Bob Smith" = "Robert Smith")
@@ -91,15 +100,23 @@ Predicato supports two ingestion modes:
 
 **End-to-End Pipeline** (default):
 ```
-Episode -> Extract -> Resolve -> Graph
+Episode -> Extract (nodes + triples) -> Resolve -> Graph
 ```
 
 **Decoupled Pipeline** (with FactStore):
 ```
 Episode -> Extract -> FactStore    (ExtractOnly=true)
                          |
-                         v
+                         v         (nodes, triples, rules persisted)
          FactStore -> GraphModeler -> Graph
+```
+
+**Extended Pipeline** (with contextual enrichment):
+```
+Episode -> Extract -> Extended Extraction -> FactStore
+                      (context + rules)        |
+                                               v
+                            FactStore -> GraphModeler -> Graph
 ```
 
 The decoupled mode enables:
@@ -116,6 +133,40 @@ When adding episodes, Predicato automatically:
 3. Compares against existing entities (cosine similarity)
 4. Merges duplicates above a threshold (default: 0.85)
 5. Creates temporal edges between resolved entities
+
+### Knowledge Triples & Extended Extraction
+
+Every relationship extracted by Predicato is stored as a **knowledge triple** — a unified `(subject, predicate, object)` record with typed endpoints and optional context fields:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Subject: "Lisinopril"    SubjectType: "Drug"                    │
+│  Predicate: "treats"                                             │
+│  Object: "Hypertension"   ObjectType: "Disease"                  │
+│                                                                  │
+│  Context:                                                        │
+│    Condition:    "when first-line therapy is appropriate"         │
+│    Temporal:     "ongoing"                                        │
+│    Certainty:    "established"                                    │
+│    Scope:        "adults"                                        │
+│    Source:       "StatPearls Hypertension chapter"                │
+│    Confidence:   0.95                                            │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Standard extraction** produces triples with subject, predicate, object, types, and descriptions from every chunk. **Extended extraction** (`ExtendedExtraction: true`) makes a second LLM pass to enrich triples with contextual fields and extract conditional rules:
+
+```go
+client.Add(ctx, episodes, &predicato.AddEpisodeOptions{
+    ExtendedExtraction: true,  // Enable contextual enrichment
+})
+```
+
+Extended extraction adds:
+- **Contextual fields** on triples: `condition`, `temporal`, `location`, `certainty`, `scope`, `source_attribution`
+- **Conditional rules**: IF-THEN-UNLESS patterns (e.g., "IF patient has hypertension THEN prescribe ACE inhibitor UNLESS contraindicated")
+
+All fields are stored as flat columns in the fact store — no nested JSON. This makes them directly queryable via SQL and searchable via the hybrid search pipeline.
 
 ### Custom Graph Modeling
 
@@ -380,8 +431,8 @@ predicato/
 ├── pkg/rustbert/      # Local text generation (GPT-2, NER, summarization)
 ├── pkg/nlp/           # LLM clients (OpenAI-compatible APIs)
 ├── pkg/search/        # Hybrid search (semantic + BM25 + graph traversal)
-├── pkg/factstore/     # Versioned fact storage (PostgreSQL/DoltGres + VectorChord)
-└── pkg/types/         # Core types (nodes, edges, episodes)
+├── pkg/factstore/     # Fact storage (PostgreSQL/DoltGres + VectorChord)
+└── pkg/types/         # Core types (nodes, triples, edges, episodes)
 ```
 
 ## Internal Services Stack
@@ -418,7 +469,13 @@ Models download automatically on first use and cache to `~/.cache/huggingface/`.
 
 ## Fact Storage & RAG
 
-Predicato includes a **fact storage system** for extracted entities and relationships that can be used independently for RAG (Retrieval-Augmented Generation) without requiring graph queries.
+Predicato includes a **fact storage system** for extracted entities, knowledge triples, and conditional rules that can be used independently for RAG (Retrieval-Augmented Generation) without requiring graph queries.
+
+The fact store persists:
+- **`extracted_nodes`** — entities with names, types, descriptions, and embeddings
+- **`extracted_triples`** — knowledge triples with subject/predicate/object, typed endpoints, contextual fields, and embeddings
+- **`extracted_rules`** — conditional rules (IF-THEN-UNLESS patterns)
+- **`sources`** — original source documents with metadata
 
 ### PostgreSQL Backend
 

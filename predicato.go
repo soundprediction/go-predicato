@@ -237,9 +237,10 @@ type AddEpisodeOptions struct {
 	ExtractOnly bool
 
 	// ExtendedExtraction enables extraction of contextualised triples and
-	// conditional rules in addition to standard entities and edges.
-	// When true, ExtractExtended is called on each chunk and the results
-	// are persisted via SaveExtractedTriples / SaveExtractedRules.
+	// conditional rules in addition to standard entities and relationships.
+	// When true, ExtractExtended is called on each chunk to enrich triples
+	// with context fields (condition, temporal, location, certainty, scope,
+	// source attribution) and extract conditional rules (IF-THEN-UNLESS).
 	ExtendedExtraction bool
 
 	// Verbose enables detailed logging of extracted entities, relations, and summaries

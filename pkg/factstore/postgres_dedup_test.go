@@ -49,7 +49,7 @@ func TestDedupNonPersonEntityAcrossSources(t *testing.T) {
 	// Insert new node
 	mock.ExpectExec(`INSERT INTO extracted_nodes`).
 		WithArgs("node-1", "source-A", "group-1", "Acme Corporation", "acme corporation",
-			"organization", "A tech company", nil, 0, sqlmock.AnyArg()).
+			"organization", "A tech company", nil, 0, "", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	// Insert node_sources
@@ -140,7 +140,7 @@ func TestDedupPersonEntityDifferentSources(t *testing.T) {
 	// Insert new node
 	mock.ExpectExec(`INSERT INTO extracted_nodes`).
 		WithArgs("person-1", "source-A", "group-1", "John Smith", "john smith",
-			"person", "Engineer at Acme", nil, 0, sqlmock.AnyArg()).
+			"person", "Engineer at Acme", nil, 0, "", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectExec(`INSERT INTO node_sources`).
@@ -178,7 +178,7 @@ func TestDedupPersonEntityDifferentSources(t *testing.T) {
 	// Insert new (separate) node for the different John Smith
 	mock.ExpectExec(`INSERT INTO extracted_nodes`).
 		WithArgs("person-2", "source-B", "group-1", "John Smith", "john smith",
-			"person", "Manager at Beta Corp", nil, 0, sqlmock.AnyArg()).
+			"person", "Manager at Beta Corp", nil, 0, "", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectExec(`INSERT INTO node_sources`).
@@ -228,7 +228,7 @@ func TestDedupPersonEntitySameSource(t *testing.T) {
 
 	mock.ExpectExec(`INSERT INTO extracted_nodes`).
 		WithArgs("person-1", "source-A", "group-1", "Jane Doe", "jane doe",
-			"person", "CEO", nil, 0, sqlmock.AnyArg()).
+			"person", "CEO", nil, 0, "", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectExec(`INSERT INTO node_sources`).

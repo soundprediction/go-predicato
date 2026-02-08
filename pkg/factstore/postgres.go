@@ -622,7 +622,7 @@ func (p *PostgresDB) GetSource(ctx context.Context, sourceID string) (*Source, e
 func (p *PostgresDB) GetExtractedNodes(ctx context.Context, sourceID string) ([]*ExtractedNode, error) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT en.id, en.source_id, en.group_id, en.name, en.normalized_name, en.type,
-		       en.description, en.embedding, en.chunk_index, en.created_at
+		       en.description, en.embedding, en.chunk_index, en.model, en.created_at
 		FROM extracted_nodes en
 		JOIN node_sources ns ON ns.node_id = en.id
 		WHERE ns.source_id = $1`,
