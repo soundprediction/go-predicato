@@ -16,6 +16,7 @@ type ExtractedNode struct {
 	NormalizedName string    `json:"normalized_name"`
 	Type           string    `json:"type"`
 	Description    string    `json:"description"`
+	Model          string    `json:"model,omitempty"`
 	Embedding      []float32 `json:"embedding"`
 	ChunkIndex     int       `json:"chunk_index"`
 }
@@ -34,6 +35,7 @@ type ExtractedEdge struct {
 	TargetNodeType string    `json:"target_node_type"`
 	Relation       string    `json:"relation"`
 	Description    string    `json:"description"`
+	Model          string    `json:"model,omitempty"`
 	Embedding      []float32 `json:"embedding,omitempty"`
 	Weight         float64   `json:"weight"`
 	ChunkIndex     int       `json:"chunk_index"`
@@ -136,6 +138,7 @@ type ExtractedTriple struct {
 	Certainty         string    `json:"certainty,omitempty"`
 	Scope             string    `json:"scope,omitempty"`
 	SourceAttribution string    `json:"source_attribution,omitempty"`
+	Model             string    `json:"model,omitempty"`
 	Embedding         []float32 `json:"embedding,omitempty"`
 	Confidence        float64   `json:"confidence,omitempty"`
 	ChunkIndex        int       `json:"chunk_index"`
@@ -153,6 +156,7 @@ type ExtractedRule struct {
 	RuleType          string    `json:"rule_type,omitempty"`
 	Scope             string    `json:"scope,omitempty"`
 	SourceAttribution string    `json:"source_attribution,omitempty"`
+	Model             string    `json:"model,omitempty"`
 	Embedding         []float32 `json:"embedding,omitempty"`
 	Confidence        float64   `json:"confidence,omitempty"`
 	ChunkIndex        int       `json:"chunk_index"`

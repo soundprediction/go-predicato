@@ -98,13 +98,20 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 	for chunkIdx, nodes := range extractedNodesByChunk {
 		for _, n := range nodes {
 			flattenedNodes = append(flattenedNodes, n)
-			factsNodes = append(factsNodes, &factstore.ExtractedNode{
+			nodeModel := ""
+		if c.nlpModels.NodeExtraction != nil {
+			nodeModel = c.nlpModels.NodeExtraction.GetModel()
+		} else if c.nlProcessor != nil {
+			nodeModel = c.nlProcessor.GetModel()
+		}
+		factsNodes = append(factsNodes, &factstore.ExtractedNode{
 				ID:             n.Uuid,
 				SourceID:       episode.ID,
 				Name:           n.Name,
 				NormalizedName: utils.NormalizeStringExact(n.Name),
 				Type:           string(n.Type),
 				Description:    n.Summary,
+				Model:          nodeModel,
 				Embedding:      n.Embedding,
 				ChunkIndex:     chunkIdx,
 			})
@@ -145,6 +152,13 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 	}
 
 	var factsEdges []*factstore.ExtractedEdge
+
+	edgeModel := ""
+	if c.nlpModels.EdgeExtraction != nil {
+		edgeModel = c.nlpModels.EdgeExtraction.GetModel()
+	} else if c.nlProcessor != nil {
+		edgeModel = c.nlProcessor.GetModel()
+	}
 
 	for chunkIdx, nodes := range extractedNodesByChunk {
 		if len(nodes) > 0 {
@@ -209,6 +223,7 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 					TargetNodeType: targetType,
 					Relation:       e.Name,
 					Description:    e.Summary,  // Alias for Fact
+					Model:          edgeModel,
 					Weight:         e.Strength, // Use Strength
 					ChunkIndex:     chunkIdx,
 				})
@@ -292,6 +307,8 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 					continue
 				}
 
+				extModel := extractionClient.GetModel()
+
 				// Convert nlp.ExtendedTriple → types.ExtractedTriple
 				for _, t := range result.Triples {
 					factsTriples = append(factsTriples, &types.ExtractedTriple{
@@ -307,6 +324,7 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 						Scope:             t.Scope,
 						SourceAttribution: t.SourceAttribution,
 						Confidence:        t.Confidence,
+						Model:             extModel,
 						ChunkIndex:        chunkIdx,
 						CreatedAt:         time.Now(),
 					})
@@ -324,6 +342,7 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 						Scope:             r.Scope,
 						SourceAttribution: r.SourceAttribution,
 						Confidence:        r.Confidence,
+						Model:             extModel,
 						ChunkIndex:        chunkIdx,
 						CreatedAt:         time.Now(),
 					})
