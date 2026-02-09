@@ -12,6 +12,7 @@ import (
 	"github.com/soundprediction/predicato"
 	"github.com/soundprediction/predicato/pkg/config"
 	"github.com/soundprediction/predicato/pkg/embedder"
+	"github.com/soundprediction/predicato/pkg/nlp"
 	"github.com/soundprediction/predicato/pkg/server/handlers"
 	"github.com/soundprediction/predicato/pkg/types"
 )
@@ -23,6 +24,7 @@ type Server struct {
 	predicato predicato.Predicato
 	server    *http.Server
 	embedder  embedder.Client
+	nlpClient nlp.Client
 }
 
 // New creates a new server instance.
@@ -33,6 +35,12 @@ func New(cfg *config.Config, predicatoClient predicato.Predicato, embedderClient
 		predicato: predicatoClient,
 		embedder:  embedderClient,
 	}
+}
+
+// SetNLPClient sets an optional NLP client for the /api/v1/extract endpoint.
+// Call this before Setup() to enable the extract endpoint.
+func (s *Server) SetNLPClient(c nlp.Client) {
+	s.nlpClient = c
 }
 
 // Setup sets up the server routes and middleware
@@ -94,6 +102,12 @@ func (s *Server) setupRoutes() {
 
 		// Embedding route - generate embeddings using configured embedder
 		r.Post("/embed", embedHandler.Embed)
+
+		// Extended extraction route - extract entities, relations, triples, rules
+		if s.nlpClient != nil {
+			extractHandler := handlers.NewExtractExtendedHandler(s.nlpClient)
+			r.Post("/extract", extractHandler.ExtractExtended)
+		}
 
 		// Ingest routes
 		r.Route("/ingest", func(r chi.Router) {
