@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,7 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/soundprediction/predicato/pkg/gliner2"
 	"github.com/soundprediction/predicato/pkg/nlp"
 )
@@ -72,12 +74,14 @@ func loadConfig() gliner2.Config {
 	}
 }
 
-func setupRouter(client *gliner2.Client) *gin.Engine {
-	router := gin.Default()
+func setupRouter(client *gliner2.Client) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
 
 	// Health check endpoint
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":    "healthy",
 			"models":    []string{"fastino/gliner2-base-v1", "fastino/gliner2-large-v1"},
 			"timestamp": time.Now(),
@@ -85,16 +89,16 @@ func setupRouter(client *gliner2.Client) *gin.Engine {
 	})
 
 	// Main GLInER2 endpoint (mirroring Fastino's /gliner-2)
-	router.POST("/gliner-2", handleGLInER2Request(client))
+	r.Post("/gliner-2", handleGLInER2Request(client))
 
-	return router
+	return r
 }
 
-func handleGLInER2Request(client *gliner2.Client) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func handleGLInER2Request(client *gliner2.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		var request gliner2.ExtractRequest
-		if err := c.ShouldBindJSON(&request); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request format"})
 			return
 		}
 
@@ -108,39 +112,61 @@ func handleGLInER2Request(client *gliner2.Client) gin.HandlerFunc {
 			schema := convertToStringArray(request.Schema)
 			entities, extractErr := client.ExtractEntities(ctx, request.Text, schema)
 			if extractErr != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": extractErr.Error()})
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": extractErr.Error()})
 				return
 			}
-			result = gin.H{"entities": formatEntitiesForResponse(entities)}
+			result = map[string]interface{}{"entities": formatEntitiesForResponse(entities)}
 
 		case "extract_relations":
 			// GLInER2 calls relation extraction for facts
 			schema := convertToStringArray(request.Schema)
 			facts, extractErr := client.ExtractRelations(ctx, request.Text, schema)
 			if extractErr != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": extractErr.Error()})
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": extractErr.Error()})
 				return
 			}
-			result = gin.H{"relation_extraction": formatFactsForResponse(facts)}
+			result = map[string]interface{}{"relation_extraction": formatFactsForResponse(facts)}
 
 		case "classify_text":
-			// TODO: Implement text classification when GLInER2 client supports it
-			c.JSON(http.StatusNotImplemented, gin.H{"error": "Text classification not yet implemented"})
+			writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "Text classification not yet implemented"})
 			return
 
 		case "extract_json":
-			// TODO: Implement structured extraction when GLInER2 client supports it
-			c.JSON(http.StatusNotImplemented, gin.H{"error": "Structured extraction not yet implemented"})
-			return
+			// Detect extended extraction: schema has "entities" key
+			schemaMap, isMap := request.Schema.(map[string]interface{})
+			if !isMap {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "extract_json requires a map schema"})
+				return
+			}
+			_, isExtended := schemaMap["entities"]
+			if !isExtended {
+				writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "Simple structured extraction not yet implemented; use extended extraction with {\"entities\": true}"})
+				return
+			}
+
+			extResult, extractErr := client.ExtractExtended(ctx, request.Text, nil, nil)
+			if extractErr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": extractErr.Error()})
+				return
+			}
+
+			// Format response to match the Python server's to_go_client_dict() output
+			result = formatExtendedForResponse(extResult)
 
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Unsupported task: %s", request.Task)})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Unsupported task: %s", request.Task)})
 			return
 		}
 
 		// Return GLInER2 format response
-		c.JSON(http.StatusOK, gin.H{"result": result})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"result": result})
 	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
 }
 
 func convertToStringArray(schema interface{}) []string {
@@ -215,6 +241,85 @@ func formatFactsForResponse(facts []nlp.ExtractedRelation) map[string][]map[stri
 	}
 
 	return formatted
+}
+
+func formatExtendedForResponse(r *nlp.ExtendedExtractionResult) map[string]interface{} {
+	// Entities: map[type][]string (pass through)
+	entities := r.Entities
+
+	// Relations: group by type
+	relExtraction := make(map[string][]map[string]interface{})
+	for _, rel := range r.Relations {
+		entry := map[string]interface{}{"head": rel.Source, "tail": rel.Target}
+		if rel.Confidence > 0 {
+			entry["confidence"] = rel.Confidence
+		}
+		relExtraction[rel.Type] = append(relExtraction[rel.Type], entry)
+	}
+
+	// Facts (triples)
+	var facts []map[string]interface{}
+	for _, t := range r.Triples {
+		f := map[string]interface{}{
+			"subject":   t.Subject,
+			"predicate": t.Predicate,
+			"object":    t.Object,
+		}
+		if t.Condition != "" {
+			f["condition"] = t.Condition
+		}
+		if t.Temporal != "" {
+			f["temporal"] = t.Temporal
+		}
+		if t.Location != "" {
+			f["location"] = t.Location
+		}
+		if t.Certainty != "" {
+			f["certainty"] = t.Certainty
+		}
+		if t.Scope != "" {
+			f["scope"] = t.Scope
+		}
+		if t.SourceAttribution != "" {
+			f["source_attribution"] = t.SourceAttribution
+		}
+		if t.Confidence > 0 {
+			f["confidence"] = t.Confidence
+		}
+		facts = append(facts, f)
+	}
+
+	// Rules
+	var rules []map[string]interface{}
+	for _, r := range r.Rules {
+		rule := map[string]interface{}{
+			"antecedent": r.Antecedent,
+			"consequent": r.Consequent,
+		}
+		if r.Exception != "" {
+			rule["exception"] = r.Exception
+		}
+		if r.RuleType != "" {
+			rule["rule_type"] = r.RuleType
+		}
+		if r.Scope != "" {
+			rule["scope"] = r.Scope
+		}
+		if r.SourceAttribution != "" {
+			rule["source_attribution"] = r.SourceAttribution
+		}
+		if r.Confidence > 0 {
+			rule["confidence"] = r.Confidence
+		}
+		rules = append(rules, rule)
+	}
+
+	return map[string]interface{}{
+		"entities":            entities,
+		"relation_extraction": relExtraction,
+		"fact":                facts,
+		"rule":                rules,
+	}
 }
 
 func shutdown(client *gliner2.Client) {
