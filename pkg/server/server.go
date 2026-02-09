@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/soundprediction/predicato"
 	"github.com/soundprediction/predicato/pkg/config"
+	"github.com/soundprediction/predicato/pkg/embedder"
 	"github.com/soundprediction/predicato/pkg/server/handlers"
 	"github.com/soundprediction/predicato/pkg/types"
 )
@@ -21,13 +22,16 @@ type Server struct {
 	router    *chi.Mux
 	predicato predicato.Predicato
 	server    *http.Server
+	embedder  embedder.Client
 }
 
-// New creates a new server instance
-func New(cfg *config.Config, predicatoClient predicato.Predicato) *Server {
+// New creates a new server instance.
+// The embedderClient is optional and enables the /api/v1/embed endpoint when provided.
+func New(cfg *config.Config, predicatoClient predicato.Predicato, embedderClient embedder.Client) *Server {
 	return &Server{
 		config:    cfg,
 		predicato: predicatoClient,
+		embedder:  embedderClient,
 	}
 }
 
@@ -64,6 +68,7 @@ func (s *Server) setupRoutes() {
 	retrieveHandler := handlers.NewRetrieveHandler(s.predicato)
 	configHandler := handlers.NewConfigHandler(s.config)
 	nlpHandler := handlers.NewNLPHandler(s.predicato)
+	embedHandler := handlers.NewEmbedHandler(s.embedder, s.config.Embedding.Model)
 
 	// Health endpoints
 	s.router.Get("/health", healthHandler.HealthCheck)
@@ -86,6 +91,9 @@ func (s *Server) setupRoutes() {
 			r.Post("/analyze-relevance", nlpHandler.AnalyzeRelevance)
 			r.Post("/extract-source", nlpHandler.ExtractSource)
 		})
+
+		// Embedding route - generate embeddings using configured embedder
+		r.Post("/embed", embedHandler.Embed)
 
 		// Ingest routes
 		r.Route("/ingest", func(r chi.Router) {

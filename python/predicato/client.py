@@ -860,6 +860,50 @@ class PredicatoClient:
             community_edges=community_edges,
         )
 
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """
+        Generate embeddings for the given texts using the server's configured embedding model.
+
+        Args:
+            texts: List of texts to embed (max 100, each max 8192 chars).
+
+        Returns:
+            List of embedding vectors, one per input text.
+
+        Raises:
+            ValidationError: If texts list is empty or exceeds limits.
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error.
+
+        Example:
+            >>> vectors = client.embed(["hello world", "knowledge graph"])
+            >>> print(f"Dimension: {len(vectors[0])}")
+        """
+        if not texts:
+            raise ValidationError(
+                "texts must not be empty",
+                field="texts",
+            )
+        if len(texts) > 100:
+            raise ValidationError(
+                f"texts exceeds maximum of 100 items ({len(texts)} provided)",
+                field="texts",
+            )
+        for i, text in enumerate(texts):
+            if len(text) > 8192:
+                raise ValidationError(
+                    f"texts[{i}] exceeds maximum of 8192 characters ({len(text)} chars)",
+                    field="texts",
+                )
+
+        response = self._http.request(
+            "POST",
+            "/api/v1/embed",
+            json={"texts": texts},
+        )
+
+        return response["embeddings"]
+
 
 class AsyncPredicatoClient:
     """
@@ -1537,3 +1581,47 @@ class AsyncPredicatoClient:
             communities=communities,
             community_edges=community_edges,
         )
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """
+        Generate embeddings for the given texts using the server's configured embedding model.
+
+        Args:
+            texts: List of texts to embed (max 100, each max 8192 chars).
+
+        Returns:
+            List of embedding vectors, one per input text.
+
+        Raises:
+            ValidationError: If texts list is empty or exceeds limits.
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error.
+
+        Example:
+            >>> vectors = await client.embed(["hello world", "knowledge graph"])
+            >>> print(f"Dimension: {len(vectors[0])}")
+        """
+        if not texts:
+            raise ValidationError(
+                "texts must not be empty",
+                field="texts",
+            )
+        if len(texts) > 100:
+            raise ValidationError(
+                f"texts exceeds maximum of 100 items ({len(texts)} provided)",
+                field="texts",
+            )
+        for i, text in enumerate(texts):
+            if len(text) > 8192:
+                raise ValidationError(
+                    f"texts[{i}] exceeds maximum of 8192 characters ({len(text)} chars)",
+                    field="texts",
+                )
+
+        response = await self._http.request(
+            "POST",
+            "/api/v1/embed",
+            json={"texts": texts},
+        )
+
+        return response["embeddings"]
