@@ -110,13 +110,16 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Initialize Predicato
 	fmt.Println("Initializing Predicato...")
-	predicatoInstance, err := initializePredicato(cmd, cfg)
+	predicatoInstance, embedderClient, nlpClient, err := initializePredicato(cmd, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Predicato: %w", err)
 	}
 
 	// Create and setup server
-	srv := server.New(cfg, predicatoInstance)
+	srv := server.New(cfg, predicatoInstance, embedderClient)
+	if nlpClient != nil {
+		srv.SetNLPClient(nlpClient)
+	}
 	srv.Setup()
 
 	// Setup graceful shutdown
@@ -256,7 +259,7 @@ func validateServerConfig(cfg *config.Config) error {
 	return nil
 }
 
-func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Predicato, error) {
+func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Predicato, embedder.Client, nlp.Client, error) {
 	// Initialize database driver
 	var graphDriver driver.GraphDriver
 	var err error
@@ -268,14 +271,14 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 		fmt.Printf("LadybugDB path: %s\n", cfg.Database.URI)
 		graphDriver, err = driver.NewLadybugDriver(cfg.Database.URI, 16)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create ladybug driver: %w", err)
+			return nil, nil, nil, fmt.Errorf("failed to create ladybug driver: %w", err)
 		}
 
 	case "falkordb":
 		// FalkorDB support would be implemented here
-		return nil, fmt.Errorf("FalkorDB driver not yet implemented")
+		return nil, nil, nil, fmt.Errorf("FalkorDB driver not yet implemented")
 	default:
-		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
+		return nil, nil, nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
 	}
 
 	// Initialize NLP client
@@ -286,7 +289,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 
 		// Check if server is running, if not start it
 		if err := ensureGLiNER2Server(endpoint); err != nil {
-			return nil, fmt.Errorf("failed to ensure GLiNER2 server: %w", err)
+			return nil, nil, nil, fmt.Errorf("failed to ensure GLiNER2 server: %w", err)
 		}
 
 		glinerClient, err := gliner2.NewClient(gliner2.Config{
@@ -296,7 +299,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 			},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create GLiNER2 client: %w", err)
+			return nil, nil, nil, fmt.Errorf("failed to create GLiNER2 client: %w", err)
 		}
 
 		nlProcessor = glinerClient
@@ -320,12 +323,12 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 			}
 			baseNLPClient, err := nlp.NewOpenAIClient(defaultModel.APIKey, nlpConfig)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create NLP client: %w", err)
+				return nil, nil, nil, fmt.Errorf("failed to create NLP client: %w", err)
 			}
 			// Wrap with retry client for automatic retry on errors
 			retryClient, err := nlp.NewRetryClient(baseNLPClient, nlp.DefaultRetryConfig())
 			if err != nil {
-				return nil, fmt.Errorf("failed to create retry client: %w", err)
+				return nil, nil, nil, fmt.Errorf("failed to create retry client: %w", err)
 			}
 
 			// Telemetry using Parquet
@@ -333,14 +336,14 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 			if trackingPath == "" {
 				homeDir, err := os.UserHomeDir()
 				if err != nil {
-					return nil, fmt.Errorf("failed to get user home directory: %w", err)
+					return nil, nil, nil, fmt.Errorf("failed to get user home directory: %w", err)
 				}
 				trackingPath = fmt.Sprintf("%s/.predicato/telemetry", homeDir)
 			}
 
 			// Ensure directory exists
 			if err := os.MkdirAll(trackingPath, 0755); err != nil {
-				return nil, fmt.Errorf("failed to create telemetry directory: %w", err)
+				return nil, nil, nil, fmt.Errorf("failed to create telemetry directory: %w", err)
 			}
 
 			// Initialize Token Tracker
@@ -367,7 +370,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 				fmt.Printf("Error tracking enabled\n")
 			}
 		default:
-			return nil, fmt.Errorf("unsupported NLP provider: %s", defaultModel.Provider)
+			return nil, nil, nil, fmt.Errorf("unsupported NLP provider: %s", defaultModel.Provider)
 		}
 	} else if nlProcessor == nil {
 		// Default to internal RustBert NLP client (no external API required)
@@ -393,7 +396,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 			}
 			embedderClient = embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedderConfig)
 		default:
-			return nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Embedding.Provider)
+			return nil, nil, nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Embedding.Provider)
 		}
 	} else {
 		// Default to internal EmbedEverything embedder (no external API required)
@@ -446,7 +449,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 			dataPath, _ = factstore.DefaultDataPath()
 		}
 		if err := os.MkdirAll(dataPath, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create factstore data directory: %w", err)
+			return nil, nil, nil, fmt.Errorf("failed to create factstore data directory: %w", err)
 		}
 		connString := fmt.Sprintf(
 			"file://%s?commitname=predicato&commitemail=predicato@localhost&database=facts",
@@ -464,7 +467,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 	// Create and return Predicato client
 	client, err := predicato.NewClient(graphDriver, nlProcessor, embedderClient, predicatoConfig, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Predicato client: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create Predicato client: %w", err)
 	}
 
 	fmt.Printf("Predicato initialized successfully with driver: %s\n", cfg.Database.Driver)
@@ -475,7 +478,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 		fmt.Printf("Embedding provider: %s, model: %s\n", cfg.Embedding.Provider, cfg.Embedding.Model)
 	}
 
-	return client, nil
+	return client, embedderClient, nlProcessor, nil
 }
 
 func ensureGLiNER2Server(endpoint string) error {

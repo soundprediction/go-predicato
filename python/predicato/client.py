@@ -860,6 +860,103 @@ class PredicatoClient:
             community_edges=community_edges,
         )
 
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """
+        Generate embeddings for the given texts using the server's configured embedding model.
+
+        Args:
+            texts: List of texts to embed (max 100, each max 8192 chars).
+
+        Returns:
+            List of embedding vectors, one per input text.
+
+        Raises:
+            ValidationError: If texts list is empty or exceeds limits.
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error.
+
+        Example:
+            >>> vectors = client.embed(["hello world", "knowledge graph"])
+            >>> print(f"Dimension: {len(vectors[0])}")
+        """
+        if not texts:
+            raise ValidationError(
+                "texts must not be empty",
+                field="texts",
+            )
+        if len(texts) > 100:
+            raise ValidationError(
+                f"texts exceeds maximum of 100 items ({len(texts)} provided)",
+                field="texts",
+            )
+        for i, text in enumerate(texts):
+            if len(text) > 8192:
+                raise ValidationError(
+                    f"texts[{i}] exceeds maximum of 8192 characters ({len(text)} chars)",
+                    field="texts",
+                )
+
+        response = self._http.request(
+            "POST",
+            "/api/v1/embed",
+            json={"texts": texts},
+        )
+
+        return response["embeddings"]
+
+    def extract_extended(
+        self,
+        text: str,
+        *,
+        entity_types: list[str] | None = None,
+        relation_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Run extended extraction (entities, relations, triples, rules) on the given text.
+
+        Uses the server's configured NLP client to extract structured medical knowledge.
+
+        Args:
+            text: Text to extract from (max 8192 chars).
+            entity_types: Optional list of entity types to extract.
+            relation_types: Optional list of relation types to extract.
+
+        Returns:
+            Dict with keys: entities, relations, triples, rules.
+
+        Raises:
+            ValidationError: If text is empty or exceeds limits.
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error or extraction is not configured.
+
+        Example:
+            >>> result = client.extract_extended("Metformin treats gestational diabetes.")
+            >>> print(result["entities"])
+            >>> print(result["rules"])
+        """
+        if not text:
+            raise ValidationError(
+                "text must not be empty",
+                field="text",
+            )
+        if len(text) > 8192:
+            raise ValidationError(
+                f"text exceeds maximum of 8192 characters ({len(text)} chars)",
+                field="text",
+            )
+
+        request_data: dict[str, Any] = {"text": text}
+        if entity_types is not None:
+            request_data["entity_types"] = entity_types
+        if relation_types is not None:
+            request_data["relation_types"] = relation_types
+
+        return self._http.request(
+            "POST",
+            "/api/v1/extract",
+            json=request_data,
+        )
+
 
 class AsyncPredicatoClient:
     """
@@ -1536,4 +1633,101 @@ class AsyncPredicatoClient:
             edges=edges,
             communities=communities,
             community_edges=community_edges,
+        )
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """
+        Generate embeddings for the given texts using the server's configured embedding model.
+
+        Args:
+            texts: List of texts to embed (max 100, each max 8192 chars).
+
+        Returns:
+            List of embedding vectors, one per input text.
+
+        Raises:
+            ValidationError: If texts list is empty or exceeds limits.
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error.
+
+        Example:
+            >>> vectors = await client.embed(["hello world", "knowledge graph"])
+            >>> print(f"Dimension: {len(vectors[0])}")
+        """
+        if not texts:
+            raise ValidationError(
+                "texts must not be empty",
+                field="texts",
+            )
+        if len(texts) > 100:
+            raise ValidationError(
+                f"texts exceeds maximum of 100 items ({len(texts)} provided)",
+                field="texts",
+            )
+        for i, text in enumerate(texts):
+            if len(text) > 8192:
+                raise ValidationError(
+                    f"texts[{i}] exceeds maximum of 8192 characters ({len(text)} chars)",
+                    field="texts",
+                )
+
+        response = await self._http.request(
+            "POST",
+            "/api/v1/embed",
+            json={"texts": texts},
+        )
+
+        return response["embeddings"]
+
+    async def extract_extended(
+        self,
+        text: str,
+        *,
+        entity_types: list[str] | None = None,
+        relation_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Run extended extraction (entities, relations, triples, rules) on the given text.
+
+        Uses the server's configured NLP client to extract structured medical knowledge.
+
+        Args:
+            text: Text to extract from (max 8192 chars).
+            entity_types: Optional list of entity types to extract.
+            relation_types: Optional list of relation types to extract.
+
+        Returns:
+            Dict with keys: entities, relations, triples, rules.
+
+        Raises:
+            ValidationError: If text is empty or exceeds limits.
+            ConnectionError: If the server cannot be reached.
+            ServerError: If the server returns an error or extraction is not configured.
+
+        Example:
+            >>> result = await client.extract_extended("Metformin treats gestational diabetes.")
+            >>> print(result["entities"])
+            >>> print(result["rules"])
+        """
+        if not text:
+            raise ValidationError(
+                "text must not be empty",
+                field="text",
+            )
+        if len(text) > 8192:
+            raise ValidationError(
+                f"text exceeds maximum of 8192 characters ({len(text)} chars)",
+                field="text",
+            )
+
+        request_data: dict[str, Any] = {"text": text}
+        if entity_types is not None:
+            request_data["entity_types"] = entity_types
+        if relation_types is not None:
+            request_data["relation_types"] = relation_types
+
+        return await self._http.request(
+            "POST",
+            "/api/v1/extract",
+            json=request_data,
         )

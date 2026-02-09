@@ -17,7 +17,7 @@ func TestNew(t *testing.T) {
 	}
 
 	// Test with nil predicato (server should still be created)
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	if server == nil {
 		t.Fatal("expected non-nil server")
 	}
@@ -35,7 +35,7 @@ func TestSetup(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	if server.router == nil {
@@ -60,7 +60,7 @@ func TestHealthEndpoint(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -81,7 +81,7 @@ func TestHealthcheckEndpoint(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	req := httptest.NewRequest(http.MethodGet, "/healthcheck", nil)
@@ -102,7 +102,7 @@ func TestLiveEndpoint(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	req := httptest.NewRequest(http.MethodGet, "/live", nil)
@@ -123,7 +123,7 @@ func TestReadyEndpoint(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
@@ -145,7 +145,7 @@ func TestDetailedHealthEndpoint(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	req := httptest.NewRequest(http.MethodGet, "/health/detailed", nil)
@@ -167,7 +167,7 @@ func TestCORSMiddleware(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	// Test OPTIONS request (CORS preflight)
@@ -199,7 +199,7 @@ func TestContextMiddleware(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	// Test with custom headers
@@ -223,7 +223,7 @@ func TestRouteExists(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	// Test that routes are registered (not 404)
@@ -281,7 +281,7 @@ func TestServerConfig(t *testing.T) {
 				},
 			}
 
-			server := New(cfg, nil)
+			server := New(cfg, nil, nil)
 			server.Setup()
 
 			if server.server.Addr != tt.expectedAddr {
@@ -299,7 +299,7 @@ func TestCORSHeaders(t *testing.T) {
 		},
 	}
 
-	server := New(cfg, nil)
+	server := New(cfg, nil, nil)
 	server.Setup()
 
 	// Regular GET request should also have CORS headers
