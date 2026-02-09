@@ -205,82 +205,37 @@ func (c *HTTPClient) ExtractStructured(ctx context.Context, text string, schema 
 	return &result, nil
 }
 
-// ExtractExtended performs combined entity, relation, triple, and rule extraction
-// using GLiNER2's create_schema().extract() pattern via the extract_json task.
-// entityTypes and relationTypes are optional: when nil, defaults are used.
-func (c *HTTPClient) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*ExtendedExtractionResult, error) {
-	// Build the combined schema matching GLiNER2's create_schema() pattern.
-	// This combines entities, relations, and structured extraction (fact/rule)
-	// in a single model pass.
-
-	// Default entity types if none provided
-	entityMap := map[string]string{
-		"condition":      "Medical condition or disease",
-		"medication":     "Drug or medication name",
-		"symptom":        "Sign or symptom",
-		"procedure":      "Medical procedure or surgery",
-		"anatomy":        "Anatomical structure or body part",
-		"lab_test":       "Laboratory test or diagnostic study",
-		"organism":       "Biological organism or pathogen",
-		"gene_protein":   "Gene or protein name",
-		"substance":      "Chemical substance",
-		"medical_device": "Medical device or equipment",
-	}
-	if len(entityTypes) > 0 {
-		entityMap = make(map[string]string, len(entityTypes))
-		for _, et := range entityTypes {
-			entityMap[et] = et
-		}
-	}
-
-	// Default relation types if none provided
-	relationMap := map[string]string{
-		"treats":           "A treatment or medication that treats a condition",
-		"causes":           "Something that causes a condition or symptom",
-		"diagnoses":        "A test or procedure that diagnoses a condition",
-		"contraindicates":  "A condition that contraindicates a treatment",
-		"interacts_with":   "A drug interaction",
-		"associated_with":  "An association between entities",
-		"prevents":         "Something that prevents a condition",
-		"manifestation_of": "A symptom that is a manifestation of a condition",
-	}
-	if len(relationTypes) > 0 {
-		relationMap = make(map[string]string, len(relationTypes))
-		for _, rt := range relationTypes {
-			relationMap[rt] = rt
-		}
-	}
-
-	// Build combined schema dict matching GLiNER2 create_schema() pattern
+// ExtractExtended performs combined entity, relation, context, and rule extraction
+// via the GLiNER2 server's two-pass pipeline.
+//
+// The server performs extraction in two internal passes:
+//   - Pass 1: Entities + Relations using enriched type schemas (87 entity types,
+//     44 relation types) via model.extract()
+//   - Pass 2: Context metadata + Rules via model.extract_json() with a lightweight
+//     structure schema
+//
+// Two passes are needed because GLiNER2's model produces zero structure results
+// when entities, relations, and structures are all in the same schema — the
+// model's attention is consumed by entity/relation extraction. The server merges
+// results from both passes into a single response.
+//
+// entityTypes and relationTypes are accepted for interface compatibility but are
+// not sent to the server; the server uses its own comprehensive enriched types
+// that are a superset of graph-config.toml types.
+func (c *HTTPClient) ExtractExtended(ctx context.Context, text string, _, _ []string) (*ExtendedExtractionResult, error) {
+	// Signal extended extraction to the server. The server detects the
+	// "entities" key and triggers its two-pass pipeline with enriched
+	// entity/relation types and context/rule structure schemas.
 	schema := map[string]interface{}{
-		"entities":  entityMap,
-		"relations": relationMap,
-		"fact": []string{
-			"subject::str::The agent or entity acting",
-			"predicate::str::The verb or relationship",
-			"object::str::The entity being acted on",
-			"condition::str::Conditional qualifier",
-			"temporal::str::Time reference",
-			"location::str::Anatomical site or region",
-			"certainty::[established|likely|possible|uncertain|controversial]::str",
-			"scope::str::Who this applies to",
-			"source_attribution::str::Study or guideline",
-		},
-		"rule": []string{
-			"antecedent::str::The condition or trigger",
-			"consequent::str::The action or conclusion",
-			"exception::str::Exception clause",
-			"rule_type::[clinical_decision|diagnostic_criterion|contraindication|dosing|monitoring|referral|screening]::str",
-			"scope::str::Who this rule applies to",
-			"source_attribution::str::Guideline behind this rule",
-		},
+		"entities":  true,
+		"relations": true,
 	}
 
 	request := ExtractRequest{
 		Task:      "extract_json",
 		Text:      text,
 		Schema:    schema,
-		Threshold: 0.4,
+		Threshold: 0.3,
 	}
 
 	// The raw response from extract_json is a StructuredResult with keys like
