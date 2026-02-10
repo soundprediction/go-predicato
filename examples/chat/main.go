@@ -3,9 +3,9 @@
 //
 // This example shows how to:
 // - Create separate Predicato clients for global knowledge and user-specific data
-// - Use RustBert GPT-2 for text generation (local, no API)
-// - Use go-embedeverything with qwen3-embedding for embeddings (local, no API)
-// - Use go-embedeverything with qwen3-reranker for reranking (local, no API)
+// - Use Candle SmolLM2 for text generation (local, no API)
+// - Use go-candle with qwen3-embedding-0.6b for embeddings (local, no API)
+// - Use go-candle embedding-based reranking (local, no API)
 // - Use episodes to track conversation history with AddToEpisode
 // - Apply reranking to improve search result quality
 // - Maintain conversation continuity with UUID v7 episode IDs
@@ -16,7 +16,7 @@
 // - ~4GB RAM minimum
 // - No API keys or external services required!
 //
-// First run will download models (~1.7GB total)
+// First run will download models from HuggingFace Hub.
 //
 // Usage:
 //
@@ -37,11 +37,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/soundprediction/predicato"
-	"github.com/soundprediction/predicato/pkg/crossencoder"
+	candleAdapter "github.com/soundprediction/predicato/pkg/candle"
 	"github.com/soundprediction/predicato/pkg/driver"
-	"github.com/soundprediction/predicato/pkg/embedder"
 	"github.com/soundprediction/predicato/pkg/nlp"
-	"github.com/soundprediction/predicato/pkg/rustbert"
 	"github.com/soundprediction/predicato/pkg/types"
 )
 
@@ -64,8 +62,8 @@ type ChatClients struct {
 	GlobalPredicato *predicato.Client                   // Global knowledge base (can be nil)
 	UserPredicato   *predicato.Client                   // User-specific episodic memory
 	LLM             nlp.Client                          // LLM for text generation
-	RustBert        *rustbert.Client                    // RustBert client for direct generation
-	Reranker        *crossencoder.EmbedEverythingClient // Reranker for improving search quality
+	Candle          *candleAdapter.Client               // Candle client for direct generation
+	Reranker        *candleAdapter.CandleRerankerClient // Reranker for improving search quality
 	Context         context.Context
 }
 
@@ -83,9 +81,9 @@ func main() {
 	fmt.Println()
 	fmt.Println("This chat uses predicato's internal services:")
 	fmt.Println("  - Ladybug: embedded graph database (no server required)")
-	fmt.Println("  - RustBert GPT-2: local text generation (no API required)")
-	fmt.Println("  - EmbedEverything: local embeddings with qwen/qwen3-embedding-0.6b")
-	fmt.Println("  - EmbedEverything: local reranking with zhiqing/Qwen3-Reranker-0.6B-ONNX")
+	fmt.Println("  - Candle SmolLM2: local text generation (no API required)")
+	fmt.Println("  - Candle: local embeddings with qwen/qwen3-embedding-0.6b")
+	fmt.Println("  - Candle: local embedding-based reranking")
 	fmt.Println()
 	fmt.Println("No API keys or external services needed!")
 	fmt.Printf("User ID: %s\n", *userID)
@@ -110,56 +108,41 @@ func initializeClients(userID, globalDBPath, userDBDir string, skipGlobal bool) 
 	fmt.Println()
 
 	// ========================================
-	// 1. Create RustBert Client (Local Text Generation)
+	// 1. Create Candle Client (Local Text Generation)
 	// ========================================
-	fmt.Println("[1/4] Setting up RustBert GPT-2 for text generation...")
+	fmt.Println("[1/4] Setting up Candle SmolLM2 for text generation...")
 
-	rustbertClient := rustbert.NewClient(rustbert.Config{})
-	if err := rustbertClient.LoadTextGenerationModel(); err != nil {
-		return nil, fmt.Errorf("failed to load text generation model: %w", err)
-	}
+	candleClient := candleAdapter.NewClient(candleAdapter.CandleNLPConfig{
+		TextGenModelID: "HuggingFaceTB/SmolLM2-360M-Instruct",
+	})
 
 	// Create LLM adapter for nlp.Client interface
-	llmClient := rustbert.NewLLMAdapter(rustbertClient, "text_generation")
-	fmt.Println("      RustBert GPT-2 loaded")
+	llmClient := candleAdapter.NewLLMAdapter(candleClient, "text_generation")
+	fmt.Println("      Candle SmolLM2 loaded")
 
 	// ========================================
 	// 2. Create Embedder Client (Local Embeddings)
 	// ========================================
-	fmt.Println("[2/4] Setting up EmbedEverything embedder with qwen/qwen3-embedding-0.6b...")
+	fmt.Println("[2/4] Setting up Candle embedder with qwen/qwen3-embedding-0.6b...")
 
-	embedderConfig := &embedder.EmbedEverythingConfig{
-		Config: &embedder.Config{
-			Model:      "qwen/qwen3-embedding-0.6b",
-			Dimensions: 1024,
-			BatchSize:  32,
-		},
-	}
-	embedderClient, err := embedder.NewEmbedEverythingClient(embedderConfig)
+	embedderClient, err := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+		Model:      "qwen/qwen3-embedding-0.6b",
+		Dimensions: 1024,
+		Normalize:  true,
+	})
 	if err != nil {
-		rustbertClient.Close()
+		candleClient.Close()
 		return nil, fmt.Errorf("failed to create embedder client: %w", err)
 	}
-	fmt.Println("      EmbedEverything embedder loaded")
+	fmt.Println("      Candle embedder loaded")
 
 	// ========================================
 	// 3. Create Reranker Client (Local Reranking)
 	// ========================================
-	fmt.Println("[3/4] Setting up EmbedEverything reranker with zhiqing/Qwen3-Reranker-0.6B-ONNX...")
+	fmt.Println("[3/4] Setting up Candle embedding-based reranker...")
 
-	rerankerConfig := &crossencoder.EmbedEverythingConfig{
-		Config: &crossencoder.Config{
-			Model:     "zhiqing/Qwen3-Reranker-0.6B-ONNX",
-			BatchSize: 32,
-		},
-	}
-	rerankerClient, err := crossencoder.NewEmbedEverythingClient(rerankerConfig)
-	if err != nil {
-		rustbertClient.Close()
-		embedderClient.Close()
-		return nil, fmt.Errorf("failed to create reranker client: %w", err)
-	}
-	fmt.Println("      EmbedEverything reranker loaded")
+	rerankerClient := candleAdapter.NewCandleRerankerClient(embedderClient)
+	fmt.Println("      Candle reranker loaded")
 
 	// ========================================
 	// 4. Create Predicato Clients
@@ -199,17 +182,15 @@ func initializeClients(userID, globalDBPath, userDBDir string, skipGlobal bool) 
 
 	// Create parent directory if it doesn't exist
 	if err := os.MkdirAll(filepath.Dir(userDBPath), 0755); err != nil {
-		rustbertClient.Close()
+		candleClient.Close()
 		embedderClient.Close()
-		rerankerClient.Close()
 		return nil, fmt.Errorf("failed to create user database directory: %w", err)
 	}
 
 	userLadybugDriver, err := driver.NewLadybugDriver(userDBPath, 1)
 	if err != nil {
-		rustbertClient.Close()
+		candleClient.Close()
 		embedderClient.Close()
-		rerankerClient.Close()
 		return nil, fmt.Errorf("failed to create user ladybug driver: %w", err)
 	}
 
@@ -219,9 +200,8 @@ func initializeClients(userID, globalDBPath, userDBDir string, skipGlobal bool) 
 	}
 	userPredicatoClient, err := predicato.NewClient(userLadybugDriver, llmClient, embedderClient, userConfig, nil)
 	if err != nil {
-		rustbertClient.Close()
+		candleClient.Close()
 		embedderClient.Close()
-		rerankerClient.Close()
 		return nil, fmt.Errorf("failed to create user client: %w", err)
 	}
 	fmt.Printf("      User database initialized at %s\n", userDBPath)
@@ -234,7 +214,7 @@ func initializeClients(userID, globalDBPath, userDBDir string, skipGlobal bool) 
 		GlobalPredicato: globalPredicatoClient,
 		UserPredicato:   userPredicatoClient,
 		LLM:             llmClient,
-		RustBert:        rustbertClient,
+		Candle:          candleClient,
 		Reranker:        rerankerClient,
 		Context:         ctx,
 	}, nil
@@ -247,12 +227,10 @@ func (c *ChatClients) Close() {
 	if c.UserPredicato != nil {
 		c.UserPredicato.Close(c.Context)
 	}
-	if c.RustBert != nil {
-		c.RustBert.Close()
+	if c.Candle != nil {
+		c.Candle.Close()
 	}
-	if c.Reranker != nil {
-		c.Reranker.Close()
-	}
+	// Reranker shares the embedder, which is cleaned up via Candle close
 }
 
 func runChatLoop(clients *ChatClients, userID string) {
@@ -415,18 +393,18 @@ func processQuery(clients *ChatClients, session *ChatSession, userID, input stri
 	// Build prompt with context
 	prompt := buildPrompt(input, session.Messages, contextNodes)
 
-	// Generate response using RustBert GPT-2
+	// Generate response using Candle SmolLM2
 	fmt.Println()
 	fmt.Println("Assistant:")
 	fmt.Println(strings.Repeat("-", 70))
 
-	response, err := clients.RustBert.GenerateText(prompt)
+	response, err := clients.Candle.GenerateText(ctx, prompt)
 	if err != nil {
 		fmt.Printf("Failed to generate response: %v\n", err)
 		return
 	}
 
-	// Clean up the response (GPT-2 might include the prompt)
+	// Clean up the response (model might include the prompt)
 	response = strings.TrimPrefix(response, prompt)
 	response = strings.TrimSpace(response)
 
@@ -474,7 +452,7 @@ func buildPrompt(query string, history []Message, contextNodes []*types.Node) st
 		}
 	}
 
-	// Add conversation history (last 3 messages for GPT-2's limited context)
+	// Add conversation history (last 3 messages for model's limited context)
 	if len(history) > 0 {
 		prompt.WriteString("Previous conversation:\n")
 		start := 0

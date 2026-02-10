@@ -109,7 +109,7 @@ func ExampleOpenAIRerankerClient() {
 	// results, err := reranker.Rank(ctx, "search query", passages)
 
 	fmt.Printf("OpenAI reranker config: %+v\n", llmConfig)
-	// Output: OpenAI reranker config: {Model:gpt-4o-mini Temperature:<nil> MaxTokens:<nil> TopP:<nil> TopK:<nil> MinP:<nil> Stop:[] BaseURL:}
+	// Output: OpenAI reranker config: {Temperature:<nil> MaxTokens:<nil> TopP:<nil> TopK:<nil> MinP:<nil> Model:gpt-4o-mini BaseURL: Stop:[] InsecureSkipVerify:false}
 }
 
 // ExampleRankedPassage demonstrates working with ranked results

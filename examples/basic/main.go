@@ -3,9 +3,9 @@
 // This example shows how to:
 // - Create and configure a Predicato client using only internal services
 // - Use Ladybug embedded database (no external database server)
-// - Use go-rust-bert GPT-2 for text generation (no external LLM API)
-// - Use go-embedeverything with qwen3-embedding for embeddings (no external API)
-// - Use go-embedeverything with qwen3-reranker for reranking search results
+// - Use go-candle SmolLM2 for text generation (no external LLM API)
+// - Use go-candle with qwen3-embedding-0.6b for embeddings (no external API)
+// - Use go-candle embedding-based reranking for reranking search results
 // - Add episodes (data) to the knowledge graph
 // - Search and rerank results from the knowledge graph
 //
@@ -13,10 +13,7 @@
 // - CGO enabled (required for Rust FFI bindings)
 // - No API keys or external services required!
 //
-// First run will download models (~1.5GB total):
-// - qwen/qwen3-embedding-0.6b (~600MB)
-// - zhiqing/Qwen3-Reranker-0.6B-ONNX (~600MB)
-// - GPT-2 (~500MB)
+// First run will download models from HuggingFace Hub.
 //
 // Memory Requirements:
 // - Minimum 4GB RAM recommended
@@ -29,10 +26,8 @@ import (
 	"time"
 
 	"github.com/soundprediction/predicato"
-	"github.com/soundprediction/predicato/pkg/crossencoder"
+	candleAdapter "github.com/soundprediction/predicato/pkg/candle"
 	"github.com/soundprediction/predicato/pkg/driver"
-	"github.com/soundprediction/predicato/pkg/embedder"
-	"github.com/soundprediction/predicato/pkg/rustbert"
 	"github.com/soundprediction/predicato/pkg/types"
 )
 
@@ -45,9 +40,9 @@ func main() {
 	fmt.Println()
 	fmt.Println("This example uses predicato's internal services:")
 	fmt.Println("  - Ladybug: embedded graph database (no server required)")
-	fmt.Println("  - RustBert GPT-2: local text generation (no API required)")
-	fmt.Println("  - EmbedEverything: local embeddings with qwen/qwen3-embedding-0.6b")
-	fmt.Println("  - EmbedEverything: local reranking with zhiqing/Qwen3-Reranker-0.6B-ONNX")
+	fmt.Println("  - Candle SmolLM2: local text generation (no API required)")
+	fmt.Println("  - Candle: local embeddings with qwen/qwen3-embedding-0.6b")
+	fmt.Println("  - Candle: local embedding-based reranking")
 	fmt.Println()
 	fmt.Println("No API keys or external services needed!")
 	fmt.Println()
@@ -69,60 +64,45 @@ func main() {
 	fmt.Println("      Ladybug driver created (embedded database at ./example_graph.db)")
 
 	// ========================================
-	// 2. Create RustBert Client (Local Text Generation)
+	// 2. Create Candle Client (Local Text Generation)
 	// ========================================
-	fmt.Println("[2/5] Setting up RustBert GPT-2 for text generation...")
+	fmt.Println("[2/5] Setting up Candle SmolLM2 for text generation...")
 	fmt.Println("      (First run will download the model, please wait...)")
 
-	rustbertClient := rustbert.NewClient(rustbert.Config{})
-	// Pre-load the text generation model
-	if err := rustbertClient.LoadTextGenerationModel(); err != nil {
-		log.Fatalf("Failed to load text generation model: %v", err)
-	}
-	defer rustbertClient.Close()
+	candleClient := candleAdapter.NewClient(candleAdapter.CandleNLPConfig{
+		TextGenModelID: "HuggingFaceTB/SmolLM2-360M-Instruct",
+	})
+	defer candleClient.Close()
 
 	// Create LLM adapter for nlp.Client interface
-	llmClient := rustbert.NewLLMAdapter(rustbertClient, "text_generation")
-	fmt.Println("      RustBert GPT-2 text generation model loaded")
+	llmClient := candleAdapter.NewLLMAdapter(candleClient, "text_generation")
+	fmt.Println("      Candle text generation client created")
 
 	// ========================================
 	// 3. Create Embedder Client (Local Embeddings)
 	// ========================================
-	fmt.Println("[3/5] Setting up EmbedEverything embedder with qwen/qwen3-embedding-0.6b...")
+	fmt.Println("[3/5] Setting up Candle embedder with qwen/qwen3-embedding-0.6b...")
 	fmt.Println("      (First run will download the model, please wait...)")
 
-	embedderConfig := &embedder.EmbedEverythingConfig{
-		Config: &embedder.Config{
-			Model:      "qwen/qwen3-embedding-0.6b",
-			Dimensions: 1024,
-			BatchSize:  32,
-		},
-	}
-	embedderClient, err := embedder.NewEmbedEverythingClient(embedderConfig)
+	embedderClient, err := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+		Model:      "qwen/qwen3-embedding-0.6b",
+		Dimensions: 1024,
+		Normalize:  true,
+	})
 	if err != nil {
 		log.Fatalf("Failed to create embedder client: %v", err)
 	}
 	defer embedderClient.Close()
-	fmt.Println("      EmbedEverything embedder created (model: qwen/qwen3-embedding-0.6b)")
+	fmt.Println("      Candle embedder created (model: qwen/qwen3-embedding-0.6b)")
 
 	// ========================================
 	// 4. Create Reranker Client (Local Reranking)
 	// ========================================
-	fmt.Println("[4/5] Setting up EmbedEverything reranker with zhiqing/Qwen3-Reranker-0.6B-ONNX...")
-	fmt.Println("      (First run will download the model, please wait...)")
+	fmt.Println("[4/5] Setting up Candle embedding-based reranker...")
 
-	rerankerConfig := &crossencoder.EmbedEverythingConfig{
-		Config: &crossencoder.Config{
-			Model:     "zhiqing/Qwen3-Reranker-0.6B-ONNX",
-			BatchSize: 32,
-		},
-	}
-	rerankerClient, err := crossencoder.NewEmbedEverythingClient(rerankerConfig)
-	if err != nil {
-		log.Fatalf("Failed to create reranker client: %v", err)
-	}
-	defer rerankerClient.Close()
-	fmt.Println("      EmbedEverything reranker created (model: zhiqing/Qwen3-Reranker-0.6B-ONNX)")
+	rerankerClient := candleAdapter.NewCandleRerankerClient(embedderClient)
+	// rerankerClient shares the embedder, so don't close it separately
+	fmt.Println("      Candle reranker created (embedding-based cosine similarity)")
 
 	// ========================================
 	// 5. Create Predicato Client
@@ -232,7 +212,7 @@ func main() {
 		// Example: Rerank Search Results
 		// ========================================
 		fmt.Println()
-		fmt.Println("Reranking results with zhiqing/Qwen3-Reranker-0.6B-ONNX...")
+		fmt.Println("Reranking results with Candle embedding-based reranker...")
 
 		// Extract passages for reranking
 		passages := make([]string, len(results.Nodes))
@@ -264,10 +244,10 @@ func main() {
 	// Example: Text Generation
 	// ========================================
 	fmt.Println()
-	fmt.Println("Demonstrating text generation with RustBert GPT-2...")
+	fmt.Println("Demonstrating text generation with Candle SmolLM2...")
 
 	prompt := "The advantages of using a knowledge graph are"
-	generated, err := rustbertClient.GenerateText(prompt)
+	generated, err := candleClient.GenerateText(ctx, prompt)
 	if err != nil {
 		fmt.Printf("Warning: Text generation failed: %v\n", err)
 	} else {
@@ -282,9 +262,9 @@ func main() {
 	fmt.Println()
 	fmt.Println("Summary:")
 	fmt.Println("  - Used Ladybug embedded database (no Neo4j server)")
-	fmt.Println("  - Used RustBert GPT-2 for text generation (no OpenAI API)")
-	fmt.Println("  - Used qwen/qwen3-embedding-0.6b for embeddings (no API)")
-	fmt.Println("  - Used zhiqing/Qwen3-Reranker-0.6B-ONNX for reranking (no API)")
+	fmt.Println("  - Used Candle SmolLM2 for text generation (no OpenAI API)")
+	fmt.Println("  - Used Candle qwen/qwen3-embedding-0.6b for embeddings (no API)")
+	fmt.Println("  - Used Candle embedding-based reranking (no API)")
 	fmt.Println()
 	fmt.Println("For external API examples, see: examples/external_apis/")
 }
