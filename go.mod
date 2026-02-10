@@ -5,7 +5,6 @@ go 1.25.5
 require (
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/sashabaranov/go-openai v1.41.2
-	github.com/soundprediction/go-embedeverything v0.7.1-0.20251230214014-73c71bb50aeb
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -23,8 +22,8 @@ require (
 	github.com/parquet-go/parquet-go v0.26.4
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/sony/gobreaker v1.0.0
+	github.com/soundprediction/go-candle v0.0.0-20260210000605-72cbdb2df7c9
 	github.com/soundprediction/go-gline-rs v0.1.0
-	github.com/soundprediction/go-rust-bert v0.0.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	gopkg.in/yaml.v3 v3.0.1

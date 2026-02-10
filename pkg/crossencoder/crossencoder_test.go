@@ -92,50 +92,6 @@ func TestEmptyPassages(t *testing.T) {
 	}
 }
 
-func TestEmbedEverythingClient(t *testing.T) {
-	// This test requires model downloads from Hugging Face and may fail if:
-	// 1. No internet connection
-	// 2. Model URL is not accessible
-	// 3. Model format is not compatible
-	// Skip if client creation fails
-	config := &EmbedEverythingConfig{
-		Config: &Config{
-			Model: "BAAI/bge-reranker-base",
-		},
-	}
-
-	client, err := NewEmbedEverythingClient(config)
-	if err != nil {
-		t.Skipf("Skipping EmbedEverything test: %v", err)
-		return
-	}
-	defer client.Close()
-
-	ctx := context.Background()
-	query := "machine learning algorithms"
-	passages := []string{
-		"Machine learning algorithms are used in data science",
-		"Cooking recipes for dinner tonight",
-		"Neural networks and deep learning",
-	}
-
-	results, err := client.Rank(ctx, query, passages)
-	if err != nil {
-		t.Fatalf("Expected no error during ranking, got: %v", err)
-	}
-
-	if len(results) != len(passages) {
-		t.Fatalf("Expected %d results, got %d", len(passages), len(results))
-	}
-
-	// Verify results are sorted by score (descending)
-	for i := 1; i < len(results); i++ {
-		if results[i-1].Score < results[i].Score {
-			t.Errorf("Results not sorted by score: %f < %f", results[i-1].Score, results[i].Score)
-		}
-	}
-}
-
 func TestNewClient(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -169,8 +125,14 @@ func TestNewClient(t *testing.T) {
 			},
 			expectError: true,
 		},
-		// Note: embedeverything provider test is skipped here as it requires model downloads
-		// See TestEmbedEverythingClient for a dedicated test with skip logic
+		{
+			name: "candle provider without embedder client",
+			config: ClientConfig{
+				Provider: ProviderCandle,
+				Config:   DefaultConfig(ProviderCandle),
+			},
+			expectError: true,
+		},
 		{
 			name: "unknown provider",
 			config: ClientConfig{
@@ -234,9 +196,9 @@ func TestDefaultConfig(t *testing.T) {
 			},
 		},
 		{
-			provider: ProviderEmbedEverything,
+			provider: ProviderCandle,
 			expected: Config{
-				Model:          "BAAI/bge-reranker-base",
+				Model:          "qwen/qwen3-embedding-0.6b",
 				BatchSize:      100,
 				MaxConcurrency: 1,
 			},
@@ -258,124 +220,6 @@ func TestDefaultConfig(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestEmbedEverythingQwenReranker(t *testing.T) {
-	// This test validates the zhiqing/Qwen3-Reranker-0.6B-ONNX model which is the
-	// recommended internal reranker for predicato examples.
-	// It requires model downloads from Hugging Face and may be skipped if:
-	// 1. No internet connection
-	// 2. Model URL is not accessible
-	// 3. Insufficient disk space (~600MB)
-	config := &EmbedEverythingConfig{
-		Config: &Config{
-			Model:     "zhiqing/Qwen3-Reranker-0.6B-ONNX",
-			BatchSize: 100,
-		},
-	}
-
-	client, err := NewEmbedEverythingClient(config)
-	if err != nil {
-		t.Skipf("Skipping Qwen3 reranker test (model may need download): %v", err)
-		return
-	}
-	defer client.Close()
-
-	ctx := context.Background()
-
-	t.Run("basic ranking", func(t *testing.T) {
-		query := "What is machine learning?"
-		passages := []string{
-			"Machine learning is a branch of artificial intelligence that enables computers to learn from data.",
-			"The weather forecast predicts rain tomorrow afternoon.",
-			"Deep learning uses neural networks with many layers to learn complex patterns.",
-			"Cooking pasta requires boiling water and adding salt.",
-			"Supervised learning algorithms learn from labeled training examples.",
-		}
-
-		results, err := client.Rank(ctx, query, passages)
-		if err != nil {
-			t.Fatalf("Expected no error during ranking, got: %v", err)
-		}
-
-		if len(results) != len(passages) {
-			t.Fatalf("Expected %d results, got %d", len(passages), len(results))
-		}
-
-		// Verify results are sorted by score (descending)
-		for i := 1; i < len(results); i++ {
-			if results[i-1].Score < results[i].Score {
-				t.Errorf("Results not sorted by score: %f < %f", results[i-1].Score, results[i].Score)
-			}
-		}
-
-		// Log results for debugging
-		t.Logf("Query: %s", query)
-		for i, result := range results {
-			t.Logf("  %d. [%.4f] %s", i+1, result.Score, result.Passage)
-		}
-
-		// The ML-related passages should rank higher than unrelated ones
-		// Check that the top result contains relevant keywords
-		topResult := results[0].Passage
-		if !containsAny(topResult, []string{"machine learning", "learning", "neural", "supervised"}) {
-			t.Errorf("Expected top result to be ML-related, got: %s", topResult)
-		}
-	})
-
-	t.Run("empty passages", func(t *testing.T) {
-		results, err := client.Rank(ctx, "test query", []string{})
-		if err != nil {
-			t.Fatalf("Expected no error for empty passages, got: %v", err)
-		}
-		if len(results) != 0 {
-			t.Fatalf("Expected 0 results for empty passages, got %d", len(results))
-		}
-	})
-
-	t.Run("single passage", func(t *testing.T) {
-		results, err := client.Rank(ctx, "test query", []string{"Single passage to rank"})
-		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
-		}
-		if len(results) != 1 {
-			t.Fatalf("Expected 1 result, got %d", len(results))
-		}
-	})
-
-	t.Run("relevance ordering", func(t *testing.T) {
-		// Test that clearly relevant passages rank higher than irrelevant ones
-		query := "capital cities of European countries"
-		passages := []string{
-			"Paris is the capital of France and is known for the Eiffel Tower.",
-			"The Amazon rainforest is the largest tropical rainforest in the world.",
-			"Berlin is the capital and largest city of Germany.",
-			"Pizza originated in Naples, Italy.",
-			"London is the capital of the United Kingdom.",
-		}
-
-		results, err := client.Rank(ctx, query, passages)
-		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
-		}
-
-		// Log results
-		t.Logf("Query: %s", query)
-		for i, result := range results {
-			t.Logf("  %d. [%.4f] %s", i+1, result.Score, result.Passage)
-		}
-
-		// Count how many of the top 3 results are about capital cities
-		capitalCount := 0
-		for i := 0; i < 3 && i < len(results); i++ {
-			if containsAny(results[i].Passage, []string{"capital", "Paris", "Berlin", "London"}) {
-				capitalCount++
-			}
-		}
-		if capitalCount < 2 {
-			t.Errorf("Expected at least 2 capital city passages in top 3, got %d", capitalCount)
-		}
-	})
 }
 
 // containsAny checks if s contains any of the substrings

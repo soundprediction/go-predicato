@@ -28,14 +28,12 @@ const (
 type ProviderID string
 
 const (
-	// ProviderEmbedEverything is the ID for the EmbedEverything local provider.
-	ProviderEmbedEverything ProviderID = "embedeverything"
+	// ProviderCandle is the ID for the Candle local provider (embeddings, NER, summarization, text gen, translation).
+	ProviderCandle ProviderID = "candle"
 	// ProviderGLiNER is the ID for the GLiNER local provider.
 	ProviderGLiNER ProviderID = "gliner"
 	// ProviderGLiNER2 is the ID for GLiNER2 provider.
 	ProviderGLiNER2 ProviderID = "gliner2"
-	// ProviderRustBert is the ID for RustBert local provider.
-	ProviderRustBert ProviderID = "rustbert"
 	// ProviderOpenAI is the ID for OpenAI.
 	ProviderOpenAI ProviderID = "openai"
 	// ProviderAnthropic is the ID for Anthropic.
@@ -69,10 +67,10 @@ type Model struct {
 
 // BuiltInProviders contains the standard set of supported providers.
 var BuiltInProviders = map[ProviderID]Provider{
-	ProviderEmbedEverything: {
-		ID:          ProviderEmbedEverything,
-		Name:        "EmbedEverything",
-		Description: "Local generic embedding models via Rust bindings",
+	ProviderCandle: {
+		ID:          ProviderCandle,
+		Name:        "Candle",
+		Description: "Local ML models via HuggingFace candle, GLiNER, and GLiNER2 (pure Rust, auto-downloads from HF Hub)",
 		IsLocal:     true,
 	},
 	ProviderGLiNER: {
@@ -86,12 +84,6 @@ var BuiltInProviders = map[ProviderID]Provider{
 		Name:        "GLiNER2",
 		Description: "GLiNER2 models for entity extraction, fact extraction, text classification, and structured data extraction",
 		IsLocal:     false, // Can be local API or remote Fastino
-	},
-	ProviderRustBert: {
-		ID:          ProviderRustBert,
-		Name:        "RustBert",
-		Description: "Rust-based BERT models for various NLP tasks via bindings",
-		IsLocal:     true,
 	},
 	ProviderOpenAI: {
 		ID:          ProviderOpenAI,
@@ -127,20 +119,48 @@ var BuiltInProviders = map[ProviderID]Provider{
 
 // BuiltInModels contains a curated list of built-in models.
 var BuiltInModels = []Model{
-	// --- EmbedEverything ---
+	// --- Candle ---
 	{
 		ID:           "sentence-transformers/all-MiniLM-L6-v2",
 		Name:         "all-MiniLM-L6-v2",
-		ProviderID:   ProviderEmbedEverything,
+		ProviderID:   ProviderCandle,
 		Capabilities: []TaskCapability{TaskEmbedding},
 		Description:  "Fast and effective general-purpose sentence embedding model",
 	},
 	{
 		ID:           "sentence-transformers/all-mpnet-base-v2",
 		Name:         "all-mpnet-base-v2",
-		ProviderID:   ProviderEmbedEverything,
+		ProviderID:   ProviderCandle,
 		Capabilities: []TaskCapability{TaskEmbedding},
 		Description:  "Higher quality, slightly slower general-purpose sentence embedding model",
+	},
+	{
+		ID:           "qwen/qwen3-embedding-0.6b",
+		Name:         "Qwen3 Embedding 0.6B",
+		ProviderID:   ProviderCandle,
+		Capabilities: []TaskCapability{TaskEmbedding},
+		Description:  "Qwen3 embedding model (0.6B parameters)",
+	},
+	{
+		ID:           "google/flan-t5-base",
+		Name:         "Flan-T5 Base",
+		ProviderID:   ProviderCandle,
+		Capabilities: []TaskCapability{TaskSummarization},
+		Description:  "T5-based summarization model via candle",
+	},
+	{
+		ID:           "HuggingFaceTB/SmolLM2-360M-Instruct",
+		Name:         "SmolLM2 360M Instruct",
+		ProviderID:   ProviderCandle,
+		Capabilities: []TaskCapability{TaskTextGeneration},
+		Description:  "Lightweight text generation model via candle",
+	},
+	{
+		ID:           "candle-marian-mt",
+		Name:         "Marian MT Translation",
+		ProviderID:   ProviderCandle,
+		Capabilities: []TaskCapability{TaskTranslation},
+		Description:  "Marian MT translation (fr-en, en-fr, en-es, en-zh, en-ru, en-hi) via candle",
 	},
 
 	// --- GLiNER ---
@@ -182,38 +202,6 @@ var BuiltInModels = []Model{
 		Capabilities: []TaskCapability{TaskNamedEntityRecognition, TaskRelationExtraction, TaskExtendedExtraction},
 		Description:  "Fastino GLiNER2 large model for enhanced entity and relation extraction",
 		Family:       "gliner2",
-	},
-
-	// --- RustBert ---
-	// Default models often used by rust-bert if not specified, or explicit ones.
-	// Note: go-rust-bert wrappers might abstract exact IDs, but these are for reference in registry.
-	{
-		ID:           "bert-base-ner", // Conceptual ID for the default BERT NER
-		Name:         "BERT NER",
-		ProviderID:   ProviderRustBert,
-		Capabilities: []TaskCapability{TaskNamedEntityRecognition},
-		Description:  "Default BERT-based Named Entity Recognition",
-	},
-	{
-		ID:           "distilbart-cnn-12-6", // Conceptual ID for default summarizer
-		Name:         "DistilBART Summarization",
-		ProviderID:   ProviderRustBert,
-		Capabilities: []TaskCapability{TaskSummarization},
-		Description:  "Default DistilBART model for summarization",
-	},
-	{
-		ID:           "distilbert-base-cased-distilled-squad", // Conceptual ID for default QA
-		Name:         "DistilBERT QA",
-		ProviderID:   ProviderRustBert,
-		Capabilities: []TaskCapability{TaskQuestionAnswering},
-		Description:  "Default DistilBERT model for Question Answering",
-	},
-	{
-		ID:           "gpt2",
-		Name:         "GPT-2",
-		ProviderID:   ProviderRustBert,
-		Capabilities: []TaskCapability{TaskTextGeneration},
-		Description:  "Default GPT-2 model for text generation",
 	},
 }
 

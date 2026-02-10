@@ -166,15 +166,15 @@ func setDefaults() {
 	viper.SetDefault("database.password", "")
 	viper.SetDefault("database.database", "")
 
-	viper.SetDefault("nlp.models.default.provider", "rustbert")
-	viper.SetDefault("nlp.models.default.base_url", "rustbert://generator")
+	viper.SetDefault("nlp.models.default.provider", "candle")
+	viper.SetDefault("nlp.models.default.base_url", "candle://")
 	viper.SetDefault("nlp.models.default.model", "gpt2")
 	viper.SetDefault("nlp.models.default.temperature", 0.7)
 	viper.SetDefault("nlp.models.default.max_tokens", 256)
 
-	viper.SetDefault("nlp.models.embedding.provider", "embedeverything")
-	viper.SetDefault("nlp.models.embedding.base_url", "embedeverything://")
-	viper.SetDefault("nlp.models.embedding.model", "all-MiniLM-L6-v2")
+	viper.SetDefault("nlp.models.embedding.provider", "candle")
+	viper.SetDefault("nlp.models.embedding.base_url", "candle://")
+	viper.SetDefault("nlp.models.embedding.model", "qwen/qwen3-embedding-0.6b")
 
 	// Telemetry defaults
 	home, err := os.UserHomeDir()

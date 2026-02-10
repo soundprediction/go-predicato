@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/soundprediction/predicato"
+	candleAdapter "github.com/soundprediction/predicato/pkg/candle"
 	"github.com/soundprediction/predicato/pkg/config"
 	"github.com/soundprediction/predicato/pkg/driver"
 	"github.com/soundprediction/predicato/pkg/embedder"
@@ -21,7 +22,6 @@ import (
 	"github.com/soundprediction/predicato/pkg/gliner2"
 	predicatoLogger "github.com/soundprediction/predicato/pkg/logger"
 	"github.com/soundprediction/predicato/pkg/nlp"
-	"github.com/soundprediction/predicato/pkg/rustbert"
 	"github.com/soundprediction/predicato/pkg/server"
 	"github.com/soundprediction/predicato/pkg/telemetry"
 	"github.com/spf13/cobra"
@@ -373,16 +373,13 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 			return nil, nil, nil, fmt.Errorf("unsupported NLP provider: %s", defaultModel.Provider)
 		}
 	} else if nlProcessor == nil {
-		// Default to internal RustBert NLP client (no external API required)
-		fmt.Println("Initializing internal RustBert NLP service...")
-		rustbertClient := rustbert.NewClient(rustbert.Config{})
-		if err := rustbertClient.LoadTextGenerationModel(); err != nil {
-			fmt.Printf("Warning: Failed to load RustBert text generation model: %v\n", err)
-			fmt.Println("Continuing without NLP service - some features will be unavailable")
-		} else {
-			nlProcessor = rustbert.NewLLMAdapter(rustbertClient, "text_generation")
-			fmt.Println("RustBert NLP service initialized (internal, no API key required)")
-		}
+		// Default to internal Candle NLP client (no external API required)
+		fmt.Println("Initializing internal Candle NLP service...")
+		candleClient := candleAdapter.NewClient(candleAdapter.CandleNLPConfig{
+			TextGenModelID: "HuggingFaceTB/SmolLM2-360M-Instruct",
+		})
+		nlProcessor = candleAdapter.NewLLMAdapter(candleClient, "text_generation")
+		fmt.Println("Candle NLP service initialized (internal, no API key required)")
 	}
 
 	// Initialize embedder client
@@ -399,24 +396,21 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 			return nil, nil, nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Embedding.Provider)
 		}
 	} else {
-		// Default to internal EmbedEverything embedder (no external API required)
-		fmt.Println("Initializing internal EmbedEverything embedder service...")
-		embedderConfig := &embedder.EmbedEverythingConfig{
-			Config: &embedder.Config{
-				Model:      "qwen/qwen3-embedding-0.6b",
-				Dimensions: 1024,
-				BatchSize:  32,
-			},
-		}
-		internalEmbedder, err := embedder.NewEmbedEverythingClient(embedderConfig)
+		// Default to internal Candle embedder (no external API required)
+		fmt.Println("Initializing internal Candle embedder service...")
+		internalEmbedder, err := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+			Model:      "qwen/qwen3-embedding-0.6b",
+			Dimensions: 1024,
+			Normalize:  true,
+		})
 		if err != nil {
-			fmt.Printf("Warning: Failed to initialize EmbedEverything embedder: %v\n", err)
+			fmt.Printf("Warning: Failed to initialize Candle embedder: %v\n", err)
 			fmt.Println("Continuing without embedder - semantic search will be unavailable")
 		} else {
 			embedderClient = internalEmbedder
-			cfg.Embedding.Provider = "embedeverything"
+			cfg.Embedding.Provider = "candle"
 			cfg.Embedding.Model = "qwen/qwen3-embedding-0.6b"
-			fmt.Println("EmbedEverything embedder initialized (internal, no API key required)")
+			fmt.Println("Candle embedder initialized (internal, no API key required)")
 		}
 	}
 

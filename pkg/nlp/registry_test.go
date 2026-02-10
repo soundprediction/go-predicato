@@ -14,11 +14,11 @@ func TestGetProvider(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			id: nlp.ProviderEmbedEverything,
+			id: nlp.ProviderCandle,
 			want: nlp.Provider{
-				ID:          nlp.ProviderEmbedEverything,
-				Name:        "EmbedEverything",
-				Description: "Local generic embedding models via Rust bindings",
+				ID:          nlp.ProviderCandle,
+				Name:        "Candle",
+				Description: "Local ML models via HuggingFace candle, GLiNER, and GLiNER2 (pure Rust, auto-downloads from HF Hub)",
 				IsLocal:     true,
 			},
 			wantErr: false,
@@ -43,13 +43,22 @@ func TestGetProvider(t *testing.T) {
 }
 
 func TestGetModel(t *testing.T) {
-	// Pick a few representative models
-	t.Run("EmbedEverything Model", func(t *testing.T) {
+	t.Run("Candle Embedding Model", func(t *testing.T) {
 		id := "sentence-transformers/all-MiniLM-L6-v2"
 		got, found := nlp.GetModel(id)
 		assert.True(t, found)
 		assert.Equal(t, id, got.ID)
+		assert.Equal(t, nlp.ProviderCandle, got.ProviderID)
 		assert.Contains(t, got.Capabilities, nlp.TaskEmbedding)
+	})
+
+	t.Run("Candle Summarization Model", func(t *testing.T) {
+		id := "google/flan-t5-base"
+		got, found := nlp.GetModel(id)
+		assert.True(t, found)
+		assert.Equal(t, id, got.ID)
+		assert.Equal(t, nlp.ProviderCandle, got.ProviderID)
+		assert.Contains(t, got.Capabilities, nlp.TaskSummarization)
 	})
 
 	t.Run("GLiNER Model", func(t *testing.T) {
@@ -61,14 +70,6 @@ func TestGetModel(t *testing.T) {
 		assert.Contains(t, got.Capabilities, nlp.TaskRelationExtraction)
 	})
 
-	t.Run("RustBert Model", func(t *testing.T) {
-		id := "bert-base-ner"
-		got, found := nlp.GetModel(id)
-		assert.True(t, found)
-		assert.Equal(t, id, got.ID)
-		assert.Contains(t, got.Capabilities, nlp.TaskNamedEntityRecognition)
-	})
-
 	t.Run("Nonexistent Model", func(t *testing.T) {
 		_, found := nlp.GetModel("fake-model")
 		assert.False(t, found)
@@ -76,10 +77,10 @@ func TestGetModel(t *testing.T) {
 }
 
 func TestGetModelsByProvider(t *testing.T) {
-	models := nlp.GetModelsByProvider(nlp.ProviderEmbedEverything)
+	models := nlp.GetModelsByProvider(nlp.ProviderCandle)
 	assert.NotEmpty(t, models)
 	for _, m := range models {
-		assert.Equal(t, nlp.ProviderEmbedEverything, m.ProviderID)
+		assert.Equal(t, nlp.ProviderCandle, m.ProviderID)
 	}
 }
 
@@ -95,18 +96,12 @@ func TestGetModelsByCapability(t *testing.T) {
 	t.Run("NER", func(t *testing.T) {
 		models := nlp.GetModelsByCapability(nlp.TaskNamedEntityRecognition)
 		assert.NotEmpty(t, models)
-		// Both GLiNER and RustBert models should be here
 		hasGliner := false
-		hasRustBert := false
 		for _, m := range models {
 			if m.ProviderID == nlp.ProviderGLiNER {
 				hasGliner = true
 			}
-			if m.ProviderID == nlp.ProviderRustBert {
-				hasRustBert = true
-			}
 		}
 		assert.True(t, hasGliner, "Should have GLiNER NER models")
-		assert.True(t, hasRustBert, "Should have RustBert NER models")
 	})
 }

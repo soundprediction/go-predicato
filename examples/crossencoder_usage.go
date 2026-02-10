@@ -5,16 +5,17 @@ import (
 	"fmt"
 	"log"
 
+	candleAdapter "github.com/soundprediction/predicato/pkg/candle"
 	"github.com/soundprediction/predicato/pkg/crossencoder"
 )
 
 // Example demonstrating how to use cross-encoder reranking in predicato.
 //
-// This example prioritizes internal reranking (go-embedeverything) which requires
+// This example prioritizes internal reranking (go-candle) which requires
 // no external services, followed by external API options for production deployments.
 //
 // Internal Services (Recommended for getting started):
-// - EmbedEverything with zhiqing/Qwen3-Reranker-0.6B-ONNX (no API key, runs locally)
+// - Candle with qwen/qwen3-embedding-0.6b (no API key, runs locally)
 //
 // External APIs (For production/cloud deployments):
 // - vLLM, LocalAI, Jina AI (require running servers or API keys)
@@ -38,32 +39,32 @@ func main() {
 	fmt.Printf("Passages to rank: %d\n\n", len(passages))
 
 	// ========================================
-	// Example 1: RECOMMENDED - Using EmbedEverything (Internal, No API Required)
+	// Example 1: RECOMMENDED - Using Candle Embeddings (Internal, No API Required)
 	// ========================================
-	fmt.Println("1. [RECOMMENDED] EmbedEverything Reranker (Internal - No API Required)")
-	fmt.Println("   Model: zhiqing/Qwen3-Reranker-0.6B-ONNX")
-	fmt.Println("   (First run will download the model, ~600MB)")
+	fmt.Println("1. [RECOMMENDED] Candle Embedding-Based Reranker (Internal - No API Required)")
+	fmt.Println("   Model: qwen/qwen3-embedding-0.6b")
+	fmt.Println("   (First run will download the model from HuggingFace Hub)")
 	fmt.Println()
 
-	embedEverythingConfig := &crossencoder.EmbedEverythingConfig{
-		Config: &crossencoder.Config{
-			Model:     "zhiqing/Qwen3-Reranker-0.6B-ONNX",
-			BatchSize: 32,
-		},
-	}
-	embedEverythingReranker, err := crossencoder.NewEmbedEverythingClient(embedEverythingConfig)
+	embedder, err := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+		Model:      "qwen/qwen3-embedding-0.6b",
+		Dimensions: 1024,
+		Normalize:  true,
+	})
 	if err != nil {
-		fmt.Printf("   Warning: Failed to create EmbedEverything reranker: %v\n", err)
+		fmt.Printf("   Warning: Failed to create Candle embedder: %v\n", err)
 		fmt.Println("   This may happen if CGO is not enabled or Rust libraries are not available.")
 		fmt.Println("   Enable CGO with: export CGO_ENABLED=1")
 	} else {
-		defer embedEverythingReranker.Close()
+		defer embedder.Close()
 
-		results, err := embedEverythingReranker.Rank(ctx, query, passages)
+		candleReranker := candleAdapter.NewCandleRerankerClient(embedder)
+
+		results, err := candleReranker.Rank(ctx, query, passages)
 		if err != nil {
-			fmt.Printf("   Warning: EmbedEverything reranking failed: %v\n", err)
+			fmt.Printf("   Warning: Candle reranking failed: %v\n", err)
 		} else {
-			fmt.Println("   EmbedEverything reranking successful:")
+			fmt.Println("   Candle reranking successful:")
 			for i, result := range results {
 				passagePreview := result.Passage
 				if len(passagePreview) > 60 {
@@ -189,7 +190,7 @@ func main() {
 	fmt.Println("================================================================================")
 	fmt.Println()
 	fmt.Println("Recommended Approach:")
-	fmt.Println("  1. Start with EmbedEverything (zhiqing/Qwen3-Reranker-0.6B-ONNX) - no API needed")
+	fmt.Println("  1. Start with Candle (qwen/qwen3-embedding-0.6b) - no API needed")
 	fmt.Println("  2. Use Local Fallback if CGO is not available")
 	fmt.Println("  3. Upgrade to external APIs (vLLM, Jina) for production scale")
 	fmt.Println()
@@ -213,22 +214,20 @@ func demonstrateSearchIntegration() {
 		"Natural language processing enables chatbots and translation.",
 	}
 
-	// Recommended: Use EmbedEverything for internal reranking
-	config := &crossencoder.EmbedEverythingConfig{
-		Config: &crossencoder.Config{
-			Model:     "zhiqing/Qwen3-Reranker-0.6B-ONNX",
-			BatchSize: 32,
-		},
-	}
+	// Recommended: Use Candle for internal reranking
+	embedder, err := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+		Model:      "qwen/qwen3-embedding-0.6b",
+		Dimensions: 1024,
+		Normalize:  true,
+	})
 
 	var reranker crossencoder.Client
-	var err error
-
-	reranker, err = crossencoder.NewEmbedEverythingClient(config)
 	if err != nil {
-		// Fallback to local reranker if EmbedEverything is not available
-		log.Printf("EmbedEverything not available, using local fallback: %v", err)
+		// Fallback to local reranker if Candle is not available
+		log.Printf("Candle not available, using local fallback: %v", err)
 		reranker = crossencoder.NewLocalRerankerClient(crossencoder.Config{})
+	} else {
+		reranker = candleAdapter.NewCandleRerankerClient(embedder)
 	}
 	defer reranker.Close()
 

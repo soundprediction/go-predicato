@@ -14,7 +14,7 @@
 // - Team collaboration on shared knowledge graphs
 //
 // For a fully local setup with no external dependencies, see:
-// - examples/basic/ - Uses internal services (Ladybug + RustBert + EmbedEverything)
+// - examples/basic/ - Uses internal services (Ladybug + Candle)
 // - examples/chat/ - Interactive chat with internal services
 //
 // Prerequisites:
