@@ -9,9 +9,9 @@ Most agentic memory libraries require external services (OpenAI, Pinecone, Neo4j
 | Component | Internal (No API) | External (Cloud) |
 |-----------|-----------------|---------------------|
 | **Graph Database** | Ladybug (embedded) | Neo4j, Memgraph |
-| **Embeddings** | go-embedeverything | OpenAI, Voyage, Gemini |
-| **Reranking** | go-embedeverything | Jina, Cohere |
-| **Text Generation** | go-rust-bert (GPT-2) | OpenAI, Anthropic, Ollama |
+| **Embeddings** | go-candle | OpenAI, Voyage, Gemini |
+| **Reranking** | go-candle | Jina, Cohere |
+| **Text Generation** | go-candle (SmolLM2) | OpenAI, Anthropic, Ollama |
 | **Entity Extraction** | GLiNER (ONNX) | NLP model-based extraction |
 | **Fact Storage** | DoltGres (embedded) | PostgreSQL + VectorChord |
 
@@ -33,9 +33,9 @@ go get github.com/soundprediction/predicato
 
 This example uses:
 - Ladybug embedded database
-- Local embeddings (qwen3-embedding)
-- Local text generation (GPT-2 via rust-bert)
-- Local reranking
+- Local embeddings (qwen3-embedding via go-candle)
+- Local text generation (SmolLM2 via go-candle)
+- Local reranking (embedding-based cosine similarity)
 
 ### Step 1: Set Up Your Project
 
@@ -66,10 +66,8 @@ import (
     "time"
 
     "github.com/soundprediction/predicato"
-    "github.com/soundprediction/predicato/pkg/crossencoder"
+    candleAdapter "github.com/soundprediction/predicato/pkg/candle"
     "github.com/soundprediction/predicato/pkg/driver"
-    "github.com/soundprediction/predicato/pkg/embedder"
-    "github.com/soundprediction/predicato/pkg/rustbert"
     "github.com/soundprediction/predicato/pkg/types"
 )
 
@@ -83,33 +81,28 @@ func main() {
     }
     defer db.Close(ctx)
 
-    // 2. Local text generation (GPT-2, no API)
-    rustbertClient := rustbert.NewClient(rustbert.Config{})
-    nlpClient := rustbert.NewLLMAdapter(rustbertClient, "text_generation")
-    defer rustbertClient.Close()
+    // 2. Local text generation (SmolLM2, no API)
+    candleClient, err := candleAdapter.NewClient(&candleAdapter.CandleNLPConfig{
+        TextGenModelID: "HuggingFaceTB/SmolLM2-360M-Instruct",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    nlpClient := candleAdapter.NewLLMAdapter(candleClient, "text_generation")
+    defer candleClient.Close()
 
     // 3. Local embeddings (no API)
-    embedderClient, err := embedder.NewEmbedEverythingClient(&embedder.EmbedEverythingConfig{
-        Config: &embedder.Config{
-            Model:      "qwen/qwen3-embedding-0.6b",
-            Dimensions: 1024,
-        },
+    embedderClient, err := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+        Model:      "qwen/qwen3-embedding-0.6b",
+        Dimensions: 1024,
     })
     if err != nil {
         log.Fatal(err)
     }
     defer embedderClient.Close()
 
-    // 4. Local reranking (no API)
-    reranker, err := crossencoder.NewEmbedEverythingClient(&crossencoder.EmbedEverythingConfig{
-        Config: &crossencoder.Config{
-            Model: "zhiqing/Qwen3-Reranker-0.6B-ONNX",
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer reranker.Close()
+    // 4. Local reranking (no API) — uses embedder for cosine-similarity reranking
+    reranker := candleAdapter.NewCandleRerankerClient(embedderClient)
 
     // 5. Create Predicato client
     client, err := predicato.NewClient(db, nlpClient, embedderClient, &predicato.Config{
@@ -418,12 +411,10 @@ for i, node := range results.Nodes {
 ### Embedder Configuration
 
 ```go
-// Internal (local)
-embedderClient, _ := embedder.NewEmbedEverythingClient(&embedder.EmbedEverythingConfig{
-    Config: &embedder.Config{
-        Model:      "qwen/qwen3-embedding-0.6b",
-        Dimensions: 1024,
-    },
+// Internal (local) — via go-candle
+embedderClient, _ := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+    Model:      "qwen/qwen3-embedding-0.6b",
+    Dimensions: 1024,
 })
 
 // External (OpenAI)

@@ -204,9 +204,9 @@ if !result.Valid {
 | Component | Internal (No API) | External Services |
 |-----------|-----------------|---------------------|
 | **Graph Database** | Ladybug (embedded) | Neo4j, Memgraph |
-| **Embeddings** | go-embedeverything | OpenAI compatible APIs, AWS bedrock, Gemini |
-| **Reranking** | go-embedeverything | Jina, Cohere |
-| **Text Generation** | go-rust-bert (BERT models) | OpenAI compatible APIs |
+| **Embeddings** | go-candle | OpenAI compatible APIs, AWS bedrock, Gemini |
+| **Reranking** | go-candle | Jina, Cohere |
+| **Text Generation** | go-candle (SmolLM2) | OpenAI compatible APIs |
 | **Entity Extraction** | GLiNER (ONNX) | GLiNER2 (API) | LLM-based extraction |
 | **Fact Storage** | DoltGres (embedded) | PostgreSQL + VectorChord |
 
@@ -231,10 +231,8 @@ import (
     "time"
 
     "github.com/soundprediction/predicato"
-    "github.com/soundprediction/predicato/pkg/crossencoder"
+    candleAdapter "github.com/soundprediction/predicato/pkg/candle"
     "github.com/soundprediction/predicato/pkg/driver"
-    "github.com/soundprediction/predicato/pkg/embedder"
-    "github.com/soundprediction/predicato/pkg/rustbert"
 )
 
 func main() {
@@ -244,27 +242,22 @@ func main() {
     db, _ := driver.NewLadybugDriver("./knowledge.db", 1)
     defer db.Close(ctx)
 
-    // Local text generation (GPT-2, no API)
-    rustbertClient := rustbert.NewClient(rustbert.Config{})
-    llmClient := rustbert.NewLLMAdapter(rustbertClient, "text_generation")
-    defer rustbertClient.Close()
+    // Local text generation (SmolLM2, no API)
+    candleClient, _ := candleAdapter.NewClient(&candleAdapter.CandleNLPConfig{
+        TextGenModelID: "HuggingFaceTB/SmolLM2-360M-Instruct",
+    })
+    llmClient := candleAdapter.NewLLMAdapter(candleClient, "text_generation")
+    defer candleClient.Close()
 
     // Local embeddings (no API)
-    embedderClient, _ := embedder.NewEmbedEverythingClient(&embedder.EmbedEverythingConfig{
-        Config: &embedder.Config{
-            Model:      "qwen/qwen3-embedding-0.6b",
-            Dimensions: 1024,
-        },
+    embedderClient, _ := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+        Model:      "qwen/qwen3-embedding-0.6b",
+        Dimensions: 1024,
     })
     defer embedderClient.Close()
 
-    // Local reranking (no API)
-    reranker, _ := crossencoder.NewEmbedEverythingClient(&crossencoder.EmbedEverythingConfig{
-        Config: &crossencoder.Config{
-            Model: "zhiqing/Qwen3-Reranker-0.6B-ONNX",
-        },
-    })
-    defer reranker.Close()
+    // Local reranking (no API) — uses embedder for cosine-similarity reranking
+    reranker := candleAdapter.NewCandleRerankerClient(embedderClient)
 
     // Create client
     client, _ := predicato.NewClient(db, llmClient, embedderClient, &predicato.Config{
@@ -285,14 +278,14 @@ func main() {
 
     // Search with reranking
     results, _ := client.Search(ctx, "API redesign status", nil)
-    
+
     // Rerank for better relevance
     passages := make([]string, len(results.Nodes))
     for i, node := range results.Nodes {
         passages[i] = node.Summary
     }
     ranked, _ := reranker.Rank(ctx, "API redesign status", passages)
-    
+
     log.Printf("Top result: %s (score: %.2f)", ranked[0].Passage, ranked[0].Score)
 }
 ```
@@ -417,7 +410,7 @@ make test-nocgo
 
 | Example | Description |
 |---------|-------------|
-| [`examples/basic/`](examples/basic/) | Full internal stack - Ladybug + RustBert + EmbedEverything + Reranking |
+| [`examples/basic/`](examples/basic/) | Full internal stack - Ladybug + Candle + Reranking |
 | [`examples/chat/`](examples/chat/) | Interactive chat with local models |
 | [`examples/external_apis/`](examples/external_apis/) | Neo4j + OpenAI integration |
 
@@ -426,9 +419,9 @@ make test-nocgo
 ```
 predicato/
 ├── pkg/driver/        # Graph databases (Ladybug, Neo4j, Memgraph)
-├── pkg/embedder/      # Embedding providers (EmbedEverything, OpenAI, Gemini)
-├── pkg/crossencoder/  # Reranking (EmbedEverything, Jina, LLM-based)
-├── pkg/rustbert/      # Local text generation (GPT-2, NER, summarization)
+├── pkg/candle/        # Local ML models via go-candle (embeddings, reranking, text gen, NER, translation)
+├── pkg/embedder/      # Embedding providers (Candle, OpenAI, Gemini)
+├── pkg/crossencoder/  # Reranking (Candle, Jina, LLM-based)
 ├── pkg/nlp/           # LLM clients (OpenAI-compatible APIs)
 ├── pkg/search/        # Hybrid search (semantic + BM25 + graph traversal)
 ├── pkg/factstore/     # Fact storage (PostgreSQL/DoltGres + VectorChord)
@@ -437,15 +430,15 @@ predicato/
 
 ## Internal Services Stack
 
-We rely on golang bindings for prediction models implemented originally in Rust. In particular we use https://github.com/guillaume-be/rust-bert (RustBert -> go-rust-bert), https://github.com/fbilhaut/gline-rs (Gline-rs), and https://github.com/StarlightSearch/EmbedAnything (EmbedEverything -> go-embed-everything). Please see upstream repositories for more details on models supported. Predicato will automatically download models on first use and cache to `~/.cache/huggingface/`.
+We rely on Go bindings for ML models implemented in Rust. In particular we use [go-candle](https://github.com/soundprediction/go-candle) (HuggingFace candle, pure Rust FFI) for embeddings, reranking, and text generation, and [go-gline-rs](https://github.com/fbilhaut/gline-rs) for GLiNER NER. All models are pure Rust with no runtime dependencies (no libtorch, no ONNX Runtime). Predicato will automatically download models on first use and cache to `~/.cache/huggingface/`.
 
 Here is an example configuration and the model sizes involved:
 
 | Component | Model | Download Size |
 |-----------|-------|---------------|
 | Embeddings | `qwen/qwen3-embedding-0.6b` | ~600MB |
-| Reranking | `zhiqing/Qwen3-Reranker-0.6B-ONNX` | ~600MB |
-| Text Generation | GPT-2 | ~500MB |
+| Reranking | Embedding-based cosine similarity | (shares embedder) |
+| Text Generation | SmolLM2-360M-Instruct | ~350MB |
 
 Models download automatically on first use and cache to `~/.cache/huggingface/`.
 
@@ -659,6 +652,8 @@ See [`python/`](python/) for full documentation and [`python/examples/`](python/
 ## Documentation
 
 - [Getting Started](docs/GETTING_STARTED.md)
+- [Fact Store RAG](docs/FACTSTORE_RAG.md)
+- [Extended Fact Storage](docs/EXTENDED_FACT_STORAGE.md)
 - [API Reference](docs/API_REFERENCE.md)
 - [Ladybug Setup](docs/ladybug_SETUP.md)
 - [FAQ](docs/FAQ.md)

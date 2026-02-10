@@ -94,7 +94,7 @@ doltDB, _ := factstore.NewDoltGresFactsDB(doltConnString, 1024)
 // Get all data
 sources, _ := doltDB.GetAllSources(ctx, 0)
 nodes, _ := doltDB.GetAllNodes(ctx, 0)
-edges, _ := doltDB.GetAllEdges(ctx, 0)
+triples, _ := doltDB.GetAllTriples(ctx, 0)
 ```
 
 ### Step 2: Import to PostgreSQL
@@ -109,13 +109,13 @@ for _, source := range sources {
     pgDB.SaveSource(ctx, source)
 }
 
-// Import nodes and edges (grouped by source)
+// Import nodes and triples (grouped by source)
 sourceNodes := groupNodesBySource(nodes)
-sourceEdges := groupEdgesBySource(edges)
+sourceTriples := groupTriplesBySource(triples)
 
 for sourceID, nodeList := range sourceNodes {
-    edgeList := sourceEdges[sourceID]
-    pgDB.SaveExtractedKnowledge(ctx, sourceID, nodeList, edgeList)
+    tripleList := sourceTriples[sourceID]
+    pgDB.SaveExtractedKnowledge(ctx, sourceID, nodeList, tripleList)
 }
 ```
 
@@ -130,13 +130,13 @@ DROP INDEX IF EXISTS extracted_nodes_embedding_idx;
 CREATE INDEX extracted_nodes_embedding_idx 
 ON extracted_nodes USING vchordrq (embedding vector_cosine_ops);
 
-DROP INDEX IF EXISTS extracted_edges_embedding_idx;
-CREATE INDEX extracted_edges_embedding_idx 
-ON extracted_edges USING vchordrq (embedding vector_cosine_ops);
+DROP INDEX IF EXISTS extracted_triples_embedding_idx;
+CREATE INDEX extracted_triples_embedding_idx
+ON extracted_triples USING vchordrq (embedding vector_cosine_ops);
 
 -- Analyze tables for query optimization
 ANALYZE extracted_nodes;
-ANALYZE extracted_edges;
+ANALYZE extracted_triples;
 ANALYZE sources;
 ```
 
@@ -286,21 +286,50 @@ config := &factstore.FactStoreConfig{
 | chunk_index | INT | Position in source |
 | created_at | TIMESTAMP | Creation timestamp |
 
-### Extracted Edges Table
+### Extracted Triples Table
 
 | Column | Type | Description |
 |--------|------|-------------|
 | id | VARCHAR(255) | Primary key |
 | source_id | VARCHAR(255) | FK to sources |
 | group_id | VARCHAR(255) | Multi-tenant group ID |
-| source_node_name | TEXT | Source entity name |
-| target_node_name | TEXT | Target entity name |
-| relation | TEXT | Relationship type |
-| description | TEXT | Relationship description |
+| subject | TEXT | Subject entity name |
+| subject_type | VARCHAR(50) | Subject entity type |
+| predicate | TEXT | Relationship/predicate |
+| object | TEXT | Object entity name |
+| object_type | VARCHAR(50) | Object entity type |
+| description | TEXT | Triple description |
+| condition | TEXT | Conditional context (extended extraction) |
+| temporal | TEXT | Temporal context (extended extraction) |
+| location | TEXT | Location context (extended extraction) |
+| certainty | TEXT | Certainty level (extended extraction) |
+| scope | TEXT | Scope qualifier (extended extraction) |
+| source_attribution | TEXT | Source attribution (extended extraction) |
+| confidence | FLOAT | Extraction confidence score |
 | embedding | vector(N)/JSONB | Vector embedding |
-| weight | FLOAT | Relationship strength |
 | chunk_index | INT | Position in source |
+| model | VARCHAR(255) | Model used for extraction |
 | created_at | TIMESTAMP | Creation timestamp |
+
+### Extracted Rules Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | VARCHAR(255) | Primary key |
+| source_id | VARCHAR(255) | FK to sources |
+| antecedent | TEXT | IF condition |
+| consequent | TEXT | THEN result |
+| exception | TEXT | UNLESS exception (optional) |
+| rule_type | TEXT | Type of rule |
+| scope | TEXT | Scope qualifier |
+| source_attribution | TEXT | Source attribution |
+| confidence | FLOAT | Extraction confidence score |
+| embedding | vector(N)/JSONB | Vector embedding |
+| chunk_index | INT | Position in source |
+| model | VARCHAR(255) | Model used for extraction |
+| created_at | TIMESTAMP | Creation timestamp |
+
+For detailed documentation on the extended extraction fields (condition, temporal, location, etc.) and conditional rules, see [Extended Fact Storage](EXTENDED_FACT_STORAGE.md).
 
 ## Troubleshooting
 
@@ -332,5 +361,6 @@ If using DoltGres with large datasets:
 ## See Also
 
 - [GETTING_STARTED.md](./GETTING_STARTED.md) - Quick start guide
+- [EXTENDED_FACT_STORAGE.md](./EXTENDED_FACT_STORAGE.md) - Extended fact storage (contextual triples & conditional rules)
 - [API_REFERENCE.md](./API_REFERENCE.md) - Full API documentation
 - [pkg/factstore/doc.go](../pkg/factstore/doc.go) - Package documentation

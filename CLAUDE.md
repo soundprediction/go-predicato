@@ -39,14 +39,14 @@ Key code paths in `ingestion.go` / `ingestion_factstore.go`:
   - DoltDB/DoltGres (deprecated)
   - Hybrid search: vector similarity + keyword/fulltext + RRF merging
 - **`nlp/`**: LLM client interfaces (OpenAI-compatible)
-- **`embedder/`**: Embedding model clients (OpenAI, EmbedEverything)
+- **`candle/`**: Local ML models via go-candle (embeddings, reranking, text gen, NER, translation)
+- **`embedder/`**: Embedding model clients (Candle, OpenAI, Gemini)
 - **`search/`**: Search configuration and reranking
-- **`crossencoder/`**: Cross-encoder reranking support
+- **`crossencoder/`**: Cross-encoder reranking support (Candle, Jina, LLM-based)
 - **`prompts/`**: LLM prompt templates for extraction, deduplication, summarization
 - **`modeler/`**: Knowledge graph modeling pipeline
 - **`types/`**: Core type definitions (Node, Edge, Episode, etc.)
 - **`gliner/`**, **`gliner2/`**: Named entity recognition via GLiNER
-- **`rustbert/`**: Rust-based NLP model integration
 - **`community/`**: Community detection in knowledge graphs
 - **`checkpoint/`**: Graph state checkpointing
 - **`server/`**: HTTP REST API server

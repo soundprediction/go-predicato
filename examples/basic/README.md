@@ -6,9 +6,9 @@ This example demonstrates Predicato's fully local setup using only internal serv
 
 - Creating a Predicato client with the internal services stack
 - Using Ladybug embedded database (no server required)
-- Using RustBert GPT-2 for text generation (local, no API)
-- Using EmbedEverything for embeddings (qwen/qwen3-embedding-0.6b)
-- Using EmbedEverything for reranking (zhiqing/Qwen3-Reranker-0.6B-ONNX)
+- Using Candle SmolLM2 for text generation (local, no API)
+- Using Candle for embeddings (qwen/qwen3-embedding-0.6b)
+- Using Candle for reranking (embedding-based cosine similarity)
 - Adding episodes to the knowledge graph
 - Searching and reranking results
 
@@ -28,8 +28,8 @@ First run will automatically download models to `~/.cache/huggingface/`:
 | Component | Model | Size |
 |-----------|-------|------|
 | Embeddings | qwen/qwen3-embedding-0.6b | ~600MB |
-| Reranking | zhiqing/Qwen3-Reranker-0.6B-ONNX | ~600MB |
-| Text Generation | GPT-2 | ~500MB |
+| Reranking | Embedding-based cosine similarity | (shares embedder) |
+| Text Generation | SmolLM2-360M-Instruct | ~350MB |
 
 ## Build & Run
 
@@ -64,21 +64,19 @@ Predicato Basic Example - Internal Services Stack
 
 This example uses predicato's internal services:
   - Ladybug: embedded graph database (no server required)
-  - RustBert GPT-2: local text generation (no API required)
-  - EmbedEverything: local embeddings with qwen/qwen3-embedding-0.6b
-  - EmbedEverything: local reranking with zhiqing/Qwen3-Reranker-0.6B-ONNX
+  - Candle SmolLM2: local text generation (no API required)
+  - Candle: local embeddings with qwen/qwen3-embedding-0.6b
+  - Candle: local reranking via embedding-based cosine similarity
 
 No API keys or external services needed!
 
 [1/5] Setting up Ladybug embedded graph database...
       Ladybug driver created (embedded database at ./example_graph.db)
-[2/5] Setting up RustBert GPT-2 for text generation...
-      RustBert GPT-2 text generation model loaded
-[3/5] Setting up EmbedEverything embedder with qwen/qwen3-embedding-0.6b...
-      EmbedEverything embedder created
-[4/5] Setting up EmbedEverything reranker with zhiqing/Qwen3-Reranker-0.6B-ONNX...
-      EmbedEverything reranker created
-[5/5] Creating Predicato client...
+[2/4] Setting up Candle SmolLM2 for text generation...
+      Candle SmolLM2 text generation model loaded
+[3/4] Setting up Candle embedder with qwen/qwen3-embedding-0.6b...
+      Candle embedder created (reranking shares embedder)
+[4/4] Creating Predicato client...
       Predicato client created (group: example-group)
 
 ================================================================================
@@ -98,14 +96,14 @@ Search results (before reranking):
   2. Project Research (episodic)
      Researched various approaches for implementing the API...
 
-Reranking results with zhiqing/Qwen3-Reranker-0.6B-ONNX...
+Reranking results with Candle embedding-based reranker...
 
 Search results (after reranking):
 ---------------------------------
   1. (score: 0.892) Had a productive meeting with Alice about the new project...
   2. (score: 0.756) Researched various approaches for implementing the API...
 
-Demonstrating text generation with RustBert GPT-2...
+Demonstrating text generation with Candle SmolLM2...
 Prompt: The advantages of using a knowledge graph are
 Generated: that it can be used to represent the relationships between...
 

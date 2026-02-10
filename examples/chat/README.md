@@ -7,14 +7,14 @@ This example demonstrates how to build an interactive chat application using pre
 | Component | Service | Model |
 |-----------|---------|-------|
 | **Database** | Ladybug | Embedded graph database |
-| **Embeddings** | go-embedeverything | `qwen/qwen3-embedding-0.6b` |
-| **Reranking** | go-embedeverything | `zhiqing/Qwen3-Reranker-0.6B-ONNX` |
-| **Text Generation** | go-rust-bert | GPT-2 |
+| **Embeddings** | go-candle | `qwen/qwen3-embedding-0.6b` |
+| **Reranking** | go-candle | Embedding-based cosine similarity |
+| **Text Generation** | go-candle | SmolLM2-360M-Instruct |
 
 ## Features
 
 - **Dual Knowledge Stores**: Separates global knowledge (shared facts) from user-specific episodic memory
-- **Local Text Generation**: Uses RustBert GPT-2 for responses (no API required)
+- **Local Text Generation**: Uses Candle SmolLM2 for responses (no API required)
 - **Local Embeddings**: Uses qwen/qwen3-embedding-0.6b for semantic search
 - **Reranking**: Uses zhiqing/Qwen3-Reranker-0.6B-ONNX to improve search result quality
 - **Conversation Continuity**: Uses `AddToEpisode` to maintain a single episode per chat session
@@ -76,11 +76,10 @@ On first run, the example will automatically download the required models:
 
 | Model | Size | Purpose |
 |-------|------|---------|
-| `qwen/qwen3-embedding-0.6b` | ~600MB | Text embeddings |
-| `zhiqing/Qwen3-Reranker-0.6B-ONNX` | ~600MB | Result reranking |
-| GPT-2 | ~500MB | Text generation |
+| `qwen/qwen3-embedding-0.6b` | ~600MB | Text embeddings + reranking |
+| SmolLM2-360M-Instruct | ~350MB | Text generation |
 
-**Total: ~1.7GB**
+**Total: ~950MB**
 
 Models are cached after the first download.
 
@@ -142,9 +141,9 @@ Predicato Interactive Chat - Internal Services Stack
 
 This chat uses predicato's internal services:
   - Ladybug: embedded graph database (no server required)
-  - RustBert GPT-2: local text generation (no API required)
-  - EmbedEverything: local embeddings with qwen/qwen3-embedding-0.6b
-  - EmbedEverything: local reranking with zhiqing/Qwen3-Reranker-0.6B-ONNX
+  - Candle SmolLM2: local text generation (no API required)
+  - Candle: local embeddings with qwen/qwen3-embedding-0.6b
+  - Candle: local reranking via embedding-based cosine similarity
 
 No API keys or external services needed!
 User ID: alice
@@ -152,13 +151,11 @@ User ID: alice
 Initializing internal services...
 (First run will download models, please wait...)
 
-[1/4] Setting up RustBert GPT-2 for text generation...
-      RustBert GPT-2 loaded
-[2/4] Setting up EmbedEverything embedder with qwen/qwen3-embedding-0.6b...
-      EmbedEverything embedder loaded
-[3/4] Setting up EmbedEverything reranker with zhiqing/Qwen3-Reranker-0.6B-ONNX...
-      EmbedEverything reranker loaded
-[4/4] Setting up Predicato clients...
+[1/3] Setting up Candle SmolLM2 for text generation...
+      Candle SmolLM2 loaded
+[2/3] Setting up Candle embedder with qwen/qwen3-embedding-0.6b...
+      Candle embedder loaded (reranking shares embedder)
+[3/3] Setting up Predicato clients...
       User database initialized at ./user_dbs/user_alice.ladybugdb
 
 All components initialized successfully!
