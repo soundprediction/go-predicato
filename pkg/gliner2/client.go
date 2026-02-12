@@ -221,8 +221,10 @@ func (c *Client) handleTextClassification(ctx context.Context, userMsg string) (
 	}, nil
 }
 
-// ExtractExtended performs structured extraction (entities, relations, triples, rules) from the text.
-// entityTypes and relationTypes are optional: when nil, built-in defaults are used.
+// ExtractExtended extracts contextualized triples and rules from text.
+// Entity and relation extraction is handled separately by ExtractEntities/ExtractRelations
+// in the ingestion pipeline, so this only performs structure extraction.
+// entityTypes and relationTypes are accepted for interface compatibility but unused.
 func (c *Client) ExtractExtended(ctx context.Context, text string, entityTypes, relationTypes []string) (*nlp.ExtendedExtractionResult, error) {
 	switch c.provider {
 	case ProviderNative:
@@ -237,25 +239,7 @@ func (c *Client) ExtractExtended(ctx context.Context, text string, entityTypes, 
 			return nil, err
 		}
 
-		// Map gliner2.ExtendedExtractionResult to nlp.ExtendedExtractionResult
-		// Entities map
-		entities := make(map[string][]string)
-		for k, v := range result.Entities {
-			entities[k] = v
-		}
-
-		// Relations
-		var relations []nlp.ExtractedRelation
-		for _, r := range result.Relations {
-			relations = append(relations, nlp.ExtractedRelation{
-				Source:     r.Head.Text,
-				Target:     r.Tail.Text,
-				Type:       r.Relation,
-				Confidence: r.Confidence,
-			})
-		}
-
-		// Triples
+		// Map gliner2 types to nlp types
 		var triples []nlp.ExtendedTriple
 		for _, t := range result.Triples {
 			triples = append(triples, nlp.ExtendedTriple{
@@ -272,7 +256,6 @@ func (c *Client) ExtractExtended(ctx context.Context, text string, entityTypes, 
 			})
 		}
 
-		// Rules
 		var rules []nlp.Rule
 		for _, r := range result.Rules {
 			rules = append(rules, nlp.Rule{
@@ -288,8 +271,7 @@ func (c *Client) ExtractExtended(ctx context.Context, text string, entityTypes, 
 
 		return &nlp.ExtendedExtractionResult{
 			SourceText: result.SourceText,
-			Entities:   entities,
-			Relations:  relations,
+			Entities:   make(map[string][]string),
 			Triples:    triples,
 			Rules:      rules,
 		}, nil
