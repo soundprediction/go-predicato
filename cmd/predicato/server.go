@@ -274,11 +274,32 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 			return nil, nil, nil, fmt.Errorf("failed to create ladybug driver: %w", err)
 		}
 
+	case "cozo":
+		fmt.Printf("CozoDB path: %s\n", cfg.Database.URI)
+		embDim := cfg.FactStore.EmbeddingDimensions
+		if embDim == 0 {
+			embDim = 1024
+		}
+		graphDriver, err = driver.NewCozoDriver(cfg.Database.URI, embDim)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to create cozo driver: %w", err)
+		}
+
+	case "duckpgq":
+		fmt.Printf("DuckPGQ path: %s\n", cfg.Database.URI)
+		embDim := cfg.FactStore.EmbeddingDimensions
+		if embDim == 0 {
+			embDim = 1024
+		}
+		graphDriver, err = driver.NewDuckPGQDriver(cfg.Database.URI, embDim)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to create duckpgq driver: %w", err)
+		}
+
 	case "falkordb":
-		// FalkorDB support would be implemented here
 		return nil, nil, nil, fmt.Errorf("FalkorDB driver not yet implemented")
 	default:
-		return nil, nil, nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
+		return nil, nil, nil, fmt.Errorf("unsupported database driver: %s (supported: ladybug, cozo, duckpgq)", cfg.Database.Driver)
 	}
 
 	// Initialize NLP client

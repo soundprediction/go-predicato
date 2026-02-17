@@ -1,4 +1,4 @@
-# Extended Fact Storage
+use# Extended Fact Storage
 
 Detailed documentation for Predicato's extended fact storage scheme: contextual knowledge triples and conditional rules.
 

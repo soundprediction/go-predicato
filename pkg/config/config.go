@@ -160,8 +160,8 @@ func setDefaults() {
 	viper.SetDefault("server.mode", "debug")
 
 	// Database defaults
-	viper.SetDefault("database.driver", "ladybug")
-	viper.SetDefault("database.uri", "./ladybug_db")
+	viper.SetDefault("database.driver", "cozo")
+	viper.SetDefault("database.uri", "./predicato.cozo")
 	viper.SetDefault("database.username", "")
 	viper.SetDefault("database.password", "")
 	viper.SetDefault("database.database", "")

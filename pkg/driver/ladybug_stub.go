@@ -18,7 +18,7 @@ var ErrCGORequired = errors.New("ladybug driver requires CGO; build with CGO_ENA
 type LadybugDriver struct{}
 
 // NewLadybugDriver returns an error when CGO is disabled
-func NewLadybugDriver(dbPath string) (*LadybugDriver, error) {
+func NewLadybugDriver(dbPath string, maxConcurrentQueries int) (*LadybugDriver, error) {
 	return nil, ErrCGORequired
 }
 
