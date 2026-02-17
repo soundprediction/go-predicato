@@ -25,7 +25,7 @@ Crawler Example (requires `pip install predicato[crawler]`):
     ...     )
 """
 
-__version__ = "0.1.0"
+__version__ = "0.9.7"
 
 from predicato.client import AsyncPredicatoClient, PredicatoClient
 from predicato.exceptions import (
