@@ -80,8 +80,9 @@ func NewDuckPGQDriver(uri string, embeddingDim int) (*DuckPGQDriver, error) {
 }
 
 func (d *DuckPGQDriver) initSchema() error {
+	floatN := fmt.Sprintf("FLOAT[%d]", d.embeddingDim)
 	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS entities (
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS entities (
 			uuid VARCHAR NOT NULL,
 			group_id VARCHAR NOT NULL,
 			type VARCHAR NOT NULL DEFAULT 'entity',
@@ -90,8 +91,8 @@ func (d *DuckPGQDriver) initSchema() error {
 			summary VARCHAR DEFAULT '',
 			entity_type VARCHAR DEFAULT '',
 			episode_type VARCHAR DEFAULT '',
-			embedding VARCHAR DEFAULT '',
-			name_embedding VARCHAR DEFAULT '',
+			embedding %s,
+			name_embedding %s,
 			metadata VARCHAR DEFAULT '{}',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -101,8 +102,8 @@ func (d *DuckPGQDriver) initSchema() error {
 			entity_edges VARCHAR DEFAULT '[]',
 			level INTEGER DEFAULT 0,
 			PRIMARY KEY (uuid, group_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS edges (
+		)`, floatN, floatN),
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS edges (
 			uuid VARCHAR NOT NULL,
 			group_id VARCHAR NOT NULL,
 			source_id VARCHAR NOT NULL DEFAULT '',
@@ -110,8 +111,8 @@ func (d *DuckPGQDriver) initSchema() error {
 			type VARCHAR NOT NULL DEFAULT 'entity',
 			name VARCHAR NOT NULL DEFAULT '',
 			fact VARCHAR DEFAULT '',
-			fact_embedding VARCHAR DEFAULT '',
-			embedding VARCHAR DEFAULT '',
+			fact_embedding %s,
+			embedding %s,
 			episodes VARCHAR DEFAULT '[]',
 			attributes VARCHAR DEFAULT '{}',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -124,7 +125,7 @@ func (d *DuckPGQDriver) initSchema() error {
 			source_ids VARCHAR DEFAULT '[]',
 			strength DOUBLE DEFAULT 0.0,
 			PRIMARY KEY (uuid, group_id)
-		)`,
+		)`, floatN, floatN),
 	}
 	for _, s := range stmts {
 		if _, err := d.db.Exec(s); err != nil {
@@ -207,19 +208,22 @@ func (d *DuckPGQDriver) UpsertNode(ctx context.Context, node *types.Node) error 
 	metaJSON, _ := json.Marshal(node.Metadata)
 	sourceJSON, _ := json.Marshal(node.SourceIDs)
 	edgesJSON, _ := json.Marshal(node.EntityEdges)
-	embJSON, _ := json.Marshal(node.Embedding)
-	nameEmbJSON, _ := json.Marshal(node.NameEmbedding)
 
 	var validTo *time.Time
 	if node.ValidTo != nil {
 		validTo = node.ValidTo
 	}
 
-	query := `INSERT OR REPLACE INTO entities (uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	// DuckDB doesn't support UPDATE on ARRAY columns, so upsert via DELETE+INSERT.
+	d.db.ExecContext(ctx, `DELETE FROM entities WHERE uuid = ? AND group_id = ?`, node.Uuid, node.GroupID)
+
+	floatCast := fmt.Sprintf("?::FLOAT[%d]", d.embeddingDim)
+	query := fmt.Sprintf(`INSERT INTO entities (uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, %s, %s, ?, ?, ?, ?, ?, ?, ?, ?)`, floatCast, floatCast)
 	_, err := d.db.ExecContext(ctx, query,
 		node.Uuid, node.GroupID, string(node.Type), node.Name, node.Content, node.Summary,
 		node.EntityType, string(node.EpisodeType),
-		string(embJSON), string(nameEmbJSON), string(metaJSON),
+		float32SliceToString(node.Embedding), float32SliceToString(node.NameEmbedding),
+		string(metaJSON),
 		node.CreatedAt, node.UpdatedAt, node.ValidFrom, validTo,
 		string(sourceJSON), string(edgesJSON), node.Level,
 	)
@@ -241,14 +245,15 @@ func (d *DuckPGQDriver) GetNode(ctx context.Context, nodeID, groupID string) (*t
 
 	var (
 		uuid, gid, ntype, name, content, summary, entityType, episodeType string
-		embJSON, nameEmbJSON, metaJSON, sourceJSON, edgesJSON             sql.NullString
+		rawEmb, rawNameEmb                                                interface{}
+		metaJSON, sourceJSON, edgesJSON                                   sql.NullString
 		createdAt, updatedAt, validFrom                                   time.Time
 		validTo                                                           sql.NullTime
 		level                                                             int
 	)
 
 	err := row.Scan(&uuid, &gid, &ntype, &name, &content, &summary, &entityType, &episodeType,
-		&embJSON, &nameEmbJSON, &metaJSON, &createdAt, &updatedAt, &validFrom, &validTo,
+		&rawEmb, &rawNameEmb, &metaJSON, &createdAt, &updatedAt, &validFrom, &validTo,
 		&sourceJSON, &edgesJSON, &level)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -275,8 +280,8 @@ func (d *DuckPGQDriver) GetNode(ctx context.Context, nodeID, groupID string) (*t
 	if validTo.Valid {
 		node.ValidTo = &validTo.Time
 	}
-	node.Embedding = parseJSONFloat32(embJSON.String)
-	node.NameEmbedding = parseJSONFloat32(nameEmbJSON.String)
+	node.Embedding = scanFloat32Array(rawEmb)
+	node.NameEmbedding = scanFloat32Array(rawNameEmb)
 
 	if metaJSON.Valid {
 		var meta map[string]interface{}
@@ -360,15 +365,18 @@ func (d *DuckPGQDriver) UpsertEdge(ctx context.Context, edge *types.Edge) error 
 
 	attrJSON, _ := json.Marshal(edge.Attributes)
 	episodesJSON, _ := json.Marshal(edge.Episodes)
-	factEmbJSON, _ := json.Marshal(edge.FactEmbedding)
-	embJSON, _ := json.Marshal(edge.Embedding)
 	sourceIDsJSON, _ := json.Marshal(edge.SourceIDs)
 
-	query := `INSERT OR REPLACE INTO edges (uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	// DuckDB doesn't support UPDATE on ARRAY columns, so upsert via DELETE+INSERT.
+	d.db.ExecContext(ctx, `DELETE FROM edges WHERE uuid = ? AND group_id = ?`, edge.Uuid, edge.GroupID)
+
+	floatCast := fmt.Sprintf("?::FLOAT[%d]", d.embeddingDim)
+	query := fmt.Sprintf(`INSERT INTO edges (uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength) VALUES (?, ?, ?, ?, ?, ?, ?, %s, %s, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, floatCast, floatCast)
 	_, err := d.db.ExecContext(ctx, query,
 		edge.Uuid, edge.GroupID, sourceID, targetID,
 		string(edge.Type), edge.Name, edge.Fact,
-		string(factEmbJSON), string(embJSON), string(episodesJSON), string(attrJSON),
+		float32SliceToString(edge.FactEmbedding), float32SliceToString(edge.Embedding),
+		string(episodesJSON), string(attrJSON),
 		edge.CreatedAt, edge.UpdatedAt, edge.ValidFrom,
 		nilTime(edge.ValidTo), nilTime(edge.ExpiredAt), nilTime(edge.ValidAt), nilTime(edge.InvalidAt),
 		string(sourceIDsJSON), edge.Strength,
@@ -485,8 +493,21 @@ func (d *DuckPGQDriver) SearchEdgesByVector(ctx context.Context, vector []float3
 }
 
 func (d *DuckPGQDriver) searchNodesByVec(ctx context.Context, vector []float32, groupID string, limit int) ([]*types.Node, error) {
-	// Fetch all nodes with embeddings, compute cosine similarity in Go
-	// (vss extension's HNSW index can be used via CreateIndices for large datasets)
+	// SQL-based cosine similarity using native FLOAT[N] columns and vss extension.
+	floatCast := fmt.Sprintf("?::FLOAT[%d]", d.embeddingDim)
+	sqlQuery := fmt.Sprintf(`SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type,
+		embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to,
+		source_ids, entity_edges, level
+		FROM entities
+		WHERE group_id = ? AND embedding IS NOT NULL
+		ORDER BY array_cosine_similarity(embedding, %s) DESC
+		LIMIT ?`, floatCast)
+	nodes, err := d.queryNodes(ctx, sqlQuery, groupID, float32SliceToString(vector), limit)
+	if err == nil && len(nodes) > 0 {
+		return nodes, nil
+	}
+
+	// Fallback: fetch all nodes and compute cosine similarity in Go
 	allNodes, err := d.queryNodes(ctx, `SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level FROM entities WHERE group_id = ?`, groupID)
 	if err != nil {
 		return nil, err
@@ -530,8 +551,22 @@ func (d *DuckPGQDriver) searchNodesByVec(ctx context.Context, vector []float32, 
 }
 
 func (d *DuckPGQDriver) searchEdgesByVec(ctx context.Context, vector []float32, groupID string, limit int) ([]*types.Edge, error) {
+	// SQL-based cosine similarity using native FLOAT[N] columns and vss extension.
+	floatCast := fmt.Sprintf("?::FLOAT[%d]", d.embeddingDim)
+	sqlQuery := fmt.Sprintf(`SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding,
+		episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at,
+		source_ids, strength
+		FROM edges
+		WHERE group_id = ? AND embedding IS NOT NULL
+		ORDER BY array_cosine_similarity(embedding, %s) DESC
+		LIMIT ?`, floatCast)
+	edges, err := d.queryEdges(ctx, sqlQuery, groupID, float32SliceToString(vector), limit)
+	if err == nil && len(edges) > 0 {
+		return edges, nil
+	}
+
 	// Fallback: fetch all edges and compute cosine similarity in Go
-	edges, err := d.queryEdges(ctx, `SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength FROM edges WHERE group_id = ?`, groupID)
+	edges, err = d.queryEdges(ctx, `SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength FROM edges WHERE group_id = ?`, groupID)
 	if err != nil {
 		return nil, err
 	}
@@ -808,6 +843,16 @@ func (d *DuckPGQDriver) CreateIndices(ctx context.Context) error {
 		_, _ = d.db.ExecContext(ctx, idx) // non-fatal if fts extension unavailable
 	}
 
+	// HNSW indices for vector similarity search (requires vss extension)
+	// Embedding columns use native FLOAT[N] types, enabling direct HNSW indexing.
+	hnswIndices := []string{
+		`CREATE INDEX IF NOT EXISTS idx_entities_embedding_hnsw ON entities USING HNSW (embedding) WITH (metric = 'cosine')`,
+		`CREATE INDEX IF NOT EXISTS idx_edges_embedding_hnsw ON edges USING HNSW (embedding) WITH (metric = 'cosine')`,
+	}
+	for _, idx := range hnswIndices {
+		_, _ = d.db.ExecContext(ctx, idx) // non-fatal if vss extension unavailable
+	}
+
 	return nil
 }
 
@@ -911,13 +956,14 @@ func (d *DuckPGQDriver) queryNodes(ctx context.Context, query string, args ...in
 	for rows.Next() {
 		var (
 			uuid, gid, ntype, name, content, summary, entityType, episodeType string
-			embJSON, nameEmbJSON, metaJSON, sourceJSON, edgesJSON             sql.NullString
+			rawEmb, rawNameEmb                                                interface{}
+			metaJSON, sourceJSON, edgesJSON                                   sql.NullString
 			createdAt, updatedAt, validFrom                                   time.Time
 			validTo                                                           sql.NullTime
 			level                                                             int
 		)
 		if err := rows.Scan(&uuid, &gid, &ntype, &name, &content, &summary, &entityType, &episodeType,
-			&embJSON, &nameEmbJSON, &metaJSON, &createdAt, &updatedAt, &validFrom, &validTo,
+			&rawEmb, &rawNameEmb, &metaJSON, &createdAt, &updatedAt, &validFrom, &validTo,
 			&sourceJSON, &edgesJSON, &level); err != nil {
 			continue
 		}
@@ -939,8 +985,8 @@ func (d *DuckPGQDriver) queryNodes(ctx context.Context, query string, args ...in
 		if validTo.Valid {
 			node.ValidTo = &validTo.Time
 		}
-		node.Embedding = parseJSONFloat32(embJSON.String)
-		node.NameEmbedding = parseJSONFloat32(nameEmbJSON.String)
+		node.Embedding = scanFloat32Array(rawEmb)
+		node.NameEmbedding = scanFloat32Array(rawNameEmb)
 		if metaJSON.Valid {
 			var meta map[string]interface{}
 			if err := json.Unmarshal([]byte(metaJSON.String), &meta); err == nil {
@@ -998,7 +1044,8 @@ func (d *DuckPGQDriver) querySingleEdge(ctx context.Context, query string, args 
 func (d *DuckPGQDriver) scanEdge(rows *sql.Rows) (*types.Edge, error) {
 	var (
 		uuid, gid, sourceID, targetID, etype, name, fact string
-		factEmbJSON, embJSON, episodesJSON, attrJSON     sql.NullString
+		rawFactEmb, rawEmb                               interface{}
+		episodesJSON, attrJSON                           sql.NullString
 		sourceIDsJSON                                    sql.NullString
 		createdAt, updatedAt, validFrom                  time.Time
 		validTo, expiredAt, validAt, invalidAt           sql.NullTime
@@ -1006,7 +1053,7 @@ func (d *DuckPGQDriver) scanEdge(rows *sql.Rows) (*types.Edge, error) {
 	)
 
 	if err := rows.Scan(&uuid, &gid, &sourceID, &targetID, &etype, &name, &fact,
-		&factEmbJSON, &embJSON, &episodesJSON, &attrJSON,
+		&rawFactEmb, &rawEmb, &episodesJSON, &attrJSON,
 		&createdAt, &updatedAt, &validFrom, &validTo, &expiredAt, &validAt, &invalidAt,
 		&sourceIDsJSON, &strength); err != nil {
 		return nil, err
@@ -1042,8 +1089,8 @@ func (d *DuckPGQDriver) scanEdge(rows *sql.Rows) (*types.Edge, error) {
 		edge.InvalidAt = &invalidAt.Time
 	}
 
-	edge.FactEmbedding = parseJSONFloat32(factEmbJSON.String)
-	edge.Embedding = parseJSONFloat32(embJSON.String)
+	edge.FactEmbedding = scanFloat32Array(rawFactEmb)
+	edge.Embedding = scanFloat32Array(rawEmb)
 
 	if episodesJSON.Valid {
 		var eps []string
@@ -1067,20 +1114,44 @@ func (d *DuckPGQDriver) scanEdge(rows *sql.Rows) (*types.Edge, error) {
 	return edge, nil
 }
 
-// parseJSONFloat32 parses a JSON string containing a float array into []float32.
-func parseJSONFloat32(s string) []float32 {
-	if s == "" || s == "null" {
+// scanFloat32Array converts a DuckDB native FLOAT[N] array (returned as []interface{})
+// into a Go []float32 slice. Returns nil for NULL values.
+func scanFloat32Array(raw interface{}) []float32 {
+	if raw == nil {
 		return nil
 	}
-	var floats []float64
-	if err := json.Unmarshal([]byte(s), &floats); err != nil {
+	arr, ok := raw.([]interface{})
+	if !ok {
 		return nil
 	}
-	result := make([]float32, len(floats))
-	for i, f := range floats {
-		result[i] = float32(f)
+	result := make([]float32, len(arr))
+	for i, v := range arr {
+		switch f := v.(type) {
+		case float64:
+			result[i] = float32(f)
+		case float32:
+			result[i] = f
+		}
 	}
 	return result
+}
+
+// float32SliceToString converts a []float32 to a DuckDB array literal string
+// suitable for casting with ?::FLOAT[N]. Returns nil for empty/nil slices (SQL NULL).
+func float32SliceToString(v []float32) interface{} {
+	if len(v) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, f := range v {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%g", f)
+	}
+	b.WriteByte(']')
+	return b.String()
 }
 
 func nilTime(t *time.Time) interface{} {

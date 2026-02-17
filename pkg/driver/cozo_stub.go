@@ -142,3 +142,9 @@ func (d *CozoDriver) GetEntityNodesByGroup(ctx context.Context, groupID string) 
 func (d *CozoDriver) GetAllGroupIDs(ctx context.Context) ([]string, error) {
 	return nil, ErrCozoCGORequired
 }
+func (d *CozoDriver) IterateNodes(ctx context.Context, groupID string, fn func(*types.Node) error) error {
+	return ErrCozoCGORequired
+}
+func (d *CozoDriver) IterateEdges(ctx context.Context, groupID string, fn func(*types.Edge) error) error {
+	return ErrCozoCGORequired
+}
