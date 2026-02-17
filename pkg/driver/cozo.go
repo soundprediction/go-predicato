@@ -98,7 +98,7 @@ func (d *CozoDriver) Close() error {
 	return nil
 }
 
-func (d *CozoDriver) Provider() GraphProvider  { return GraphProviderCozo }
+func (d *CozoDriver) Provider() GraphProvider    { return GraphProviderCozo }
 func (d *CozoDriver) GetAossClient() interface{} { return nil }
 
 func (d *CozoDriver) Session(database *string) GraphDriverSession {
@@ -213,7 +213,7 @@ func (d *CozoDriver) GetNode(ctx context.Context, nodeID, groupID string) (*type
 		return nil, err
 	}
 	if len(result.Rows) == 0 {
-		return nil, fmt.Errorf("node %s not found in group %s", nodeID, groupID)
+		return nil, nil
 	}
 
 	return d.rowToNode(result.Headers, result.Rows[0])
@@ -343,7 +343,7 @@ func (d *CozoDriver) GetEdge(ctx context.Context, edgeID, groupID string) (*type
 		return nil, err
 	}
 	if len(result.Rows) == 0 {
-		return nil, fmt.Errorf("edge %s not found", edgeID)
+		return nil, nil
 	}
 	return d.rowToEdge(result.Headers, result.Rows[0])
 }
@@ -477,9 +477,9 @@ func (d *CozoDriver) searchNodesByVectorInternal(ctx context.Context, vector []f
 	}
 	var scored_nodes []scored
 	for _, n := range nodes {
-		emb := n.NameEmbedding
+		emb := n.Embedding
 		if len(emb) == 0 {
-			emb = n.Embedding
+			emb = n.NameEmbedding
 		}
 		if len(emb) == 0 {
 			continue
@@ -526,9 +526,9 @@ func (d *CozoDriver) searchEdgesByVectorInternal(ctx context.Context, vector []f
 	}
 	var scored_edges []scored
 	for _, e := range edges {
-		emb := e.FactEmbedding
+		emb := e.Embedding
 		if len(emb) == 0 {
-			emb = e.Embedding
+			emb = e.FactEmbedding
 		}
 		if len(emb) == 0 {
 			continue

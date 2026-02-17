@@ -56,9 +56,19 @@ func NewDuckPGQDriver(uri string, embeddingDim int) (*DuckPGQDriver, error) {
 		return nil, fmt.Errorf("failed to open DuckDB: %w", err)
 	}
 
-	// Try to load the duckpgq extension
-	_, _ = db.Exec("INSTALL duckpgq FROM community")
-	_, _ = db.Exec("LOAD duckpgq")
+	// Load extensions: duckpgq (graph queries), vss (vector similarity), fts (full-text search)
+	for _, ext := range []struct{ name, source string }{
+		{"duckpgq", "community"},
+		{"vss", ""},
+		{"fts", ""},
+	} {
+		if ext.source != "" {
+			_, _ = db.Exec(fmt.Sprintf("INSTALL %s FROM %s", ext.name, ext.source))
+		} else {
+			_, _ = db.Exec(fmt.Sprintf("INSTALL %s", ext.name))
+		}
+		_, _ = db.Exec(fmt.Sprintf("LOAD %s", ext.name))
+	}
 
 	d := &DuckPGQDriver{db: db, embeddingDim: embeddingDim}
 	if err := d.initSchema(); err != nil {
@@ -80,15 +90,15 @@ func (d *DuckPGQDriver) initSchema() error {
 			summary VARCHAR DEFAULT '',
 			entity_type VARCHAR DEFAULT '',
 			episode_type VARCHAR DEFAULT '',
-			embedding JSON,
-			name_embedding JSON,
-			metadata JSON,
+			embedding VARCHAR DEFAULT '',
+			name_embedding VARCHAR DEFAULT '',
+			metadata VARCHAR DEFAULT '{}',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			valid_to TIMESTAMP,
-			source_ids JSON,
-			entity_edges JSON,
+			source_ids VARCHAR DEFAULT '[]',
+			entity_edges VARCHAR DEFAULT '[]',
 			level INTEGER DEFAULT 0,
 			PRIMARY KEY (uuid, group_id)
 		)`,
@@ -100,10 +110,10 @@ func (d *DuckPGQDriver) initSchema() error {
 			type VARCHAR NOT NULL DEFAULT 'entity',
 			name VARCHAR NOT NULL DEFAULT '',
 			fact VARCHAR DEFAULT '',
-			fact_embedding JSON,
-			embedding JSON,
-			episodes JSON,
-			attributes JSON,
+			fact_embedding VARCHAR DEFAULT '',
+			embedding VARCHAR DEFAULT '',
+			episodes VARCHAR DEFAULT '[]',
+			attributes VARCHAR DEFAULT '{}',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -111,7 +121,7 @@ func (d *DuckPGQDriver) initSchema() error {
 			expired_at TIMESTAMP,
 			valid_at TIMESTAMP,
 			invalid_at TIMESTAMP,
-			source_ids JSON,
+			source_ids VARCHAR DEFAULT '[]',
 			strength DOUBLE DEFAULT 0.0,
 			PRIMARY KEY (uuid, group_id)
 		)`,
@@ -240,6 +250,9 @@ func (d *DuckPGQDriver) GetNode(ctx context.Context, nodeID, groupID string) (*t
 	err := row.Scan(&uuid, &gid, &ntype, &name, &content, &summary, &entityType, &episodeType,
 		&embJSON, &nameEmbJSON, &metaJSON, &createdAt, &updatedAt, &validFrom, &validTo,
 		&sourceJSON, &edgesJSON, &level)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("node %s not found: %w", nodeID, err)
 	}
@@ -472,8 +485,9 @@ func (d *DuckPGQDriver) SearchEdgesByVector(ctx context.Context, vector []float3
 }
 
 func (d *DuckPGQDriver) searchNodesByVec(ctx context.Context, vector []float32, groupID string, limit int) ([]*types.Node, error) {
-	// Fetch all nodes, compute cosine similarity in Go (DuckDB vss extension may not be available)
-	nodes, err := d.queryNodes(ctx, `SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level FROM entities WHERE group_id = ?`, groupID)
+	// Fetch all nodes with embeddings, compute cosine similarity in Go
+	// (vss extension's HNSW index can be used via CreateIndices for large datasets)
+	allNodes, err := d.queryNodes(ctx, `SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level FROM entities WHERE group_id = ?`, groupID)
 	if err != nil {
 		return nil, err
 	}
@@ -483,21 +497,20 @@ func (d *DuckPGQDriver) searchNodesByVec(ctx context.Context, vector []float32, 
 		score float64
 	}
 	var results []scored
-	for _, n := range nodes {
-		emb := n.NameEmbedding
+	for _, n := range allNodes {
+		emb := n.Embedding
 		if len(emb) == 0 {
-			emb = n.Embedding
+			emb = n.NameEmbedding
 		}
 		if len(emb) == 0 {
 			continue
 		}
-		score := duckCosineSimilarity(vector, emb)
-		if score > 0 {
-			results = append(results, scored{n, score})
+		s := duckCosineSimilarity(vector, emb)
+		if s > 0 {
+			results = append(results, scored{n, s})
 		}
 	}
 
-	// Sort descending
 	for i := 0; i < len(results); i++ {
 		for j := i + 1; j < len(results); j++ {
 			if results[j].score > results[i].score {
@@ -517,6 +530,7 @@ func (d *DuckPGQDriver) searchNodesByVec(ctx context.Context, vector []float32, 
 }
 
 func (d *DuckPGQDriver) searchEdgesByVec(ctx context.Context, vector []float32, groupID string, limit int) ([]*types.Edge, error) {
+	// Fallback: fetch all edges and compute cosine similarity in Go
 	edges, err := d.queryEdges(ctx, `SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength FROM edges WHERE group_id = ?`, groupID)
 	if err != nil {
 		return nil, err
@@ -528,16 +542,16 @@ func (d *DuckPGQDriver) searchEdgesByVec(ctx context.Context, vector []float32, 
 	}
 	var results []scored
 	for _, e := range edges {
-		emb := e.FactEmbedding
+		emb := e.Embedding
 		if len(emb) == 0 {
-			emb = e.Embedding
+			emb = e.FactEmbedding
 		}
 		if len(emb) == 0 {
 			continue
 		}
-		score := duckCosineSimilarity(vector, emb)
-		if score > 0 {
-			results = append(results, scored{e, score})
+		s := duckCosineSimilarity(vector, emb)
+		if s > 0 {
+			results = append(results, scored{e, s})
 		}
 	}
 
@@ -770,7 +784,8 @@ func (d *DuckPGQDriver) RemoveCommunities(ctx context.Context) error {
 // --- Admin Operations ---
 
 func (d *DuckPGQDriver) CreateIndices(ctx context.Context) error {
-	indices := []string{
+	// B-Tree indices for common lookups
+	btreeIndices := []string{
 		`CREATE INDEX IF NOT EXISTS idx_entities_group ON entities(group_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)`,
 		`CREATE INDEX IF NOT EXISTS idx_edges_group ON edges(group_id)`,
@@ -778,12 +793,21 @@ func (d *DuckPGQDriver) CreateIndices(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(type)`,
 	}
-	for _, idx := range indices {
+	for _, idx := range btreeIndices {
 		if _, err := d.db.ExecContext(ctx, idx); err != nil {
-			// Ignore index creation errors (some may not be supported)
 			continue
 		}
 	}
+
+	// FTS indices for text search (requires fts extension)
+	ftsIndices := []string{
+		`PRAGMA create_fts_index('entities', 'uuid', 'name', 'summary', 'content', overwrite=1)`,
+		`PRAGMA create_fts_index('edges', 'uuid', 'name', 'fact', overwrite=1)`,
+	}
+	for _, idx := range ftsIndices {
+		_, _ = d.db.ExecContext(ctx, idx) // non-fatal if fts extension unavailable
+	}
+
 	return nil
 }
 
@@ -966,7 +990,7 @@ func (d *DuckPGQDriver) querySingleEdge(ctx context.Context, query string, args 
 	defer rows.Close()
 
 	if !rows.Next() {
-		return nil, fmt.Errorf("edge not found")
+		return nil, nil
 	}
 	return d.scanEdge(rows)
 }
@@ -975,10 +999,10 @@ func (d *DuckPGQDriver) scanEdge(rows *sql.Rows) (*types.Edge, error) {
 	var (
 		uuid, gid, sourceID, targetID, etype, name, fact string
 		factEmbJSON, embJSON, episodesJSON, attrJSON     sql.NullString
-		sourceIDsJSON                                     sql.NullString
-		createdAt, updatedAt, validFrom                   time.Time
-		validTo, expiredAt, validAt, invalidAt            sql.NullTime
-		strength                                          float64
+		sourceIDsJSON                                    sql.NullString
+		createdAt, updatedAt, validFrom                  time.Time
+		validTo, expiredAt, validAt, invalidAt           sql.NullTime
+		strength                                         float64
 	)
 
 	if err := rows.Scan(&uuid, &gid, &sourceID, &targetID, &etype, &name, &fact,

@@ -323,8 +323,8 @@ func TestDuckPGQDriver_GetStats(t *testing.T) {
 	stats, err := d.GetStats(ctx, "g1")
 	require.NoError(t, err)
 	require.NotNil(t, stats)
-	assert.Equal(t, 2, stats.NodeCount)
-	assert.Equal(t, 1, stats.EdgeCount)
+	assert.Equal(t, int64(2), stats.NodeCount)
+	assert.Equal(t, int64(1), stats.EdgeCount)
 }
 
 func TestDuckPGQDriver_GetEntityNodesByGroup(t *testing.T) {

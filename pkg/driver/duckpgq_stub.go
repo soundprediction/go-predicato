@@ -142,3 +142,9 @@ func (d *DuckPGQDriver) GetEntityNodesByGroup(ctx context.Context, groupID strin
 func (d *DuckPGQDriver) GetAllGroupIDs(ctx context.Context) ([]string, error) {
 	return nil, ErrDuckPGQCGORequired
 }
+func (d *DuckPGQDriver) IterateNodes(ctx context.Context, groupID string, fn func(*types.Node) error) error {
+	return ErrDuckPGQCGORequired
+}
+func (d *DuckPGQDriver) IterateEdges(ctx context.Context, groupID string, fn func(*types.Edge) error) error {
+	return ErrDuckPGQCGORequired
+}

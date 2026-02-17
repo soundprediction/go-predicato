@@ -72,7 +72,7 @@ func runConvertGraph(cmd *cobra.Command, args []string) error {
 func newGraphDriver(driverName, uri string, embDim int) (driver.GraphDriver, error) {
 	switch driverName {
 	case "ladybug":
-		return driver.NewLadybugDriver(uri, 16)
+		return driver.NewLadybugDriver(uri, embDim)
 	case "cozo":
 		return driver.NewCozoDriver(uri, embDim)
 	case "duckpgq":
