@@ -444,11 +444,32 @@ func (d *CozoDriver) SearchNodes(ctx context.Context, query, groupID string, opt
 
 func (d *CozoDriver) SearchEdges(ctx context.Context, query, groupID string, options *SearchOptions) ([]*types.Edge, error) {
 	limit := 10
-	if options != nil && options.Limit > 0 {
-		limit = options.Limit
+	var edgeTypes []string
+
+	if options != nil {
+		if options.Limit > 0 {
+			limit = options.Limit
+		}
+		if len(options.EdgeTypes) > 0 {
+			for _, et := range options.EdgeTypes {
+				edgeTypes = append(edgeTypes, string(et))
+			}
+		}
 	}
-	searchQ := `?[uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength] := *edge{uuid, group_id: $group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength}, contains(lowercase(name), lowercase($query)) or contains(lowercase(fact), lowercase($query))
-:limit $limit`
+
+	searchConditions := "contains(lowercase(name), lowercase($query)) or contains(lowercase(fact), lowercase($query))"
+
+	if len(edgeTypes) > 0 {
+		quotedTypes := make([]string, len(edgeTypes))
+		for i, t := range edgeTypes {
+			quotedTypes[i] = fmt.Sprintf("%q", t)
+		}
+		searchConditions += fmt.Sprintf(", type in [%s]", strings.Join(quotedTypes, ", "))
+	}
+
+	searchQ := fmt.Sprintf(`?[uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength] := *edge{uuid, group_id: $group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength}, %s
+:limit $limit`, searchConditions)
+
 	result, err := d.run(searchQ, cozo.Map{"group_id": groupID, "query": query, "limit": int64(limit)})
 	if err != nil {
 		return nil, err

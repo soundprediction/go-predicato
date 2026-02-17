@@ -33,7 +33,7 @@ Key code paths in `ingestion.go` / `ingestion_factstore.go`:
 
 ### Package Structure (`pkg/`)
 - **`driver/`**: Graph database abstraction layer
-  - Neo4j, Memgraph, FalkorDB, LadybugDB (embedded, requires CGO)
+  - CozoDB (embedded, `system_cozo`), DuckDB+DuckPGQ (embedded, `system_duckpgq`), LadybugDB (embedded, `system_ladybug`), Neo4j, Memgraph, FalkorDB
 - **`factstore/`**: Persistent storage for extracted facts/entities
   - PostgreSQL with VectorChord extension (primary)
   - DoltDB/DoltGres (deprecated)
