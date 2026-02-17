@@ -18,6 +18,8 @@ const (
 	GraphProviderFalkorDB GraphProvider = "falkordb"
 	GraphProviderLadybug  GraphProvider = "ladybug"
 	GraphProviderNeptune  GraphProvider = "neptune"
+	GraphProviderCozo     GraphProvider = "cozo"
+	GraphProviderDuckPGQ  GraphProvider = "duckpgq"
 )
 
 // EdgeOperations provides methods for edge-related database operations

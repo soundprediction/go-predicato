@@ -19,6 +19,8 @@ const (
 	GraphProviderFalkorDB = types.GraphProviderFalkorDB
 	GraphProviderLadybug  = types.GraphProviderLadybug
 	GraphProviderNeptune  = types.GraphProviderNeptune
+	GraphProviderCozo     = types.GraphProviderCozo
+	GraphProviderDuckPGQ  = types.GraphProviderDuckPGQ
 )
 
 // GraphDriverSession defines the interface for database sessions (matching Python GraphDriverSession)

@@ -153,8 +153,20 @@ func NewMCPServer(config *Config) (*MCPServer, error) {
 			return nil, fmt.Errorf("failed to create ladybug driver: %w", err)
 		}
 
+	case "cozo":
+		graphDriver, err = driver.NewCozoDriver(config.DatabaseURI, 1024)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create cozo driver: %w", err)
+		}
+
+	case "duckpgq":
+		graphDriver, err = driver.NewDuckPGQDriver(config.DatabaseURI, 1024)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create duckpgq driver: %w", err)
+		}
+
 	default:
-		return nil, fmt.Errorf("unsupported database driver: %s", config.DatabaseDriver)
+		return nil, fmt.Errorf("unsupported database driver: %s (supported: ladybug, cozo, duckpgq)", config.DatabaseDriver)
 	}
 
 	// Create NLP client
