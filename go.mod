@@ -11,6 +11,7 @@ require (
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/LadybugDB/go-ladybug v0.13.2-0.20260107160556-dff3b908ba39
+	github.com/cozodb/cozo-lib-go v0.7.5
 	github.com/dgraph-io/badger/v4 v4.9.0
 	github.com/dolthub/driver v0.2.0
 	github.com/firebase/genkit/go v1.1.0
@@ -19,6 +20,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/kaptinlin/jsonrepair v0.2.6
 	github.com/lib/pq v1.10.9
+	github.com/marcboeker/go-duckdb v1.8.5
 	github.com/parquet-go/parquet-go v0.26.4
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/sony/gobreaker v1.0.0
@@ -56,7 +58,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20250326154945-ae57f3c0d45f // indirect
-	github.com/cozodb/cozo-lib-go v0.7.5 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
@@ -106,7 +107,6 @@ require (
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lestrrat-go/strftime v1.0.6 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
-	github.com/marcboeker/go-duckdb v1.8.5 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.15 // indirect
