@@ -452,20 +452,68 @@ func (d *DuckPGQDriver) GetBetweenNodes(ctx context.Context, sourceNodeID, targe
 
 func (d *DuckPGQDriver) SearchNodes(ctx context.Context, query, groupID string, options *SearchOptions) ([]*types.Node, error) {
 	limit := 10
-	if options != nil && options.Limit > 0 {
-		limit = options.Limit
+	var nodeTypes []string
+
+	if options != nil {
+		if options.Limit > 0 {
+			limit = options.Limit
+		}
+		if len(options.NodeTypes) > 0 {
+			for _, nt := range options.NodeTypes {
+				nodeTypes = append(nodeTypes, string(nt))
+			}
+		}
 	}
-	pattern := "%" + query + "%"
-	return d.queryNodes(ctx, `SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level FROM entities WHERE group_id = ? AND (name ILIKE ? OR summary ILIKE ?) LIMIT ?`, groupID, pattern, pattern, limit)
+
+	whereClause := "group_id = ? AND (name ILIKE ? OR summary ILIKE ?)"
+	args := []interface{}{groupID, "%" + query + "%", "%" + query + "%"}
+
+	if len(nodeTypes) > 0 {
+		placeholders := make([]string, len(nodeTypes))
+		for i, nt := range nodeTypes {
+			placeholders[i] = "?"
+			args = append(args, nt)
+		}
+		whereClause += fmt.Sprintf(" AND type IN (%s)", strings.Join(placeholders, ","))
+	}
+
+	args = append(args, limit)
+	sqlQuery := fmt.Sprintf(`SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level FROM entities WHERE %s LIMIT ?`, whereClause)
+
+	return d.queryNodes(ctx, sqlQuery, args...)
 }
 
 func (d *DuckPGQDriver) SearchEdges(ctx context.Context, query, groupID string, options *SearchOptions) ([]*types.Edge, error) {
 	limit := 10
-	if options != nil && options.Limit > 0 {
-		limit = options.Limit
+	var edgeTypes []string
+
+	if options != nil {
+		if options.Limit > 0 {
+			limit = options.Limit
+		}
+		if len(options.EdgeTypes) > 0 {
+			for _, et := range options.EdgeTypes {
+				edgeTypes = append(edgeTypes, string(et))
+			}
+		}
 	}
-	pattern := "%" + query + "%"
-	return d.queryEdges(ctx, `SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength FROM edges WHERE group_id = ? AND (name ILIKE ? OR fact ILIKE ?) LIMIT ?`, groupID, pattern, pattern, limit)
+
+	whereClause := "group_id = ? AND (name ILIKE ? OR fact ILIKE ?)"
+	args := []interface{}{groupID, "%" + query + "%", "%" + query + "%"}
+
+	if len(edgeTypes) > 0 {
+		placeholders := make([]string, len(edgeTypes))
+		for i, et := range edgeTypes {
+			placeholders[i] = "?"
+			args = append(args, et)
+		}
+		whereClause += fmt.Sprintf(" AND type IN (%s)", strings.Join(placeholders, ","))
+	}
+
+	args = append(args, limit)
+	sqlQuery := fmt.Sprintf(`SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength FROM edges WHERE %s LIMIT ?`, whereClause)
+
+	return d.queryEdges(ctx, sqlQuery, args...)
 }
 
 func (d *DuckPGQDriver) SearchNodesByEmbedding(ctx context.Context, embedding []float32, groupID string, limit int) ([]*types.Node, error) {

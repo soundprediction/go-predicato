@@ -409,11 +409,32 @@ func (d *CozoDriver) GetBetweenNodes(ctx context.Context, sourceNodeID, targetNo
 
 func (d *CozoDriver) SearchNodes(ctx context.Context, query, groupID string, options *SearchOptions) ([]*types.Node, error) {
 	limit := 10
-	if options != nil && options.Limit > 0 {
-		limit = options.Limit
+	var nodeTypes []string
+
+	if options != nil {
+		if options.Limit > 0 {
+			limit = options.Limit
+		}
+		if len(options.NodeTypes) > 0 {
+			for _, nt := range options.NodeTypes {
+				nodeTypes = append(nodeTypes, string(nt))
+			}
+		}
 	}
-	searchQ := `?[uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level] := *entity{uuid, group_id: $group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level}, contains(lowercase(name), lowercase($query)) or contains(lowercase(summary), lowercase($query))
-:limit $limit`
+
+	searchConditions := "contains(lowercase(name), lowercase($query)) or contains(lowercase(summary), lowercase($query))"
+
+	if len(nodeTypes) > 0 {
+		quotedTypes := make([]string, len(nodeTypes))
+		for i, t := range nodeTypes {
+			quotedTypes[i] = fmt.Sprintf("%q", t)
+		}
+		searchConditions += fmt.Sprintf(", type in [%s]", strings.Join(quotedTypes, ", "))
+	}
+
+	searchQ := fmt.Sprintf(`?[uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level] := *entity{uuid, group_id: $group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level}, %s
+:limit $limit`, searchConditions)
+
 	result, err := d.run(searchQ, cozo.Map{"group_id": groupID, "query": query, "limit": int64(limit)})
 	if err != nil {
 		return nil, err

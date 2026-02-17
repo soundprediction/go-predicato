@@ -48,7 +48,7 @@ Predicato implements a **two-layer architecture** that separates raw fact extrac
 │  ExtractOnly=true       │     │            ▼                     │
 │  stops here ───────────►│     │  ┌───────────────────────────┐   │
 │                         │     │  │    Knowledge Graph        │   │
-│  ┌───────────────────┐  │     │  │  (Ladybug/Neo4j/Memgraph) │   │
+│  ┌───────────────────┐  │     │  │  (CozoDB/DuckDB/Ladybug)  │   │
 │  │   RAG Search      │  │     │  │  • Resolved entities      │   │
 │  │ (VectorChord/JSONB)│  │     │  │  • Temporal relationships │   │
 │  └───────────────────┘  │     │  │  • Communities            │   │
@@ -203,7 +203,7 @@ if !result.Valid {
 
 | Component | Internal (No API) | External Services |
 |-----------|-----------------|---------------------|
-| **Graph Database** | Ladybug (embedded) | Neo4j, Memgraph |
+| **Graph Database** | CozoDB (embedded), DuckDB+DuckPGQ (embedded), Ladybug (embedded) | Neo4j, Memgraph |
 | **Embeddings** | go-candle | OpenAI compatible APIs, AWS bedrock, Gemini |
 | **Reranking** | go-candle | Jina, Cohere |
 | **Text Generation** | go-candle (SmolLM2) | OpenAI compatible APIs |
@@ -238,9 +238,9 @@ import (
 func main() {
     ctx := context.Background()
 
-    // Embedded graph database (no server required)
-    db, _ := driver.NewLadybugDriver("./knowledge.db", 1)
-    defer db.Close(ctx)
+    // Embedded graph database — CozoDB (recommended), DuckDB, or Ladybug
+    db, _ := driver.NewCozoDriver("./knowledge.cozo", 1024)
+    defer db.Close()
 
     // Local text generation (SmolLM2, no API)
     candleClient, _ := candleAdapter.NewClient(&candleAdapter.CandleNLPConfig{
@@ -294,7 +294,7 @@ First run downloads models (~1.7GB total). Subsequent runs use cached models.
 
 ## Quick Start (External APIs)
 
-The same interfaces work with cloud services - just swap the implementations:
+The same interfaces work with cloud services or different embedded backends - just swap the implementations:
 
 ```go
 package main
@@ -314,7 +314,14 @@ import (
 func main() {
     ctx := context.Background()
 
-    // Neo4j database
+    // Choose your graph database:
+    // Option A: CozoDB embedded (recommended)
+    // db, _ := driver.NewCozoDriver("./knowledge.cozo", 1024)
+    // Option B: DuckDB + DuckPGQ embedded
+    // db, _ := driver.NewDuckPGQDriver("./knowledge.duckdb", 1024)
+    // Option C: Ladybug embedded (legacy)
+    // db, _ := driver.NewLadybugDriver("./knowledge.db", 1024)
+    // Option D: Neo4j (external)
     db, _ := driver.NewNeo4jDriver(
         os.Getenv("NEO4J_URI"),
         os.Getenv("NEO4J_USER"),
@@ -350,16 +357,29 @@ func main() {
 go get github.com/soundprediction/predicato
 ```
 
-### Building with Ladybug (Embedded Graph Database)
+### Building with Embedded Graph Databases
 
-Predicato uses CGO for the Ladybug embedded graph database. Use Make for the easiest setup:
+Predicato supports three embedded graph databases. Each requires CGO and uses a build tag:
+
+| Driver | Build Tag | Library |
+|--------|-----------|---------|
+| **CozoDB** (recommended) | `system_cozo` | [cozo-lib-go](https://github.com/cozodb/cozo-lib-go) |
+| **DuckDB + DuckPGQ** | `system_duckpgq` | [go-duckdb](https://github.com/marcboeker/go-duckdb) + [duckpgq](https://github.com/cwida/duckpgq-extension) |
+| **Ladybug** (legacy) | `system_ladybug` | Custom embedded graph DB |
 
 ```bash
 # Clone the repository
 git clone https://github.com/soundprediction/predicato
 cd predicato
 
-# Download native libraries + build
+# Build with CozoDB (recommended)
+go build -tags system_cozo ./...
+
+# Build with DuckDB + DuckPGQ
+go build -tags system_duckpgq ./...
+
+# Build with Ladybug (requires native library download)
+go generate ./cmd/main.go
 make build
 
 # Run tests
@@ -369,7 +389,7 @@ make test
 make build-cli
 ```
 
-#### Manual Build (without Make)
+#### Ladybug Manual Build (without Make)
 
 ```bash
 # Step 1: Download Ladybug library
@@ -396,10 +416,10 @@ make test-nocgo
 
 ### Prerequisites
 
-**Internal stack (Ladybug embedded database):**
+**Embedded graph databases (CozoDB, DuckDB, or Ladybug):**
 - Go 1.21+
 - GCC (for CGO compilation)
-- Make (recommended)
+- Make (recommended for Ladybug)
 - ~4GB RAM for local models
 
 **External APIs only (no CGO needed):**
@@ -410,7 +430,7 @@ make test-nocgo
 
 | Example | Description |
 |---------|-------------|
-| [`examples/basic/`](examples/basic/) | Full internal stack - Ladybug + Candle + Reranking |
+| [`examples/basic/`](examples/basic/) | Full internal stack - CozoDB + Candle + Reranking |
 | [`examples/chat/`](examples/chat/) | Interactive chat with local models |
 | [`examples/external_apis/`](examples/external_apis/) | Neo4j + OpenAI integration |
 
@@ -418,7 +438,7 @@ make test-nocgo
 
 ```
 predicato/
-├── pkg/driver/        # Graph databases (Ladybug, Neo4j, Memgraph)
+├── pkg/driver/        # Graph databases (CozoDB, DuckDB+DuckPGQ, Ladybug, Neo4j, Memgraph)
 ├── pkg/candle/        # Local ML models via go-candle (embeddings, reranking, text gen, NER, translation)
 ├── pkg/embedder/      # Embedding providers (Candle, OpenAI, Gemini)
 ├── pkg/crossencoder/  # Reranking (Candle, Jina, LLM-based)
