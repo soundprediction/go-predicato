@@ -1,11 +1,12 @@
 package main
 
 //go:generate sh -c "curl -sL https://raw.githubusercontent.com/LadybugDB/go-ladybug/refs/heads/master/download_lbug.sh | bash -s -- -out lib-ladybug"
+//go:generate bash download_cozo.sh -out lib-cozo
 
 /*
-#cgo darwin LDFLAGS: -L${SRCDIR}/lib-ladybug -llbug -Wl,-rpath,${SRCDIR}/lib-ladybug
-#cgo linux LDFLAGS: -L${SRCDIR}/lib-ladybug -llbug -Wl,-rpath,${SRCDIR}/lib-ladybug
-#cgo windows LDFLAGS: -L${SRCDIR}/lib-ladybug -llbug_shared
+#cgo darwin LDFLAGS: -L${SRCDIR}/lib-ladybug -llbug -Wl,-rpath,${SRCDIR}/lib-ladybug -L${SRCDIR}/lib-cozo
+#cgo linux LDFLAGS: -L${SRCDIR}/lib-ladybug -llbug -Wl,-rpath,${SRCDIR}/lib-ladybug -L${SRCDIR}/lib-cozo
+#cgo windows LDFLAGS: -L${SRCDIR}/lib-ladybug -llbug_shared -L${SRCDIR}/lib-cozo
 #include <stdlib.h>
 
 // fast_exit bypasses normal cleanup (atexit handlers, C++ destructors)

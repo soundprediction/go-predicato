@@ -52,7 +52,7 @@ func NewCozoDriver(uri string, embeddingDim int) (*CozoDriver, error) {
 		engine = "mem"
 		path = ""
 	} else {
-		engine = "rocksdb"
+		engine = "sqlite"
 		path = uri
 	}
 
