@@ -73,11 +73,42 @@ const LadybugSchemaQueries = `
         FROM Entity TO RelatesToNode_,
         FROM RelatesToNode_ TO Entity
     );
+    CREATE NODE TABLE IF NOT EXISTS Rule (
+        uuid STRING PRIMARY KEY,
+        name STRING,
+        group_id STRING,
+        entity_type STRING,
+        summary STRING,
+        content STRING,
+        embedding FLOAT[],
+        name_embedding FLOAT[],
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP,
+        valid_from TIMESTAMP,
+        attributes STRING
+    );
     CREATE REL TABLE IF NOT EXISTS MENTIONS(
         FROM Episodic TO Entity,
+        FROM Episodic TO Rule,
         uuid STRING PRIMARY KEY,
         group_id STRING,
         created_at TIMESTAMP
+    );
+    CREATE REL TABLE IF NOT EXISTS REFERENCED_BY(
+        FROM Rule TO Entity,
+        uuid STRING,
+        group_id STRING,
+        created_at TIMESTAMP,
+        attributes STRING
+    );
+    CREATE REL TABLE IF NOT EXISTS IMPLIES(
+        FROM Entity TO Entity,
+        uuid STRING,
+        group_id STRING,
+        created_at TIMESTAMP,
+        name STRING,
+        fact STRING,
+        attributes STRING
     );
     CREATE REL TABLE IF NOT EXISTS HAS_MEMBER(
         FROM Community TO Entity,
@@ -741,7 +772,7 @@ func (k *LadybugDriver) GetAossClient() interface{} {
 // GetNode retrieves a node by ID from the appropriate table based on node type.
 func (k *LadybugDriver) GetNode(ctx context.Context, nodeID, groupID string) (*types.Node, error) {
 	// Try to find node in each table type
-	tables := []string{"Entity", "Episodic", "Community", "RelatesToNode_"}
+	tables := []string{"Entity", "Episodic", "Community", "RelatesToNode_", "Rule"}
 
 	for _, table := range tables {
 		query := fmt.Sprintf(`
@@ -843,7 +874,7 @@ func (k *LadybugDriver) UpsertNode(ctx context.Context, node *types.Node) error 
 // Uses parameterized queries to prevent Cypher injection attacks.
 func (k *LadybugDriver) DeleteNode(ctx context.Context, nodeID, groupID string) error {
 	// Delete from all possible tables (validated against allowedNodeLabels)
-	tables := []string{"Entity", "Episodic", "Community", "RelatesToNode_"}
+	tables := []string{"Entity", "Episodic", "Community", "RelatesToNode_", "Rule"}
 
 	params := map[string]interface{}{
 		"uuid":     nodeID,
@@ -889,7 +920,7 @@ func (k *LadybugDriver) GetNodes(ctx context.Context, nodeIDs []string, groupID 
 	nodes := make([]*types.Node, 0, len(nodeIDs))
 
 	// Batch query across all node table types
-	tables := []string{"Entity", "Episodic", "Community", "RelatesToNode_"}
+	tables := []string{"Entity", "Episodic", "Community", "RelatesToNode_", "Rule"}
 
 	for _, table := range tables {
 		query := fmt.Sprintf(`
@@ -2185,11 +2216,14 @@ var (
 		"Episodic":       true,
 		"Community":      true,
 		"RelatesToNode_": true,
+		"Rule":           true,
 	}
 	allowedEdgeLabels = map[string]bool{
-		"RELATES_TO": true,
-		"MENTIONS":   true,
-		"HAS_MEMBER": true,
+		"RELATES_TO":    true,
+		"MENTIONS":      true,
+		"HAS_MEMBER":    true,
+		"REFERENCED_BY": true,
+		"IMPLIES":       true,
 	}
 )
 
@@ -2251,6 +2285,8 @@ func (k *LadybugDriver) getTableNameForNodeType(nodeType types.NodeType) string 
 		return "Entity"
 	case types.CommunityNodeType:
 		return "Community"
+	case types.RuleNodeType:
+		return "Rule"
 	default:
 		return "Entity"
 	}

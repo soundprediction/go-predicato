@@ -88,6 +88,8 @@ const (
 	CommunityNodeType NodeType = "community"
 	// SourceNodeType represents source nodes where content originates.
 	SourceNodeType NodeType = "source"
+	// RuleNodeType represents conditional rules (IF-THEN-UNLESS) promoted to the graph.
+	RuleNodeType NodeType = "rule"
 )
 
 // EdgeType and related constants are now defined in edge.go
@@ -268,6 +270,10 @@ type AddEpisodeResults struct {
 	Communities []*Node `json:"communities"`
 	// CommunityEdges are the edges connecting communities to entities.
 	CommunityEdges []*Edge `json:"community_edges"`
+	// Rules are the rule nodes promoted from extracted rules.
+	Rules []*Node `json:"rules"`
+	// RuleEdges are the edges connecting rules to entities (REFERENCED_BY, IMPLIES).
+	RuleEdges []*Edge `json:"rule_edges"`
 }
 
 // AddBulkEpisodeResults represents the result of adding multiple episodes to the knowledge graph.
@@ -284,6 +290,10 @@ type AddBulkEpisodeResults struct {
 	Communities []*Node `json:"communities"`
 	// CommunityEdges are the edges connecting communities to entities.
 	CommunityEdges []*Edge `json:"community_edges"`
+	// Rules are the rule nodes promoted from extracted rules.
+	Rules []*Node `json:"rules"`
+	// RuleEdges are the edges connecting rules to entities (REFERENCED_BY, IMPLIES).
+	RuleEdges []*Edge `json:"rule_edges"`
 }
 
 // AddTripletResults represents the result of adding a triplet (subject-predicate-object) to the knowledge graph.

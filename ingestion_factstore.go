@@ -2,7 +2,9 @@ package predicato
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/soundprediction/predicato/pkg/factstore"
@@ -633,6 +635,93 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		}
 	}
 
+	// 4.5: Load and promote extracted rules
+	extRules, err := c.factStore.GetExtractedRules(ctx, sourceID)
+	if err != nil {
+		c.logger.Warn("Failed to load extracted rules", "error", err)
+		extRules = nil // Non-fatal: proceed without rules
+	}
+
+	var ruleNodes []*types.Node
+	var ruleEdges []*types.Edge
+
+	for _, rule := range extRules {
+		ruleNode := &types.Node{
+			Uuid:       rule.ID,
+			Name:       buildRuleName(rule),
+			Summary:    buildRuleSummary(rule),
+			Content:    buildRuleContent(rule),
+			Type:       types.RuleNodeType,
+			EntityType: rule.RuleType,
+			Embedding:  rule.Embedding,
+			GroupID:    source.GroupID,
+			SourceIDs:  []string{source.ID},
+			Metadata: map[string]interface{}{
+				"scope":              rule.Scope,
+				"source_attribution": rule.SourceAttribution,
+				"confidence":         rule.Confidence,
+				"source_id":          rule.SourceID,
+			},
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			ValidFrom: time.Now(),
+		}
+		ruleNodes = append(ruleNodes, ruleNode)
+
+		// Entity linking (approach B) — default
+		if !options.SkipRuleEntityLinking {
+			antEntities := matchEntitiesInText(rule.Antecedent, uuidToNode)
+			conEntities := matchEntitiesInText(rule.Consequent, uuidToNode)
+			excEntities := matchEntitiesInText(rule.Exception, uuidToNode)
+
+			// REFERENCED_BY edges: rule → entity
+			for _, e := range antEntities {
+				edge := types.NewEntityEdge(utils.GenerateUUID(), ruleNode.Uuid, e.Uuid, source.GroupID, "REFERENCED_BY", types.RuleEdgeType)
+				edge.Metadata = map[string]interface{}{"part": "antecedent"}
+				edge.Fact = rule.Antecedent
+				ruleEdges = append(ruleEdges, edge)
+			}
+			for _, e := range conEntities {
+				edge := types.NewEntityEdge(utils.GenerateUUID(), ruleNode.Uuid, e.Uuid, source.GroupID, "REFERENCED_BY", types.RuleEdgeType)
+				edge.Metadata = map[string]interface{}{"part": "consequent"}
+				edge.Fact = rule.Consequent
+				ruleEdges = append(ruleEdges, edge)
+			}
+			for _, e := range excEntities {
+				edge := types.NewEntityEdge(utils.GenerateUUID(), ruleNode.Uuid, e.Uuid, source.GroupID, "REFERENCED_BY", types.RuleEdgeType)
+				edge.Metadata = map[string]interface{}{"part": "exception"}
+				edge.Fact = rule.Exception
+				ruleEdges = append(ruleEdges, edge)
+			}
+
+			// IMPLIES edges: antecedent entity → consequent entity
+			for _, ae := range antEntities {
+				for _, ce := range conEntities {
+					edge := types.NewEntityEdge(utils.GenerateUUID(), ae.Uuid, ce.Uuid, source.GroupID, "IMPLIES", types.EntityEdgeType)
+					edge.Fact = ruleNode.Summary
+					edge.Metadata = map[string]interface{}{
+						"rule_id":   rule.ID,
+						"rule_type": rule.RuleType,
+					}
+					edge.Strength = rule.Confidence
+					ruleEdges = append(ruleEdges, edge)
+				}
+			}
+		}
+	}
+
+	// Add rule nodes and edges to the extracted sets so they participate in the pipeline
+	allExtractedNodes = append(allExtractedNodes, ruleNodes...)
+	allExtractedEdges = append(allExtractedEdges, ruleEdges...)
+
+	if len(ruleNodes) > 0 {
+		c.logger.Info("Rule promotion",
+			"source_id", sourceID,
+			"rule_nodes", len(ruleNodes),
+			"rule_edges", len(ruleEdges),
+			"entity_linking", !options.SkipRuleEntityLinking)
+	}
+
 	// 5. Get or create GraphModeler
 	gm, err := c.getOrCreateModeler(options)
 	if err != nil {
@@ -813,6 +902,8 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		Edges:          relOutput.ResolvedEdges,
 		Communities:    communities,
 		CommunityEdges: communityEdges,
+		Rules:          ruleNodes,
+		RuleEdges:      ruleEdges,
 	}, nil
 }
 
@@ -823,4 +914,51 @@ func (c *Client) ValidateModeler(ctx context.Context, gm modeler.GraphModeler) (
 		GroupID: c.config.GroupID,
 	}
 	return modeler.ValidateModeler(ctx, gm, opts)
+}
+
+// buildRuleName returns a truncated display name for a rule node.
+func buildRuleName(rule *types.ExtractedRule) string {
+	name := "IF " + rule.Antecedent + " THEN " + rule.Consequent
+	if len(name) > 100 {
+		return name[:97] + "..."
+	}
+	return name
+}
+
+// buildRuleSummary returns the full human-readable rule text.
+func buildRuleSummary(rule *types.ExtractedRule) string {
+	s := "IF " + rule.Antecedent + " THEN " + rule.Consequent
+	if rule.Exception != "" {
+		s += " UNLESS " + rule.Exception
+	}
+	return s
+}
+
+// buildRuleContent returns a JSON-encoded representation of the rule parts.
+func buildRuleContent(rule *types.ExtractedRule) string {
+	m := map[string]string{
+		"antecedent": rule.Antecedent,
+		"consequent": rule.Consequent,
+	}
+	if rule.Exception != "" {
+		m["exception"] = rule.Exception
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// matchEntitiesInText performs case-insensitive substring matching of node names
+// against the given text, returning matching nodes.
+func matchEntitiesInText(text string, uuidToNode map[string]*types.Node) []*types.Node {
+	if text == "" {
+		return nil
+	}
+	lower := strings.ToLower(text)
+	var matches []*types.Node
+	for _, n := range uuidToNode {
+		if n.Name != "" && strings.Contains(lower, strings.ToLower(n.Name)) {
+			matches = append(matches, n)
+		}
+	}
+	return matches
 }

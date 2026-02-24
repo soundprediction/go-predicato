@@ -131,6 +131,8 @@ func (m *MemgraphDriver) getLabelForNodeType(nodeType types.NodeType) string {
 		return "Entity"
 	case types.CommunityNodeType:
 		return "Community"
+	case types.RuleNodeType:
+		return "Rule"
 	default:
 		return "Entity"
 	}

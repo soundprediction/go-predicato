@@ -236,6 +236,12 @@ type AddEpisodeOptions struct {
 	// Requires DbConfig to be configured.
 	ExtractOnly bool
 
+	// SkipRuleEntityLinking disables entity recognition on rule text during
+	// graph promotion. When true, rule nodes are only connected to their
+	// source episode (approach A). Default false enables entity extraction
+	// from rule text and linking to existing graph entities (approach B).
+	SkipRuleEntityLinking bool
+
 	// ExtendedExtraction enables extraction of contextualised triples and
 	// conditional rules in addition to standard entities and relationships.
 	// When true, ExtractExtended is called on each chunk to enrich triples

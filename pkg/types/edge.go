@@ -262,6 +262,7 @@ const (
 	EpisodicEdgeType  EdgeType = "episodic"
 	CommunityEdgeType EdgeType = "community"
 	SourceEdgeType    EdgeType = "source"
+	RuleEdgeType      EdgeType = "rule"
 )
 
 // Sync fields to maintain backward compatibility
