@@ -907,6 +907,225 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 	}, nil
 }
 
+// PromoteToGraphBatched reads extracted knowledge from the fact store in batches
+// and writes directly to the graph database. Unlike PromoteToGraph, this method
+// streams data in configurable batch sizes to handle sources with millions of
+// entities without loading everything into memory.
+//
+// The batch size controls how many nodes/triples/rules are loaded from the fact
+// store per iteration. The default is 100,000 if batchSize <= 0.
+//
+// This method skips the modeler pipeline (entity resolution, community detection)
+// and writes nodes/edges directly, making it suitable for pre-extracted bulk data
+// like Wikidata imports.
+func (c *Client) PromoteToGraphBatched(ctx context.Context, sourceID string, batchSize int, options *AddEpisodeOptions) (*PromoteBatchedResult, error) {
+	if c.factStore == nil {
+		return nil, fmt.Errorf("facts DB not configured")
+	}
+	if c.driver == nil {
+		return nil, fmt.Errorf("graph driver not configured")
+	}
+	if batchSize <= 0 {
+		batchSize = 100_000
+	}
+	if options == nil {
+		options = &AddEpisodeOptions{}
+	}
+
+	source, err := c.factStore.GetSource(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get source %s: %w", sourceID, err)
+	}
+
+	// Get counts for progress reporting
+	nodeCount, err := c.factStore.CountExtractedNodes(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count nodes: %w", err)
+	}
+	tripleCount, err := c.factStore.CountExtractedTriples(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count triples: %w", err)
+	}
+	ruleCount, err := c.factStore.CountExtractedRules(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count rules: %w", err)
+	}
+
+	c.logger.Info("Starting batched promotion",
+		"source_id", sourceID,
+		"nodes", nodeCount,
+		"triples", tripleCount,
+		"rules", ruleCount,
+		"batch_size", batchSize)
+
+	result := &PromoteBatchedResult{}
+
+	// Phase 1: Upsert nodes in batches, building name→uuid index
+	nameToUUID := make(map[string]string)
+
+	for offset := 0; ; offset += batchSize {
+		extNodes, err := c.factStore.GetExtractedNodesPaginated(ctx, sourceID, offset, batchSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get nodes at offset %d: %w", offset, err)
+		}
+		if len(extNodes) == 0 {
+			break
+		}
+
+		graphNodes := make([]*types.Node, 0, len(extNodes))
+		for _, n := range extNodes {
+			tn := &types.Node{
+				Uuid:      n.ID,
+				Name:      n.Name,
+				Summary:   n.Description,
+				Type:      types.EntityNodeType,
+				Embedding: n.Embedding,
+				GroupID:   source.GroupID,
+				SourceIDs: []string{sourceID},
+				CreatedAt: n.CreatedAt,
+				UpdatedAt: n.CreatedAt,
+				ValidFrom: n.CreatedAt,
+			}
+			if n.Type != "" {
+				tn.Type = types.NodeType(n.Type)
+			}
+			nameToUUID[n.Name] = n.ID
+			graphNodes = append(graphNodes, tn)
+		}
+
+		if err := c.driver.UpsertNodes(ctx, graphNodes); err != nil {
+			return nil, fmt.Errorf("failed to upsert nodes at offset %d: %w", offset, err)
+		}
+		result.Nodes += int64(len(graphNodes))
+
+		c.logger.Info("Promoted nodes batch",
+			"offset", offset,
+			"batch", len(graphNodes),
+			"total", result.Nodes,
+			"of", nodeCount)
+	}
+
+	// Phase 2: Upsert edges from triples in batches
+	for offset := 0; ; offset += batchSize {
+		extTriples, err := c.factStore.GetExtractedTriplesPaginated(ctx, sourceID, offset, batchSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get triples at offset %d: %w", offset, err)
+		}
+		if len(extTriples) == 0 {
+			break
+		}
+
+		graphEdges := make([]*types.Edge, 0, len(extTriples))
+		skipped := 0
+		for _, t := range extTriples {
+			sUUID := nameToUUID[t.Subject]
+			tUUID := nameToUUID[t.Object]
+			if sUUID == "" || tUUID == "" {
+				skipped++
+				continue
+			}
+			te := &types.Edge{
+				BaseEdge: types.BaseEdge{
+					Uuid:         t.ID,
+					SourceNodeID: sUUID,
+					TargetNodeID: tUUID,
+					GroupID:      source.GroupID,
+					CreatedAt:    t.CreatedAt,
+				},
+				Name:     t.Predicate,
+				Summary:  t.Description,
+				Fact:     t.Description,
+				Strength: t.Confidence,
+				Type:     types.EntityEdgeType,
+				SourceID: sUUID,
+				TargetID: tUUID,
+			}
+			if len(t.Embedding) > 0 {
+				te.Embedding = t.Embedding
+			}
+			graphEdges = append(graphEdges, te)
+		}
+
+		if len(graphEdges) > 0 {
+			if err := c.driver.UpsertEdges(ctx, graphEdges); err != nil {
+				return nil, fmt.Errorf("failed to upsert edges at offset %d: %w", offset, err)
+			}
+		}
+		result.Edges += int64(len(graphEdges))
+		result.SkippedEdges += int64(skipped)
+
+		c.logger.Info("Promoted triples batch",
+			"offset", offset,
+			"batch", len(graphEdges),
+			"skipped", skipped,
+			"total", result.Edges,
+			"of", tripleCount)
+	}
+
+	// Phase 3: Upsert rules in batches
+	for offset := 0; ; offset += batchSize {
+		extRules, err := c.factStore.GetExtractedRulesPaginated(ctx, sourceID, offset, batchSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get rules at offset %d: %w", offset, err)
+		}
+		if len(extRules) == 0 {
+			break
+		}
+
+		ruleNodes := make([]*types.Node, 0, len(extRules))
+		for _, rule := range extRules {
+			ruleNode := &types.Node{
+				Uuid:       rule.ID,
+				Name:       buildRuleName(rule),
+				Summary:    buildRuleSummary(rule),
+				Content:    buildRuleContent(rule),
+				Type:       types.RuleNodeType,
+				EntityType: rule.RuleType,
+				Embedding:  rule.Embedding,
+				GroupID:    source.GroupID,
+				SourceIDs:  []string{sourceID},
+				Metadata: map[string]interface{}{
+					"scope":              rule.Scope,
+					"source_attribution": rule.SourceAttribution,
+					"confidence":         rule.Confidence,
+				},
+				CreatedAt: rule.CreatedAt,
+				UpdatedAt: rule.CreatedAt,
+				ValidFrom: rule.CreatedAt,
+			}
+			ruleNodes = append(ruleNodes, ruleNode)
+		}
+
+		if err := c.driver.UpsertNodes(ctx, ruleNodes); err != nil {
+			return nil, fmt.Errorf("failed to upsert rule nodes at offset %d: %w", offset, err)
+		}
+		result.Rules += int64(len(ruleNodes))
+
+		c.logger.Info("Promoted rules batch",
+			"offset", offset,
+			"batch", len(ruleNodes),
+			"total", result.Rules,
+			"of", ruleCount)
+	}
+
+	c.logger.Info("Batched promotion complete",
+		"source_id", sourceID,
+		"nodes", result.Nodes,
+		"edges", result.Edges,
+		"skipped_edges", result.SkippedEdges,
+		"rules", result.Rules)
+
+	return result, nil
+}
+
+// PromoteBatchedResult holds the results of a batched promotion.
+type PromoteBatchedResult struct {
+	Nodes        int64
+	Edges        int64
+	SkippedEdges int64
+	Rules        int64
+}
+
 // ValidateModeler tests a GraphModeler implementation with sample data to verify
 // it works correctly before using it in production.
 func (c *Client) ValidateModeler(ctx context.Context, gm modeler.GraphModeler) (*modeler.ModelerValidationResult, error) {

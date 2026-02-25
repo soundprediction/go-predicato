@@ -836,6 +836,113 @@ func (p *PostgresDB) GetExtractedRules(ctx context.Context, sourceID string) ([]
 	return rules, nil
 }
 
+// --- Paginated Methods ---
+
+func (p *PostgresDB) GetExtractedNodesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedNode, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT en.id, en.source_id, en.group_id, en.name, en.normalized_name, en.type,
+		       en.description, en.embedding, en.chunk_index, en.model, en.created_at
+		FROM extracted_nodes en
+		JOIN node_sources ns ON ns.node_id = en.id
+		WHERE ns.source_id = $1
+		ORDER BY en.id
+		LIMIT $2 OFFSET $3`,
+		sourceID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query extracted nodes (paginated): %w", err)
+	}
+	defer rows.Close()
+
+	return p.scanNodes(rows)
+}
+
+func (p *PostgresDB) GetExtractedTriplesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedTriple, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT id, source_id, group_id, subject, subject_type, predicate, object, object_type,
+		       description, condition, temporal, location, certainty, scope, source_attribution,
+		       confidence, embedding, chunk_index, model, created_at
+		FROM extracted_triples WHERE source_id = $1
+		ORDER BY id
+		LIMIT $2 OFFSET $3`, sourceID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query extracted triples (paginated): %w", err)
+	}
+	defer rows.Close()
+
+	return p.scanTriples(rows)
+}
+
+func (p *PostgresDB) GetExtractedRulesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedRule, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT id, source_id, antecedent, consequent, exception, rule_type, scope,
+		       source_attribution, confidence, embedding, chunk_index, model, created_at
+		FROM extracted_rules WHERE source_id = $1
+		ORDER BY id
+		LIMIT $2 OFFSET $3`, sourceID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query extracted rules (paginated): %w", err)
+	}
+	defer rows.Close()
+
+	var rules []*ExtractedRule
+	for rows.Next() {
+		var r ExtractedRule
+		var embeddingStr sql.NullString
+		var exception, ruleType, scope, sourceAttr sql.NullString
+		var confidence sql.NullFloat64
+		var model sql.NullString
+		if err := rows.Scan(&r.ID, &r.SourceID, &r.Antecedent, &r.Consequent,
+			&exception, &ruleType, &scope, &sourceAttr,
+			&confidence, &embeddingStr, &r.ChunkIndex, &model, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		if exception.Valid {
+			r.Exception = exception.String
+		}
+		if ruleType.Valid {
+			r.RuleType = ruleType.String
+		}
+		if scope.Valid {
+			r.Scope = scope.String
+		}
+		if sourceAttr.Valid {
+			r.SourceAttribution = sourceAttr.String
+		}
+		if confidence.Valid {
+			r.Confidence = confidence.Float64
+		}
+		if embeddingStr.Valid {
+			r.Embedding = p.parseEmbedding(embeddingStr.String)
+		}
+		if model.Valid {
+			r.Model = model.String
+		}
+		rules = append(rules, &r)
+	}
+	return rules, nil
+}
+
+func (p *PostgresDB) CountExtractedNodes(ctx context.Context, sourceID string) (int64, error) {
+	var count int64
+	err := p.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM node_sources WHERE source_id = $1`, sourceID).Scan(&count)
+	return count, err
+}
+
+func (p *PostgresDB) CountExtractedTriples(ctx context.Context, sourceID string) (int64, error) {
+	var count int64
+	err := p.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM extracted_triples WHERE source_id = $1`, sourceID).Scan(&count)
+	return count, err
+}
+
+func (p *PostgresDB) CountExtractedRules(ctx context.Context, sourceID string) (int64, error) {
+	var count int64
+	err := p.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM extracted_rules WHERE source_id = $1`, sourceID).Scan(&count)
+	return count, err
+}
+
 // --- Search Methods ---
 
 func (p *PostgresDB) SearchNodes(ctx context.Context, query string, embedding []float32, config *FactSearchConfig) ([]*ExtractedNode, []float64, error) {

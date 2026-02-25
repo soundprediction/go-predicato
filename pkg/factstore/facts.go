@@ -205,6 +205,26 @@ type FactsDB interface {
 
 	// GetExtractedRules retrieves extracted rules for a source.
 	GetExtractedRules(ctx context.Context, sourceID string) ([]*ExtractedRule, error)
+
+	// --- Paginated Methods (for large sources) ---
+
+	// GetExtractedNodesPaginated retrieves a batch of extracted nodes for a source.
+	GetExtractedNodesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedNode, error)
+
+	// GetExtractedTriplesPaginated retrieves a batch of extracted triples for a source.
+	GetExtractedTriplesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedTriple, error)
+
+	// GetExtractedRulesPaginated retrieves a batch of extracted rules for a source.
+	GetExtractedRulesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedRule, error)
+
+	// CountExtractedNodes returns the number of extracted nodes for a source.
+	CountExtractedNodes(ctx context.Context, sourceID string) (int64, error)
+
+	// CountExtractedTriples returns the number of extracted triples for a source.
+	CountExtractedTriples(ctx context.Context, sourceID string) (int64, error)
+
+	// CountExtractedRules returns the number of extracted rules for a source.
+	CountExtractedRules(ctx context.Context, sourceID string) (int64, error)
 }
 
 type Stats struct {

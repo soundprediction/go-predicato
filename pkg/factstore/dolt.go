@@ -485,6 +485,30 @@ func (d *DoltDB) GetExtractedRules(ctx context.Context, sourceID string) ([]*Ext
 	return nil, nil
 }
 
+func (d *DoltDB) GetExtractedNodesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedNode, error) {
+	return nil, nil
+}
+
+func (d *DoltDB) GetExtractedTriplesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedTriple, error) {
+	return nil, nil
+}
+
+func (d *DoltDB) GetExtractedRulesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedRule, error) {
+	return nil, nil
+}
+
+func (d *DoltDB) CountExtractedNodes(ctx context.Context, sourceID string) (int64, error) {
+	return 0, nil
+}
+
+func (d *DoltDB) CountExtractedTriples(ctx context.Context, sourceID string) (int64, error) {
+	return 0, nil
+}
+
+func (d *DoltDB) CountExtractedRules(ctx context.Context, sourceID string) (int64, error) {
+	return 0, nil
+}
+
 // --- Search Methods (In-memory implementation for DoltDB) ---
 // Note: These methods use in-memory search since Dolt doesn't have VectorChord.
 // For production use with large datasets, migrate to PostgresDB/DoltGres with VectorChord.
