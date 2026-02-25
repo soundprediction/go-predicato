@@ -463,7 +463,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 			)
 			SELECT
 				id,
-				COALESCE(group_id, '%s'),
+				'%s',
 				'',
 				'',
 				COALESCE(rule_type, 'rule'),
