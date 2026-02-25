@@ -378,6 +378,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 	}
 
 	// Phase 1: Load nodes → entities
+	// Use CASE to skip embeddings with wrong length (e.g. 0 for nodes without embeddings)
 	nodeQuery := fmt.Sprintf(`INSERT INTO entities (
 			uuid, group_id, type, name, content, entity_type,
 			embedding, name_embedding, source_ids,
@@ -390,13 +391,13 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 			COALESCE(name, ''),
 			COALESCE(description, ''),
 			COALESCE(type, ''),
-			embedding,
-			embedding,
+			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
 			json_array(COALESCE(source_id, 'wikidata')),
 			COALESCE(created_at, CURRENT_TIMESTAMP),
 			CURRENT_TIMESTAMP,
 			COALESCE(created_at, CURRENT_TIMESTAMP)
-		FROM read_parquet('%s')`, groupID, nodesPath)
+		FROM read_parquet('%s')`, groupID, d.embeddingDim, d.embeddingDim, nodesPath)
 
 	res, err := d.db.ExecContext(ctx, nodeQuery)
 	if err != nil {
@@ -418,8 +419,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 			'entity',
 			COALESCE(t.predicate, ''),
 			COALESCE(t.description, ''),
-			t.embedding,
-			t.embedding,
+			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
 			(SELECT json_group_object(k, v) FROM (
 				VALUES
 					('condition', t.condition),
@@ -441,7 +442,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 		JOIN entities obj
 			ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
 			AND obj.group_id = COALESCE(t.group_id, '%s')`,
-		groupID, triplesPath, groupID, groupID)
+		groupID, d.embeddingDim, d.embeddingDim, triplesPath, groupID, groupID)
 
 	res, err = d.db.ExecContext(ctx, edgeQuery)
 	if err != nil {
@@ -473,8 +474,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 					THEN 'IF ' || antecedent || ' THEN ' || consequent || ' UNLESS ' || exception
 					ELSE 'IF ' || antecedent || ' THEN ' || consequent
 				END,
-				embedding,
-				embedding,
+				CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+				CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
 				json_object(
 					'antecedent', antecedent,
 					'consequent', consequent,
@@ -488,7 +489,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 				COALESCE(created_at, CURRENT_TIMESTAMP),
 				CURRENT_TIMESTAMP,
 				COALESCE(created_at, CURRENT_TIMESTAMP)
-			FROM read_parquet('%s')`, groupID, rulesPath)
+			FROM read_parquet('%s')`, groupID, d.embeddingDim, d.embeddingDim, rulesPath)
 
 		res, err = d.db.ExecContext(ctx, ruleQuery)
 		if err != nil {
