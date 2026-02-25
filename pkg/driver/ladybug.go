@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ladybug "github.com/LadybugDB/go-ladybug"
+	"github.com/parquet-go/parquet-go"
 
 	"github.com/soundprediction/predicato/pkg/types"
 )
@@ -530,7 +531,7 @@ func (k *LadybugDriver) isWriteQuery(query string) bool {
 	upperQuery := strings.ToUpper(strings.TrimSpace(query))
 	writeKeywords := []string{
 		"CREATE ", "MERGE ", "SET ", "DELETE ", "DETACH DELETE",
-		"REMOVE ", "DROP ", "INSERT ", "UPDATE ",
+		"REMOVE ", "DROP ", "INSERT ", "UPDATE ", "COPY ",
 	}
 	for _, keyword := range writeKeywords {
 		if strings.HasPrefix(upperQuery, keyword) || strings.Contains(upperQuery, " "+keyword) {
@@ -1780,6 +1781,433 @@ func (k *LadybugDriver) UpsertEdges(ctx context.Context, edges []*types.Edge) er
 		}
 	}
 	return nil
+}
+
+// ladybugEntity matches the Ladybug Entity node table column order for COPY FROM parquet.
+type ladybugEntity struct {
+	CreatedAt     time.Time `parquet:"created_at,timestamp(microsecond)"`
+	Uuid          string    `parquet:"uuid"`
+	Name          string    `parquet:"name"`
+	GroupID       string    `parquet:"group_id"`
+	Labels        []string  `parquet:"labels,list"`
+	NameEmbedding []float32 `parquet:"name_embedding,list"`
+	Summary       string    `parquet:"summary"`
+	Attributes    string    `parquet:"attributes"`
+}
+
+// ladybugRelatesToNode matches the Ladybug RelatesToNode_ table column order for COPY FROM parquet.
+type ladybugRelatesToNode struct {
+	CreatedAt     time.Time  `parquet:"created_at,timestamp(microsecond)"`
+	ExpiredAt     *time.Time `parquet:"expired_at,timestamp(microsecond),optional"`
+	ValidAt       *time.Time `parquet:"valid_at,timestamp(microsecond),optional"`
+	InvalidAt     *time.Time `parquet:"invalid_at,timestamp(microsecond),optional"`
+	Uuid          string     `parquet:"uuid"`
+	GroupID       string     `parquet:"group_id"`
+	Name          string     `parquet:"name"`
+	Fact          string     `parquet:"fact"`
+	FactEmbedding []float32  `parquet:"fact_embedding,list"`
+	Episodes      []string   `parquet:"episodes,list"`
+	Attributes    string     `parquet:"attributes"`
+}
+
+// ladybugRelatesToRel matches the RELATES_TO relationship table for COPY FROM parquet.
+// The first two columns must be FROM and TO node primary keys.
+type ladybugRelatesToRel struct {
+	From string `parquet:"from"`
+	To   string `parquet:"to"`
+}
+
+// BulkLoadFromParquet loads predicato fact store parquet files into the Ladybug
+// graph using Ladybug's native COPY FROM parquet support.
+//
+// It reads factstore-format parquet files, transforms them to match Ladybug's
+// table schemas, writes intermediate parquet files, and uses COPY to load them.
+//
+// inputDir should contain: nodes.parquet, extracted_triples.parquet.gz,
+// and optionally extracted_rules.parquet.gz.
+//
+// Returns (nodesLoaded, edgesLoaded, rulesLoaded, error).
+func (k *LadybugDriver) BulkLoadFromParquet(ctx context.Context, inputDir, groupID string) (int64, int64, int64, error) {
+	// Create temp directory for intermediate parquet files
+	tmpDir, err := os.MkdirTemp("", "ladybug-parquet-import-*")
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Phase 1: Read factstore nodes and write Ladybug Entity parquet
+	nodesPath := findFactstoreParquet(inputDir, "nodes.parquet")
+	if nodesPath == "" {
+		return 0, 0, 0, fmt.Errorf("nodes.parquet not found in %s", inputDir)
+	}
+
+	nodeRows, err := readFactstoreNodes(nodesPath)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to read nodes: %w", err)
+	}
+
+	// Build name→uuid lookup for edge resolution
+	nameToUUID := make(map[string]string, len(nodeRows))
+	for _, n := range nodeRows {
+		nameToUUID[strings.ToLower(strings.TrimSpace(n.Name))] = n.ID
+	}
+
+	// Transform to Ladybug Entity format
+	entities := make([]ladybugEntity, len(nodeRows))
+	for i, n := range nodeRows {
+		var labels []string
+		if n.Type != "" {
+			labels = []string{n.Type}
+		}
+		attrs := "{}"
+		if n.Description != "" {
+			if data, err := json.Marshal(map[string]string{
+				"description": n.Description,
+				"entity_type": n.Type,
+			}); err == nil {
+				attrs = string(data)
+			}
+		}
+		entities[i] = ladybugEntity{
+			Uuid:          n.ID,
+			Name:          n.Name,
+			GroupID:       groupID,
+			Labels:        labels,
+			CreatedAt:     n.CreatedAt,
+			NameEmbedding: n.Embedding,
+			Summary:       n.Description,
+			Attributes:    attrs,
+		}
+	}
+
+	entityPath := filepath.Join(tmpDir, "entities.parquet")
+	if err := writeParquetFile(entityPath, entities); err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to write entity parquet: %w", err)
+	}
+
+	// COPY entities
+	copyQuery := fmt.Sprintf(`COPY Entity FROM "%s"`, entityPath)
+	if _, _, _, err := k.ExecuteQuery(ctx, copyQuery, nil); err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to COPY Entity: %w", err)
+	}
+	nodesLoaded := int64(len(entities))
+
+	// Phase 2: Read factstore triples and write RelatesToNode_ + RELATES_TO parquet
+	triplesPath := findFactstoreParquet(inputDir, "extracted_triples.parquet.gz")
+	if triplesPath == "" {
+		triplesPath = findFactstoreParquet(inputDir, "extracted_triples.parquet")
+	}
+	if triplesPath == "" {
+		return nodesLoaded, 0, 0, fmt.Errorf("extracted_triples parquet not found in %s", inputDir)
+	}
+
+	tripleRows, err := readFactstoreTriples(triplesPath)
+	if err != nil {
+		return nodesLoaded, 0, 0, fmt.Errorf("failed to read triples: %w", err)
+	}
+
+	// Transform triples to RelatesToNode_ nodes + RELATES_TO edges
+	var relNodes []ladybugRelatesToNode
+	var relEdges []ladybugRelatesToRel
+	var skipped int64
+	now := time.Now()
+
+	for _, t := range tripleRows {
+		subjUUID, subjOK := nameToUUID[strings.ToLower(strings.TrimSpace(t.Subject))]
+		objUUID, objOK := nameToUUID[strings.ToLower(strings.TrimSpace(t.Object))]
+		if !subjOK || !objOK {
+			skipped++
+			continue
+		}
+
+		attrs := buildTripleAttributes(t)
+
+		relNodes = append(relNodes, ladybugRelatesToNode{
+			Uuid:          t.ID,
+			GroupID:       groupID,
+			CreatedAt:     t.CreatedAt,
+			Name:          t.Predicate,
+			Fact:          t.Description,
+			FactEmbedding: t.Embedding,
+			Episodes:      []string{},
+			ValidAt:       &now,
+			Attributes:    attrs,
+		})
+
+		// Two RELATES_TO edges: source→relNode and relNode→target
+		relEdges = append(relEdges,
+			ladybugRelatesToRel{From: subjUUID, To: t.ID},
+			ladybugRelatesToRel{From: t.ID, To: objUUID},
+		)
+	}
+
+	if len(relNodes) > 0 {
+		relNodePath := filepath.Join(tmpDir, "relates_to_nodes.parquet")
+		if err := writeParquetFile(relNodePath, relNodes); err != nil {
+			return nodesLoaded, 0, 0, fmt.Errorf("failed to write RelatesToNode_ parquet: %w", err)
+		}
+
+		copyQuery = fmt.Sprintf(`COPY RelatesToNode_ FROM "%s"`, relNodePath)
+		if _, _, _, err := k.ExecuteQuery(ctx, copyQuery, nil); err != nil {
+			return nodesLoaded, 0, 0, fmt.Errorf("failed to COPY RelatesToNode_: %w", err)
+		}
+
+		relEdgePath := filepath.Join(tmpDir, "relates_to_edges.parquet")
+		if err := writeParquetFile(relEdgePath, relEdges); err != nil {
+			return nodesLoaded, 0, 0, fmt.Errorf("failed to write RELATES_TO parquet: %w", err)
+		}
+
+		copyQuery = fmt.Sprintf(`COPY RELATES_TO FROM "%s"`, relEdgePath)
+		if _, _, _, err := k.ExecuteQuery(ctx, copyQuery, nil); err != nil {
+			return nodesLoaded, 0, 0, fmt.Errorf("failed to COPY RELATES_TO: %w", err)
+		}
+	}
+	edgesLoaded := int64(len(relNodes))
+
+	if skipped > 0 {
+		log.Printf("BulkLoadFromParquet: %d triples skipped (unresolved entities)", skipped)
+	}
+
+	// Phase 3: Load rules (optional)
+	var rulesLoaded int64
+	rulesPath := findFactstoreParquet(inputDir, "extracted_rules.parquet.gz")
+	if rulesPath == "" {
+		rulesPath = findFactstoreParquet(inputDir, "extracted_rules.parquet")
+	}
+	if rulesPath != "" {
+		ruleRows, err := readFactstoreRules(rulesPath)
+		if err != nil {
+			return nodesLoaded, edgesLoaded, 0, fmt.Errorf("failed to read rules: %w", err)
+		}
+
+		if len(ruleRows) > 0 {
+			rules := make([]ladybugRule, len(ruleRows))
+			for i, r := range ruleRows {
+				fact := "IF " + r.Antecedent + " THEN " + r.Consequent
+				if r.Exception != "" {
+					fact += " UNLESS " + r.Exception
+				}
+				attrs := "{}"
+				if data, err := json.Marshal(map[string]interface{}{
+					"antecedent":         r.Antecedent,
+					"consequent":         r.Consequent,
+					"exception":          r.Exception,
+					"rule_type":          r.RuleType,
+					"scope":              r.Scope,
+					"source_attribution": r.SourceAttribution,
+					"confidence":         r.Confidence,
+				}); err == nil {
+					attrs = string(data)
+				}
+				rules[i] = ladybugRule{
+					Uuid:          r.ID,
+					Name:          r.RuleType + ": " + r.Antecedent,
+					GroupID:       groupID,
+					EntityType:    r.RuleType,
+					Summary:       fact,
+					Content:       fact,
+					Embedding:     r.Embedding,
+					NameEmbedding: r.Embedding,
+					CreatedAt:     r.CreatedAt,
+					UpdatedAt:     r.CreatedAt,
+					ValidFrom:     r.CreatedAt,
+					Attributes:    attrs,
+				}
+			}
+
+			rulePath := filepath.Join(tmpDir, "rules.parquet")
+			if err := writeParquetFile(rulePath, rules); err != nil {
+				return nodesLoaded, edgesLoaded, 0, fmt.Errorf("failed to write Rule parquet: %w", err)
+			}
+
+			copyQuery = fmt.Sprintf(`COPY Rule FROM "%s"`, rulePath)
+			if _, _, _, err := k.ExecuteQuery(ctx, copyQuery, nil); err != nil {
+				return nodesLoaded, edgesLoaded, 0, fmt.Errorf("failed to COPY Rule: %w", err)
+			}
+			rulesLoaded = int64(len(rules))
+		}
+	}
+
+	return nodesLoaded, edgesLoaded, rulesLoaded, nil
+}
+
+// ladybugRule matches the Ladybug Rule node table column order for COPY FROM parquet.
+type ladybugRule struct {
+	CreatedAt     time.Time `parquet:"created_at,timestamp(microsecond)"`
+	UpdatedAt     time.Time `parquet:"updated_at,timestamp(microsecond)"`
+	ValidFrom     time.Time `parquet:"valid_from,timestamp(microsecond)"`
+	Uuid          string    `parquet:"uuid"`
+	Name          string    `parquet:"name"`
+	GroupID       string    `parquet:"group_id"`
+	EntityType    string    `parquet:"entity_type"`
+	Summary       string    `parquet:"summary"`
+	Content       string    `parquet:"content"`
+	Embedding     []float32 `parquet:"embedding,list"`
+	NameEmbedding []float32 `parquet:"name_embedding,list"`
+	Attributes    string    `parquet:"attributes"`
+}
+
+// factstore parquet row types for reading
+type factstoreNode struct {
+	CreatedAt   time.Time `parquet:"created_at,timestamp(microsecond)"`
+	ID          string    `parquet:"id"`
+	SourceID    string    `parquet:"source_id"`
+	GroupID     string    `parquet:"group_id"`
+	Name        string    `parquet:"name"`
+	Type        string    `parquet:"type"`
+	Description string    `parquet:"description"`
+	Embedding   []float32 `parquet:"embedding,list"`
+	ChunkIndex  int32     `parquet:"chunk_index"`
+}
+
+type factstoreTriple struct {
+	CreatedAt         time.Time `parquet:"created_at,timestamp(microsecond)"`
+	ID                string    `parquet:"id"`
+	SourceID          string    `parquet:"source_id"`
+	GroupID           string    `parquet:"group_id"`
+	Subject           string    `parquet:"subject"`
+	SubjectType       string    `parquet:"subject_type"`
+	Predicate         string    `parquet:"predicate"`
+	Object            string    `parquet:"object"`
+	ObjectType        string    `parquet:"object_type"`
+	Description       string    `parquet:"description"`
+	Condition         string    `parquet:"condition"`
+	Temporal          string    `parquet:"temporal"`
+	Location          string    `parquet:"location"`
+	Certainty         string    `parquet:"certainty"`
+	Scope             string    `parquet:"scope"`
+	SourceAttribution string    `parquet:"source_attribution"`
+	Embedding         []float32 `parquet:"embedding,list"`
+	Confidence        float64   `parquet:"confidence"`
+	ChunkIndex        int32     `parquet:"chunk_index"`
+}
+
+type factstoreRule struct {
+	CreatedAt         time.Time `parquet:"created_at,timestamp(microsecond)"`
+	ID                string    `parquet:"id"`
+	SourceID          string    `parquet:"source_id"`
+	Antecedent        string    `parquet:"antecedent"`
+	Consequent        string    `parquet:"consequent"`
+	Exception         string    `parquet:"exception"`
+	RuleType          string    `parquet:"rule_type"`
+	Scope             string    `parquet:"scope"`
+	SourceAttribution string    `parquet:"source_attribution"`
+	Embedding         []float32 `parquet:"embedding,list"`
+	Confidence        float64   `parquet:"confidence"`
+	ChunkIndex        int32     `parquet:"chunk_index"`
+}
+
+func buildTripleAttributes(t factstoreTriple) string {
+	attrs := make(map[string]interface{})
+	if t.Condition != "" {
+		attrs["condition"] = t.Condition
+	}
+	if t.Temporal != "" {
+		attrs["temporal"] = t.Temporal
+	}
+	if t.Location != "" {
+		attrs["location"] = t.Location
+	}
+	if t.Certainty != "" {
+		attrs["certainty"] = t.Certainty
+	}
+	if t.Scope != "" {
+		attrs["scope"] = t.Scope
+	}
+	if t.SourceAttribution != "" {
+		attrs["source_attribution"] = t.SourceAttribution
+	}
+	if t.Confidence > 0 {
+		attrs["confidence"] = t.Confidence
+	}
+	if t.SubjectType != "" {
+		attrs["subject_type"] = t.SubjectType
+	}
+	if t.ObjectType != "" {
+		attrs["object_type"] = t.ObjectType
+	}
+	data, err := json.Marshal(attrs)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
+func findFactstoreParquet(inputDir, name string) string {
+	path := filepath.Join(inputDir, name)
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return path
+	}
+	gzPath := path + ".gz"
+	if info, err := os.Stat(gzPath); err == nil && !info.IsDir() {
+		return gzPath
+	}
+	// Partitioned directory
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return path
+	}
+	stem := strings.TrimSuffix(strings.TrimSuffix(name, ".gz"), ".parquet")
+	dirPath := filepath.Join(inputDir, stem)
+	if info, err := os.Stat(dirPath); err == nil && info.IsDir() {
+		return dirPath
+	}
+	return ""
+}
+
+func readFactstoreNodes(path string) ([]factstoreNode, error) {
+	return readFactstoreParquetFileOrDir[factstoreNode](path)
+}
+
+func readFactstoreTriples(path string) ([]factstoreTriple, error) {
+	return readFactstoreParquetFileOrDir[factstoreTriple](path)
+}
+
+func readFactstoreRules(path string) ([]factstoreRule, error) {
+	return readFactstoreParquetFileOrDir[factstoreRule](path)
+}
+
+func readFactstoreParquetFileOrDir[T any](path string) ([]T, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if !info.IsDir() {
+		rows, err := parquet.ReadFile[T](path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+		return rows, nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, fmt.Errorf("read dir %s: %w", path, err)
+	}
+	var all []T
+	for _, e := range entries {
+		n := e.Name()
+		if strings.HasSuffix(n, ".parquet") && !strings.HasPrefix(n, "_") {
+			rows, err := parquet.ReadFile[T](filepath.Join(path, n))
+			if err != nil {
+				return nil, fmt.Errorf("read %s/%s: %w", path, n, err)
+			}
+			all = append(all, rows...)
+		}
+	}
+	return all, nil
+}
+
+func writeParquetFile[T any](path string, rows []T) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w := parquet.NewGenericWriter[T](f)
+	if _, err := w.Write(rows); err != nil {
+		_ = w.Close()
+		return err
+	}
+	return w.Close()
 }
 
 // GetNodesInTimeRange retrieves nodes in a time range
