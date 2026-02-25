@@ -1,4 +1,4 @@
-//go:build cgo
+//go:build cgo && system_ladybug
 
 package driver_test
 
