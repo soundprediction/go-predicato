@@ -420,6 +420,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 	fmt.Printf("  Phase 1/4: Done — %d nodes loaded in %s\n", nodesLoaded, time.Since(phaseStart).Round(time.Second))
 
 	// Phase 2: Load triples → edges (with entity name resolution via JOIN)
+	// The JOIN can produce multiple rows per triple when entities share names, so we
+	// deduplicate with ROW_NUMBER to keep exactly one row per (id, group_id).
 	fmt.Printf("  Phase 2/4: Loading triples into edges (with entity resolution JOIN)...\n")
 	phaseStart = time.Now()
 	edgeQuery := fmt.Sprintf(`INSERT INTO edges (
@@ -457,8 +459,9 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 			AND subj.group_id = COALESCE(t.group_id, '%s')
 		JOIN entities obj
 			ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
-			AND obj.group_id = COALESCE(t.group_id, '%s')`,
-		groupID, d.embeddingDim, d.embeddingDim, triplesPath, groupID, groupID)
+			AND obj.group_id = COALESCE(t.group_id, '%s')
+		QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
+		groupID, d.embeddingDim, d.embeddingDim, triplesPath, groupID, groupID, groupID)
 
 	res, err = d.db.ExecContext(ctx, edgeQuery)
 	if err != nil {
@@ -1858,6 +1861,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	}
 
 	// Phase 4: Insert required nodes only.
+	// Use INSERT OR IGNORE to skip duplicate primary keys — the same entity may
+	// appear in multiple topic-filtered parquet rows.
 	nodesLimit := ""
 	if filter.MaxNodes > 0 {
 		nodesLimit = fmt.Sprintf("LIMIT %d", filter.MaxNodes)
@@ -1891,6 +1896,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	nodesLoaded, _ := res.RowsAffected()
 
 	// Phase 5: Insert filtered triples as edges (with entity name resolution JOIN).
+	// The JOIN can produce multiple rows per triple when entities share names, so we
+	// deduplicate with ROW_NUMBER to keep exactly one row per (id, group_id).
 	edgeInsertSQL := fmt.Sprintf(`INSERT INTO edges (
 			uuid, group_id, source_id, target_id, type, name, fact,
 			fact_embedding, embedding, attributes, source_ids,
@@ -1926,8 +1933,9 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 			AND subj.group_id = COALESCE(t.group_id, '%s')
 		JOIN entities obj
 			ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
-			AND obj.group_id = COALESCE(t.group_id, '%s')`,
-		groupID, dim, dim, groupID, groupID)
+			AND obj.group_id = COALESCE(t.group_id, '%s')
+		QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
+		groupID, dim, dim, groupID, groupID, groupID)
 	res, err = conn.ExecContext(ctx, edgeInsertSQL)
 	if err != nil {
 		return nodesLoaded, 0, 0, fmt.Errorf("failed to insert filtered edges: %w", err)
