@@ -377,7 +377,20 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 		return 0, 0, 0, fmt.Errorf("extracted_triples parquet not found in %s", inputDir)
 	}
 
+	// Count input rows for progress reporting
+	var inputNodeCount, inputTripleCount int64
+	row := d.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", nodesPath))
+	if err := row.Scan(&inputNodeCount); err == nil {
+		fmt.Printf("  Input: %d nodes in %s\n", inputNodeCount, nodesPath)
+	}
+	row = d.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", triplesPath))
+	if err := row.Scan(&inputTripleCount); err == nil {
+		fmt.Printf("  Input: %d triples in %s\n", inputTripleCount, triplesPath)
+	}
+
 	// Phase 1: Load nodes → entities
+	fmt.Printf("  Phase 1/4: Loading nodes into entities...\n")
+	phaseStart := time.Now()
 	// Use CASE to skip embeddings with wrong length (e.g. 0 for nodes without embeddings)
 	nodeQuery := fmt.Sprintf(`INSERT INTO entities (
 			uuid, group_id, type, name, content, entity_type,
@@ -404,8 +417,11 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 		return 0, 0, 0, fmt.Errorf("failed to bulk load nodes from parquet: %w", err)
 	}
 	nodesLoaded, _ := res.RowsAffected()
+	fmt.Printf("  Phase 1/4: Done — %d nodes loaded in %s\n", nodesLoaded, time.Since(phaseStart).Round(time.Second))
 
 	// Phase 2: Load triples → edges (with entity name resolution via JOIN)
+	fmt.Printf("  Phase 2/4: Loading triples into edges (with entity resolution JOIN)...\n")
+	phaseStart = time.Now()
 	edgeQuery := fmt.Sprintf(`INSERT INTO edges (
 			uuid, group_id, source_id, target_id, type, name, fact,
 			fact_embedding, embedding, attributes, source_ids,
@@ -449,6 +465,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 		return nodesLoaded, 0, 0, fmt.Errorf("failed to bulk load edges from parquet: %w", err)
 	}
 	edgesLoaded, _ := res.RowsAffected()
+	fmt.Printf("  Phase 2/4: Done — %d edges loaded in %s\n", edgesLoaded, time.Since(phaseStart).Round(time.Second))
 
 	// Phase 3: Load rules (optional)
 	var rulesLoaded int64
@@ -457,6 +474,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 		rulesPath = resolveParquetPath(inputDir, "extracted_rules.parquet")
 	}
 	if rulesPath != "" {
+		fmt.Printf("  Phase 3/4: Loading rules...\n")
+		phaseStart = time.Now()
 		ruleQuery := fmt.Sprintf(`INSERT INTO edges (
 				uuid, group_id, source_id, target_id, type, name, fact,
 				fact_embedding, embedding, attributes, source_ids,
@@ -496,9 +515,14 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 			return nodesLoaded, edgesLoaded, 0, fmt.Errorf("failed to bulk load rules from parquet: %w", err)
 		}
 		rulesLoaded, _ = res.RowsAffected()
+		fmt.Printf("  Phase 3/4: Done — %d rules loaded in %s\n", rulesLoaded, time.Since(phaseStart).Round(time.Second))
+	} else {
+		fmt.Printf("  Phase 3/4: No rules parquet found — skipping\n")
 	}
 
 	// Recreate property graph to pick up new data
+	fmt.Printf("  Phase 4/4: Creating property graph...\n")
+	phaseStart = time.Now()
 	pgStmt := `CREATE OR REPLACE PROPERTY GRAPH knowledge_graph
 		VERTEX TABLES (entities LABEL entity)
 		EDGE TABLES (
@@ -507,6 +531,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 			      LABEL relates_to
 		)`
 	_, _ = d.db.ExecContext(ctx, pgStmt)
+	fmt.Printf("  Phase 4/4: Done in %s\n", time.Since(phaseStart).Round(time.Second))
 
 	return nodesLoaded, edgesLoaded, rulesLoaded, nil
 }

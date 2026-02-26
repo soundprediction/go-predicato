@@ -52,6 +52,7 @@ func init() {
 	parquetImportCmd.Flags().Int("embedding-dim", 1024, "embedding vector dimension")
 	parquetImportCmd.Flags().Int("threads", 0, "DuckDB thread count (0 = system default, duckpgq only)")
 	parquetImportCmd.Flags().String("memory-limit", "", "DuckDB memory limit (e.g., '900GB', duckpgq only)")
+	parquetImportCmd.Flags().String("temp-dir", "", "DuckDB temp directory for disk spill (duckpgq only, defaults to system temp)")
 	parquetImportCmd.Flags().Bool("force", false, "overwrite output file if it exists")
 	parquetImportCmd.Flags().Bool("skip-indexes", false, "skip index creation")
 
@@ -67,6 +68,7 @@ func runParquetImport(cmd *cobra.Command, args []string) error {
 	embDim, _ := cmd.Flags().GetInt("embedding-dim")
 	threads, _ := cmd.Flags().GetInt("threads")
 	memLimit, _ := cmd.Flags().GetString("memory-limit")
+	tempDir, _ := cmd.Flags().GetString("temp-dir")
 	force, _ := cmd.Flags().GetBool("force")
 	skipIndexes, _ := cmd.Flags().GetBool("skip-indexes")
 
@@ -97,6 +99,9 @@ func runParquetImport(cmd *cobra.Command, args []string) error {
 	if memLimit != "" {
 		fmt.Printf("Memory limit:   %s\n", memLimit)
 	}
+	if tempDir != "" {
+		fmt.Printf("Temp dir:       %s\n", tempDir)
+	}
 	fmt.Println()
 
 	totalStart := time.Now()
@@ -120,6 +125,18 @@ func runParquetImport(cmd *cobra.Command, args []string) error {
 		if memLimit != "" {
 			if _, _, _, err := graphDriver.ExecuteQuery(ctx, fmt.Sprintf("SET memory_limit = '%s'", memLimit), nil); err != nil {
 				fmt.Printf("Warning: failed to set memory limit: %v\n", err)
+			}
+		}
+		if tempDir != "" {
+			if err := os.MkdirAll(tempDir, 0o755); err != nil {
+				fmt.Printf("Warning: failed to create temp dir %s: %v\n", tempDir, err)
+			}
+			if _, _, _, err := graphDriver.ExecuteQuery(ctx, fmt.Sprintf("SET temp_directory = '%s'", tempDir), nil); err != nil {
+				fmt.Printf("Warning: failed to set temp_directory: %v\n", err)
+			}
+			// Remove the default max_temp_directory_size limit so DuckDB can use all available disk
+			if _, _, _, err := graphDriver.ExecuteQuery(ctx, "SET max_temp_directory_size = '1TB'", nil); err != nil {
+				fmt.Printf("Warning: failed to set max_temp_directory_size: %v\n", err)
 			}
 		}
 	}

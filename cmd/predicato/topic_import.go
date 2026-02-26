@@ -54,6 +54,7 @@ func init() {
 	topicImportCmd.Flags().Int("embedding-dim", 1024, "embedding vector dimension")
 	topicImportCmd.Flags().Int("threads", 0, "DuckDB thread count (0 = system default, duckpgq only)")
 	topicImportCmd.Flags().String("memory-limit", "", "DuckDB memory limit (e.g., '900GB', duckpgq only)")
+	topicImportCmd.Flags().String("temp-dir", "", "DuckDB temp directory for disk spill (duckpgq only, defaults to system temp)")
 	topicImportCmd.Flags().Int64("max-nodes", 0, "maximum nodes to insert (0 = unlimited)")
 	topicImportCmd.Flags().Int64("max-edges", 0, "maximum edges to insert (0 = unlimited)")
 	topicImportCmd.Flags().Bool("force", false, "overwrite output file if it exists")
@@ -74,6 +75,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	embDim, _ := cmd.Flags().GetInt("embedding-dim")
 	threads, _ := cmd.Flags().GetInt("threads")
 	memLimit, _ := cmd.Flags().GetString("memory-limit")
+	tempDir, _ := cmd.Flags().GetString("temp-dir")
 	maxNodes, _ := cmd.Flags().GetInt64("max-nodes")
 	maxEdges, _ := cmd.Flags().GetInt64("max-edges")
 	force, _ := cmd.Flags().GetBool("force")
@@ -176,6 +178,17 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		if memLimit != "" {
 			if _, _, _, err := graphDriver.ExecuteQuery(ctx, fmt.Sprintf("SET memory_limit = '%s'", memLimit), nil); err != nil {
 				fmt.Printf("Warning: failed to set memory limit: %v\n", err)
+			}
+		}
+		if tempDir != "" {
+			if err := os.MkdirAll(tempDir, 0o755); err != nil {
+				fmt.Printf("Warning: failed to create temp dir %s: %v\n", tempDir, err)
+			}
+			if _, _, _, err := graphDriver.ExecuteQuery(ctx, fmt.Sprintf("SET temp_directory = '%s'", tempDir), nil); err != nil {
+				fmt.Printf("Warning: failed to set temp_directory: %v\n", err)
+			}
+			if _, _, _, err := graphDriver.ExecuteQuery(ctx, "SET max_temp_directory_size = '1TB'", nil); err != nil {
+				fmt.Printf("Warning: failed to set max_temp_directory_size: %v\n", err)
 			}
 		}
 	}
