@@ -546,6 +546,24 @@ make build-cli
 # Start HTTP server
 ./bin/predicato server --port 8080
 
+# Import parquet files directly into a graph (no PostgreSQL needed)
+./bin/predicato parquet-import \
+  --driver duckpgq \
+  --input-dir ./parquet-files \
+  --output ./knowledge_graph.duckdb \
+  --group-id wikidata
+
+# Import into Ladybug instead
+./bin/predicato parquet-import \
+  --driver ladybug \
+  --input-dir ./parquet-files \
+  --output ./knowledge_graph.db
+
+# Convert between graph drivers
+./bin/predicato convert-graph \
+  --source-driver duckpgq --source-uri ./graph.duckdb \
+  --dest-driver ladybug --dest-uri ./graph.db
+
 # API endpoints
 POST /api/v1/ingest/messages  # Add content
 POST /api/v1/ingest/extract   # Extract entities (two-stage)
@@ -554,6 +572,26 @@ POST /api/v1/search           # Search knowledge graph
 POST /api/v1/search/facts     # Search fact store (cosine similarity)
 GET  /api/v1/episodes/:id     # Get episodes
 ```
+
+### Parquet Import
+
+The `parquet-import` command loads predicato-format parquet files directly into a knowledge graph, bypassing PostgreSQL. This is ideal for batch/HPC workloads where you want a self-contained graph database file.
+
+**Supported drivers:**
+- **DuckPGQ**: Uses DuckDB's native `read_parquet()` for zero-copy columnar loading. Best for large datasets on high-memory nodes.
+- **Ladybug**: Uses Ladybug's native `COPY FROM` parquet import. Generates intermediate parquet files matching Ladybug's schema.
+
+**Expected input files:**
+- `nodes.parquet` — entities with embeddings
+- `extracted_triples.parquet.gz` — triples with embeddings
+- `extracted_rules.parquet.gz` — rules (optional)
+- These are produced by the wikidata pipeline (`duckdb_to_predicato.py` or `wikidata_to_predicato.py`).
+
+**DuckPGQ-specific options:**
+- `--threads N` — DuckDB thread count
+- `--memory-limit SIZE` — DuckDB memory limit (e.g., `900GB`)
+
+Both drivers also support `BulkLoadFromPostgres()` for loading directly from a PostgreSQL fact store.
 
 > [!NOTE]
 > **GLiNER2 Support**: Use the `--gliner2` flag to enable the GLiNER2 entity extraction provider.

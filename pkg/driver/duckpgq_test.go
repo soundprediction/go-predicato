@@ -4,10 +4,12 @@ package driver_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/soundprediction/predicato/pkg/driver"
 	"github.com/soundprediction/predicato/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -467,4 +469,166 @@ func TestDuckPGQDriver_GraphExporter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, edgeCount)
+}
+
+// parquetNode matches the factstore nodes.parquet schema for test generation.
+type parquetNode struct {
+	CreatedAt   time.Time `parquet:"created_at,timestamp(microsecond)"`
+	ID          string    `parquet:"id"`
+	SourceID    string    `parquet:"source_id"`
+	GroupID     string    `parquet:"group_id"`
+	Name        string    `parquet:"name"`
+	Type        string    `parquet:"type"`
+	Description string    `parquet:"description"`
+	Embedding   []float32 `parquet:"embedding,list"`
+	ChunkIndex  int32     `parquet:"chunk_index"`
+}
+
+// parquetTriple matches the factstore extracted_triples.parquet schema for test generation.
+type parquetTriple struct {
+	CreatedAt         time.Time `parquet:"created_at,timestamp(microsecond)"`
+	ID                string    `parquet:"id"`
+	SourceID          string    `parquet:"source_id"`
+	GroupID           string    `parquet:"group_id"`
+	Subject           string    `parquet:"subject"`
+	SubjectType       string    `parquet:"subject_type"`
+	Predicate         string    `parquet:"predicate"`
+	Object            string    `parquet:"object"`
+	ObjectType        string    `parquet:"object_type"`
+	Description       string    `parquet:"description"`
+	Condition         string    `parquet:"condition"`
+	Temporal          string    `parquet:"temporal"`
+	Location          string    `parquet:"location"`
+	Certainty         string    `parquet:"certainty"`
+	Scope             string    `parquet:"scope"`
+	SourceAttribution string    `parquet:"source_attribution"`
+	Embedding         []float32 `parquet:"embedding,list"`
+	Confidence        float64   `parquet:"confidence"`
+	ChunkIndex        int32     `parquet:"chunk_index"`
+}
+
+// parquetRule matches the factstore extracted_rules.parquet schema.
+type parquetRule struct {
+	CreatedAt         time.Time `parquet:"created_at,timestamp(microsecond)"`
+	ID                string    `parquet:"id"`
+	SourceID          string    `parquet:"source_id"`
+	Antecedent        string    `parquet:"antecedent"`
+	Consequent        string    `parquet:"consequent"`
+	Exception         string    `parquet:"exception"`
+	RuleType          string    `parquet:"rule_type"`
+	Scope             string    `parquet:"scope"`
+	SourceAttribution string    `parquet:"source_attribution"`
+	Embedding         []float32 `parquet:"embedding,list"`
+	Confidence        float64   `parquet:"confidence"`
+	ChunkIndex        int32     `parquet:"chunk_index"`
+}
+
+func writeTestParquet[T any](t *testing.T, path string, rows []T) {
+	t.Helper()
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	defer f.Close()
+	w := parquet.NewGenericWriter[T](f)
+	_, err = w.Write(rows)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+}
+
+func TestDuckPGQDriver_BulkLoadFromParquet(t *testing.T) {
+	// Create temp dir with test parquet files
+	inputDir := t.TempDir()
+	now := time.Now().Truncate(time.Microsecond)
+	emb := make([]float32, 4) // Use small embeddings for test
+	for i := range emb {
+		emb[i] = float32(i) * 0.1
+	}
+
+	// Write nodes parquet
+	nodes := []parquetNode{
+		{ID: "n1", SourceID: "wikidata", GroupID: "test", Name: "Aspirin", Type: "MEDICATION", Description: "pain medication", Embedding: emb, CreatedAt: now},
+		{ID: "n2", SourceID: "wikidata", GroupID: "test", Name: "Headache", Type: "CONDITION", Description: "head pain", Embedding: emb, CreatedAt: now},
+		{ID: "n3", SourceID: "wikidata", GroupID: "test", Name: "Ibuprofen", Type: "MEDICATION", Description: "anti-inflammatory", Embedding: emb, CreatedAt: now},
+	}
+	writeTestParquet(t, filepath.Join(inputDir, "nodes.parquet"), nodes)
+
+	// Write triples parquet
+	triples := []parquetTriple{
+		{
+			ID: "t1", SourceID: "wikidata", GroupID: "test",
+			Subject: "Aspirin", SubjectType: "MEDICATION",
+			Predicate: "TREATS",
+			Object:    "Headache", ObjectType: "CONDITION",
+			Description: "Aspirin TREATS Headache",
+			Certainty:   "established", SourceAttribution: "Wikidata",
+			Embedding: emb, Confidence: 0.95, CreatedAt: now,
+		},
+		{
+			ID: "t2", SourceID: "wikidata", GroupID: "test",
+			Subject: "Ibuprofen", SubjectType: "MEDICATION",
+			Predicate: "TREATS",
+			Object:    "Headache", ObjectType: "CONDITION",
+			Description: "Ibuprofen TREATS Headache",
+			Embedding:   emb, Confidence: 0.75, CreatedAt: now,
+		},
+		{
+			ID: "t3", SourceID: "wikidata", GroupID: "test",
+			Subject: "Aspirin", SubjectType: "MEDICATION",
+			Predicate: "INTERACTS_WITH",
+			Object:    "Unknown Drug", ObjectType: "MEDICATION",
+			Description: "Aspirin INTERACTS_WITH Unknown Drug",
+			Embedding:   emb, Confidence: 0.5, CreatedAt: now,
+		},
+	}
+	writeTestParquet(t, filepath.Join(inputDir, "extracted_triples.parquet.gz"), triples)
+
+	// Write rules parquet
+	rules := []parquetRule{
+		{
+			ID: "r1", SourceID: "wikidata",
+			Antecedent: "patient has headache", Consequent: "aspirin may be used",
+			Exception: "patient is on blood thinners",
+			RuleType:  "treatment_indication", Scope: "general",
+			SourceAttribution: "Wikidata",
+			Embedding:         emb, Confidence: 0.9, CreatedAt: now,
+		},
+	}
+	writeTestParquet(t, filepath.Join(inputDir, "extracted_rules.parquet.gz"), rules)
+
+	// Create DuckPGQ driver with small embedding dim
+	dbPath := filepath.Join(t.TempDir(), "test_parquet_import.db")
+	d, err := driver.NewDuckPGQDriver(dbPath, 4)
+	require.NoError(t, err)
+	defer d.Close()
+
+	ctx := context.Background()
+
+	// Run BulkLoadFromParquet
+	nodesLoaded, edgesLoaded, rulesLoaded, err := d.BulkLoadFromParquet(ctx, inputDir, "test")
+	require.NoError(t, err)
+
+	// Verify counts
+	assert.Equal(t, int64(3), nodesLoaded, "should load 3 nodes")
+	assert.Equal(t, int64(2), edgesLoaded, "should load 2 edges (1 skipped for unresolved 'Unknown Drug')")
+	assert.Equal(t, int64(1), rulesLoaded, "should load 1 rule")
+
+	// Verify via GetStats
+	stats, err := d.GetStats(ctx, "test")
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), stats.NodeCount, "stats should show 3 nodes")
+
+	// Verify we can read back a node
+	node, err := d.GetNode(ctx, "n1", "test")
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	assert.Equal(t, "Aspirin", node.Name)
+	assert.Equal(t, "MEDICATION", node.EntityType)
+	assert.Equal(t, "pain medication", node.Content)
+
+	// Verify edge was created correctly
+	edge, err := d.GetEdge(ctx, "t1", "test")
+	require.NoError(t, err)
+	require.NotNil(t, edge)
+	assert.Equal(t, "TREATS", edge.Name)
+	assert.Equal(t, "n1", edge.SourceID) // Aspirin
+	assert.Equal(t, "n2", edge.TargetID) // Headache
 }

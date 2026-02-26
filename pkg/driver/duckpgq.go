@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -237,6 +238,317 @@ func (d *DuckPGQDriver) UpsertNodes(ctx context.Context, nodes []*types.Node) er
 		}
 	}
 	return nil
+}
+
+// BulkLoadFromPostgres uses DuckDB's postgres_scanner extension to bulk-load
+// extracted facts directly from a PostgreSQL fact store into the graph tables.
+// This is orders of magnitude faster than row-by-row insertion for large datasets.
+// Returns (nodesLoaded, edgesLoaded, rulesLoaded, error).
+func (d *DuckPGQDriver) BulkLoadFromPostgres(ctx context.Context, pgConnStr, sourceID, groupID string) (int64, int64, int64, error) {
+	// Install and load postgres_scanner
+	for _, stmt := range []string{
+		"INSTALL postgres_scanner",
+		"LOAD postgres_scanner",
+	} {
+		if _, err := d.db.ExecContext(ctx, stmt); err != nil {
+			return 0, 0, 0, fmt.Errorf("failed to load postgres_scanner: %w", err)
+		}
+	}
+
+	// Attach PostgreSQL database
+	attachStmt := fmt.Sprintf("ATTACH '%s' AS pg (TYPE POSTGRES, READ_ONLY)", pgConnStr)
+	if _, err := d.db.ExecContext(ctx, attachStmt); err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to attach postgres: %w", err)
+	}
+	defer d.db.ExecContext(ctx, "DETACH pg")
+
+	// Phase 1: Load nodes from extracted_nodes
+	nodeQuery := fmt.Sprintf(`INSERT INTO entities (uuid, group_id, type, name, content, summary, entity_type, embedding, created_at, updated_at, valid_from, source_ids)
+		SELECT
+			n.id,
+			'%s',
+			COALESCE(NULLIF(n.type, ''), 'entity'),
+			n.name,
+			'',
+			COALESCE(n.description, ''),
+			COALESCE(n.type, ''),
+			n.embedding::FLOAT[%d],
+			n.created_at,
+			n.created_at,
+			n.created_at,
+			'["%s"]'
+		FROM pg.extracted_nodes n
+		WHERE n.source_id = '%s'`,
+		groupID, d.embeddingDim, sourceID, sourceID)
+
+	res, err := d.db.ExecContext(ctx, nodeQuery)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to bulk load nodes: %w", err)
+	}
+	nodesLoaded, _ := res.RowsAffected()
+
+	// Phase 2: Load edges from extracted_triples (joining to get node UUIDs)
+	edgeQuery := fmt.Sprintf(`INSERT INTO edges (uuid, group_id, source_id, target_id, type, name, fact, embedding, created_at, updated_at, valid_from, source_ids, strength)
+		SELECT
+			t.id,
+			'%s',
+			sn.id,
+			tn.id,
+			'entity',
+			t.predicate,
+			COALESCE(t.description, ''),
+			t.embedding::FLOAT[%d],
+			t.created_at,
+			t.created_at,
+			t.created_at,
+			'["%s"]',
+			COALESCE(t.confidence, 0.0)
+		FROM pg.extracted_triples t
+		JOIN pg.extracted_nodes sn ON sn.name = t.subject AND sn.source_id = '%s'
+		JOIN pg.extracted_nodes tn ON tn.name = t.object AND tn.source_id = '%s'
+		WHERE t.source_id = '%s'`,
+		groupID, d.embeddingDim, sourceID, sourceID, sourceID, sourceID)
+
+	res, err = d.db.ExecContext(ctx, edgeQuery)
+	if err != nil {
+		return nodesLoaded, 0, 0, fmt.Errorf("failed to bulk load edges: %w", err)
+	}
+	edgesLoaded, _ := res.RowsAffected()
+
+	// Phase 3: Load rules as entity nodes
+	ruleQuery := fmt.Sprintf(`INSERT INTO entities (uuid, group_id, type, name, content, summary, entity_type, embedding, created_at, updated_at, valid_from, source_ids, metadata)
+		SELECT
+			r.id,
+			'%s',
+			'rule',
+			CASE WHEN r.rule_type != '' THEN r.rule_type || ': ' ELSE '' END || r.antecedent || ' → ' || r.consequent,
+			'IF ' || r.antecedent || ' THEN ' || r.consequent,
+			COALESCE(r.description, ''),
+			COALESCE(r.rule_type, ''),
+			r.embedding::FLOAT[%d],
+			r.created_at,
+			r.created_at,
+			r.created_at,
+			'["%s"]',
+			json_object('scope', COALESCE(r.scope, ''), 'source_attribution', COALESCE(r.source_attribution, ''), 'confidence', COALESCE(r.confidence, 0.0))
+		FROM pg.extracted_rules r
+		WHERE r.source_id = '%s'`,
+		groupID, d.embeddingDim, sourceID, sourceID)
+
+	res, err = d.db.ExecContext(ctx, ruleQuery)
+	if err != nil {
+		return nodesLoaded, edgesLoaded, 0, fmt.Errorf("failed to bulk load rules: %w", err)
+	}
+	rulesLoaded, _ := res.RowsAffected()
+
+	// Recreate property graph to pick up new data
+	pgStmt := `CREATE OR REPLACE PROPERTY GRAPH knowledge_graph
+		VERTEX TABLES (entities LABEL entity)
+		EDGE TABLES (
+			edges SOURCE KEY (source_id, group_id) REFERENCES entities (uuid, group_id)
+			      DESTINATION KEY (target_id, group_id) REFERENCES entities (uuid, group_id)
+			      LABEL relates_to
+		)`
+	_, _ = d.db.ExecContext(ctx, pgStmt)
+
+	return nodesLoaded, edgesLoaded, rulesLoaded, nil
+}
+
+// BulkLoadFromParquet uses DuckDB's native read_parquet() to bulk-load
+// predicato fact store parquet files directly into the graph tables.
+// This is the fastest path for loading parquet files produced by the
+// wikidata pipeline (duckdb_to_predicato.py / wikidata_to_predicato.py).
+//
+// inputDir should contain: nodes.parquet, extracted_triples.parquet.gz,
+// and optionally extracted_rules.parquet.gz.
+//
+// Returns (nodesLoaded, edgesLoaded, rulesLoaded, error).
+func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, groupID string) (int64, int64, int64, error) {
+	// Resolve parquet file paths
+	nodesPath := resolveParquetPath(inputDir, "nodes.parquet")
+	if nodesPath == "" {
+		return 0, 0, 0, fmt.Errorf("nodes.parquet not found in %s", inputDir)
+	}
+	triplesPath := resolveParquetPath(inputDir, "extracted_triples.parquet.gz")
+	if triplesPath == "" {
+		triplesPath = resolveParquetPath(inputDir, "extracted_triples.parquet")
+	}
+	if triplesPath == "" {
+		return 0, 0, 0, fmt.Errorf("extracted_triples parquet not found in %s", inputDir)
+	}
+
+	// Phase 1: Load nodes → entities
+	// Use CASE to skip embeddings with wrong length (e.g. 0 for nodes without embeddings)
+	nodeQuery := fmt.Sprintf(`INSERT INTO entities (
+			uuid, group_id, type, name, content, entity_type,
+			embedding, name_embedding, source_ids,
+			created_at, updated_at, valid_from
+		)
+		SELECT
+			id,
+			COALESCE(group_id, '%s'),
+			'entity',
+			COALESCE(name, ''),
+			COALESCE(description, ''),
+			COALESCE(type, ''),
+			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+			json_array(COALESCE(source_id, 'wikidata')),
+			COALESCE(created_at, CURRENT_TIMESTAMP),
+			CURRENT_TIMESTAMP,
+			COALESCE(created_at, CURRENT_TIMESTAMP)
+		FROM read_parquet('%s')`, groupID, d.embeddingDim, d.embeddingDim, nodesPath)
+
+	res, err := d.db.ExecContext(ctx, nodeQuery)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to bulk load nodes from parquet: %w", err)
+	}
+	nodesLoaded, _ := res.RowsAffected()
+
+	// Phase 2: Load triples → edges (with entity name resolution via JOIN)
+	edgeQuery := fmt.Sprintf(`INSERT INTO edges (
+			uuid, group_id, source_id, target_id, type, name, fact,
+			fact_embedding, embedding, attributes, source_ids,
+			strength, created_at, updated_at, valid_from
+		)
+		SELECT
+			t.id,
+			COALESCE(t.group_id, '%s'),
+			subj.uuid,
+			obj.uuid,
+			'entity',
+			COALESCE(t.predicate, ''),
+			COALESCE(t.description, ''),
+			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+			(SELECT json_group_object(k, v) FROM (
+				VALUES
+					('condition', t.condition),
+					('temporal', t.temporal),
+					('location', t.location),
+					('certainty', t.certainty),
+					('scope', t.scope),
+					('source_attribution', t.source_attribution)
+			) AS ctx(k, v) WHERE v IS NOT NULL AND v != ''),
+			json_array(COALESCE(t.source_id, 'wikidata')),
+			COALESCE(t.confidence, 0.0),
+			COALESCE(t.created_at, CURRENT_TIMESTAMP),
+			CURRENT_TIMESTAMP,
+			COALESCE(t.created_at, CURRENT_TIMESTAMP)
+		FROM read_parquet('%s') t
+		JOIN entities subj
+			ON LOWER(TRIM(t.subject)) = LOWER(TRIM(subj.name))
+			AND subj.group_id = COALESCE(t.group_id, '%s')
+		JOIN entities obj
+			ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
+			AND obj.group_id = COALESCE(t.group_id, '%s')`,
+		groupID, d.embeddingDim, d.embeddingDim, triplesPath, groupID, groupID)
+
+	res, err = d.db.ExecContext(ctx, edgeQuery)
+	if err != nil {
+		return nodesLoaded, 0, 0, fmt.Errorf("failed to bulk load edges from parquet: %w", err)
+	}
+	edgesLoaded, _ := res.RowsAffected()
+
+	// Phase 3: Load rules (optional)
+	var rulesLoaded int64
+	rulesPath := resolveParquetPath(inputDir, "extracted_rules.parquet.gz")
+	if rulesPath == "" {
+		rulesPath = resolveParquetPath(inputDir, "extracted_rules.parquet")
+	}
+	if rulesPath != "" {
+		ruleQuery := fmt.Sprintf(`INSERT INTO edges (
+				uuid, group_id, source_id, target_id, type, name, fact,
+				fact_embedding, embedding, attributes, source_ids,
+				strength, created_at, updated_at, valid_from
+			)
+			SELECT
+				id,
+				'%s',
+				'',
+				'',
+				COALESCE(rule_type, 'rule'),
+				'RULE',
+				CASE
+					WHEN COALESCE(exception, '') != ''
+					THEN 'IF ' || antecedent || ' THEN ' || consequent || ' UNLESS ' || exception
+					ELSE 'IF ' || antecedent || ' THEN ' || consequent
+				END,
+				CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+				CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+				json_object(
+					'antecedent', antecedent,
+					'consequent', consequent,
+					'exception', COALESCE(exception, ''),
+					'rule_type', COALESCE(rule_type, ''),
+					'scope', COALESCE(scope, ''),
+					'source_attribution', COALESCE(source_attribution, '')
+				),
+				json_array(COALESCE(source_id, 'wikidata')),
+				COALESCE(confidence, 0.0),
+				COALESCE(created_at, CURRENT_TIMESTAMP),
+				CURRENT_TIMESTAMP,
+				COALESCE(created_at, CURRENT_TIMESTAMP)
+			FROM read_parquet('%s')`, groupID, d.embeddingDim, d.embeddingDim, rulesPath)
+
+		res, err = d.db.ExecContext(ctx, ruleQuery)
+		if err != nil {
+			return nodesLoaded, edgesLoaded, 0, fmt.Errorf("failed to bulk load rules from parquet: %w", err)
+		}
+		rulesLoaded, _ = res.RowsAffected()
+	}
+
+	// Recreate property graph to pick up new data
+	pgStmt := `CREATE OR REPLACE PROPERTY GRAPH knowledge_graph
+		VERTEX TABLES (entities LABEL entity)
+		EDGE TABLES (
+			edges SOURCE KEY (source_id, group_id) REFERENCES entities (uuid, group_id)
+			      DESTINATION KEY (target_id, group_id) REFERENCES entities (uuid, group_id)
+			      LABEL relates_to
+		)`
+	_, _ = d.db.ExecContext(ctx, pgStmt)
+
+	return nodesLoaded, edgesLoaded, rulesLoaded, nil
+}
+
+// resolveParquetPath finds a parquet file or partitioned directory in inputDir.
+// Returns the path suitable for DuckDB's read_parquet(), or empty string if not found.
+func resolveParquetPath(inputDir, name string) string {
+	// Try exact file
+	path := inputDir + "/" + name
+	if fileExists(path) {
+		return path
+	}
+
+	// Try with .gz suffix
+	gzPath := path + ".gz"
+	if fileExists(gzPath) {
+		return gzPath
+	}
+
+	// Try as partitioned directory (glob pattern for DuckDB)
+	if dirExists(path) {
+		return path + "/*.parquet"
+	}
+
+	// Try stem as directory
+	stem := strings.TrimSuffix(strings.TrimSuffix(name, ".gz"), ".parquet")
+	dirPath := inputDir + "/" + stem
+	if dirExists(dirPath) {
+		return dirPath + "/*.parquet"
+	}
+
+	return ""
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func (d *DuckPGQDriver) GetNode(ctx context.Context, nodeID, groupID string) (*types.Node, error) {
