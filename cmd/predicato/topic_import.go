@@ -58,6 +58,8 @@ func init() {
 	topicImportCmd.Flags().String("temp-dir", "", "DuckDB temp directory for disk spill (duckpgq only, defaults to system temp)")
 	topicImportCmd.Flags().Int64("max-nodes", 0, "maximum nodes to insert (0 = unlimited)")
 	topicImportCmd.Flags().Int64("max-edges", 0, "maximum edges to insert (0 = unlimited)")
+	topicImportCmd.Flags().Float64("edge-threshold", 0.4, "minimum cosine similarity for expansion edges (neighbor discovery)")
+	topicImportCmd.Flags().Bool("build-communities", false, "run community detection after graph construction")
 	topicImportCmd.Flags().Bool("force", false, "overwrite output file if it exists")
 	topicImportCmd.Flags().Bool("skip-indexes", false, "skip index creation")
 
@@ -80,6 +82,8 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	tempDir, _ := cmd.Flags().GetString("temp-dir")
 	maxNodes, _ := cmd.Flags().GetInt64("max-nodes")
 	maxEdges, _ := cmd.Flags().GetInt64("max-edges")
+	edgeThreshold, _ := cmd.Flags().GetFloat64("edge-threshold")
+	buildCommunities, _ := cmd.Flags().GetBool("build-communities")
 	force, _ := cmd.Flags().GetBool("force")
 	skipIndexes, _ := cmd.Flags().GetBool("skip-indexes")
 
@@ -163,6 +167,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	if maxEdges > 0 {
 		fmt.Printf("Max edges:      %d\n", maxEdges)
 	}
+	fmt.Printf("Edge threshold: %.2f (expansion edges)\n", edgeThreshold)
 	fmt.Println()
 
 	totalStart := time.Now()
@@ -211,6 +216,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		TripleThreshold: tripleThreshold,
 		MaxNodes:        maxNodes,
 		MaxEdges:        maxEdges,
+		EdgeThreshold:   edgeThreshold,
 	}
 
 	fmt.Println("Loading topic-filtered parquet files...")
@@ -233,6 +239,15 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Warning: index creation partially failed: %v\n", err)
 		}
 		fmt.Printf("  Elapsed: %s\n\n", time.Since(indexStart).Round(time.Second))
+	}
+
+	if buildCommunities {
+		fmt.Println("Building communities...")
+		commStart := time.Now()
+		if err := graphDriver.BuildCommunities(ctx, groupID); err != nil {
+			fmt.Printf("Warning: community detection failed: %v\n", err)
+		}
+		fmt.Printf("  Elapsed: %s\n\n", time.Since(commStart).Round(time.Second))
 	}
 
 	fmt.Println("=== Validation ===")
