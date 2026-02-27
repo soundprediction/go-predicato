@@ -61,6 +61,7 @@ func init() {
 	topicImportCmd.Flags().Int64("max-nodes", 0, "maximum nodes to insert (0 = unlimited)")
 	topicImportCmd.Flags().Int64("max-edges", 0, "maximum edges to insert (0 = unlimited)")
 	topicImportCmd.Flags().Float64("edge-threshold", 0.4, "minimum cosine similarity for expansion edges (neighbor discovery)")
+	topicImportCmd.Flags().Int64("edge-batch-size", 10000, "number of edges to INSERT per batch (reduces peak memory)")
 	topicImportCmd.Flags().Bool("build-communities", false, "run community detection after graph construction")
 	topicImportCmd.Flags().Bool("force", false, "overwrite output file if it exists")
 	topicImportCmd.Flags().Bool("skip-indexes", false, "skip index creation")
@@ -85,6 +86,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	maxNodes, _ := cmd.Flags().GetInt64("max-nodes")
 	maxEdges, _ := cmd.Flags().GetInt64("max-edges")
 	edgeThreshold, _ := cmd.Flags().GetFloat64("edge-threshold")
+	edgeBatchSize, _ := cmd.Flags().GetInt64("edge-batch-size")
 	buildCommunities, _ := cmd.Flags().GetBool("build-communities")
 	force, _ := cmd.Flags().GetBool("force")
 	skipIndexes, _ := cmd.Flags().GetBool("skip-indexes")
@@ -219,6 +221,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		MaxNodes:        maxNodes,
 		MaxEdges:        maxEdges,
 		EdgeThreshold:   edgeThreshold,
+		EdgeBatchSize:   edgeBatchSize,
 	}
 
 	fmt.Println("Loading topic-filtered parquet files...")

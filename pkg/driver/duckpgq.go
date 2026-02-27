@@ -1818,6 +1818,11 @@ type TopicFilter struct {
 	// (edges collected during neighbor expansion that were not in the filtered set).
 	// When 0, defaults to 0.4.
 	EdgeThreshold float64
+
+	// EdgeBatchSize is the number of triples to INSERT per batch when joining
+	// against the entities table. Smaller batches reduce peak memory.
+	// When 0, defaults to 10000.
+	EdgeBatchSize int64
 }
 
 // TypeCount holds a value and its occurrence count.
@@ -2072,6 +2077,12 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		edgeThreshold = 0.4
 	}
 
+	// EdgeBatchSize defaults to 10000 when not set.
+	edgeBatchSize := filter.EdgeBatchSize
+	if edgeBatchSize == 0 {
+		edgeBatchSize = 10000
+	}
+
 	totalPhases := 12
 
 	// Phase 1: Filter nodes by embedding similarity.
@@ -2298,52 +2309,67 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	coreNodesLoaded, _ := res.RowsAffected()
 	fmt.Printf("  Phase 5/%d: Done — %d core nodes inserted in %s\n", totalPhases, coreNodesLoaded, time.Since(phaseStart).Round(time.Second))
 
-	// Phase 6: Insert filtered triples as edges (entity resolution JOIN + dedup).
-	fmt.Printf("  Phase 6/%d: Inserting filtered triples as edges...\n", totalPhases)
+	// Phase 6: Insert filtered triples as edges in batches (entity resolution JOIN + dedup).
+	fmt.Printf("  Phase 6/%d: Inserting filtered triples as edges (batch size %d)...\n", totalPhases, edgeBatchSize)
 	phaseStart = time.Now()
-	filtEdgeInsertSQL := fmt.Sprintf(`INSERT INTO edges (
-			uuid, group_id, source_id, target_id, type, name, fact,
-			fact_embedding, embedding, attributes, source_ids,
-			strength, created_at, updated_at, valid_from
-		)
-		SELECT
-			t.id,
-			COALESCE(t.group_id, '%s'),
-			subj.uuid,
-			obj.uuid,
-			'entity',
-			COALESCE(t.predicate, ''),
-			`+factDescriptionExpr+`,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			(SELECT json_group_object(k, v) FROM (
-				VALUES
-					('condition', t.condition),
-					('temporal', t.temporal),
-					('location', t.location),
-					('certainty', t.certainty),
-					('scope', t.scope),
-					('source_attribution', t.source_attribution)
-			) AS ctx(k, v) WHERE v IS NOT NULL AND v != ''),
-			json_array(COALESCE(t.source_id, 'wikidata')),
-			COALESCE(t.confidence, 0.0),
-			COALESCE(t.created_at, CURRENT_TIMESTAMP),
-			CURRENT_TIMESTAMP,
-			COALESCE(t.created_at, CURRENT_TIMESTAMP)
-		FROM _filt_triples t
-		JOIN entities subj
-			ON LOWER(TRIM(t.subject)) = LOWER(TRIM(subj.name))
-			AND subj.group_id = COALESCE(t.group_id, '%s')
-		JOIN entities obj
-			ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
-			AND obj.group_id = COALESCE(t.group_id, '%s')
-		QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
-		groupID, dim, dim, groupID, groupID, groupID)
-	res, err = conn.ExecContext(ctx, filtEdgeInsertSQL)
-	if err != nil {
-		return coreNodesLoaded, 0, 0, fmt.Errorf("failed to insert filtered triple edges: %w", err)
+	// Add a rowid column for OFFSET/LIMIT batching.
+	conn.ExecContext(ctx, "ALTER TABLE _filt_triples ADD COLUMN IF NOT EXISTS _rownum INTEGER")
+	conn.ExecContext(ctx, "UPDATE _filt_triples SET _rownum = rowid")
+	var filtEdgesLoaded int64
+	for offset := int64(0); ; offset += edgeBatchSize {
+		batchSQL := fmt.Sprintf(`INSERT INTO edges (
+				uuid, group_id, source_id, target_id, type, name, fact,
+				fact_embedding, embedding, attributes, source_ids,
+				strength, created_at, updated_at, valid_from
+			)
+			SELECT
+				t.id,
+				COALESCE(t.group_id, '%s'),
+				subj.uuid,
+				obj.uuid,
+				'entity',
+				COALESCE(t.predicate, ''),
+				`+factDescriptionExpr+`,
+				CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+				CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+				(SELECT json_group_object(k, v) FROM (
+					VALUES
+						('condition', t.condition),
+						('temporal', t.temporal),
+						('location', t.location),
+						('certainty', t.certainty),
+						('scope', t.scope),
+						('source_attribution', t.source_attribution)
+				) AS ctx(k, v) WHERE v IS NOT NULL AND v != ''),
+				json_array(COALESCE(t.source_id, 'wikidata')),
+				COALESCE(t.confidence, 0.0),
+				COALESCE(t.created_at, CURRENT_TIMESTAMP),
+				CURRENT_TIMESTAMP,
+				COALESCE(t.created_at, CURRENT_TIMESTAMP)
+			FROM (SELECT * FROM _filt_triples ORDER BY _rownum LIMIT %d OFFSET %d) t
+			JOIN entities subj
+				ON LOWER(TRIM(t.subject)) = LOWER(TRIM(subj.name))
+				AND subj.group_id = COALESCE(t.group_id, '%s')
+			JOIN entities obj
+				ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
+				AND obj.group_id = COALESCE(t.group_id, '%s')
+			QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
+			groupID, dim, dim, edgeBatchSize, offset, groupID, groupID, groupID)
+		res, err = conn.ExecContext(ctx, batchSQL)
+		if err != nil {
+			return coreNodesLoaded, filtEdgesLoaded, 0, fmt.Errorf("failed to insert filtered triple edges (offset %d): %w", offset, err)
+		}
+		n, _ := res.RowsAffected()
+		filtEdgesLoaded += n
+		if n == 0 && offset >= filtTripleCount {
+			break
+		}
+		fmt.Printf("    Phase 6: batch %d-%d done (+%d edges, %d total)\n",
+			offset+1, offset+edgeBatchSize, n, filtEdgesLoaded)
+		if offset+edgeBatchSize >= filtTripleCount {
+			break
+		}
 	}
-	filtEdgesLoaded, _ := res.RowsAffected()
 	fmt.Printf("  Phase 6/%d: Done — %d filtered triple edges inserted in %s\n", totalPhases, filtEdgesLoaded, time.Since(phaseStart).Round(time.Second))
 
 	// Phase 7: Insert filtered rules as edges.
@@ -2525,52 +2551,66 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	fmt.Printf("  Phase 10/%d: Done — %d neighbor nodes inserted (%d total) in %s\n",
 		totalPhases, neighborNodesLoaded, nodesLoaded, time.Since(phaseStart).Round(time.Second))
 
-	// Phase 11: Insert extra edges + extra rules.
-	fmt.Printf("  Phase 11/%d: Inserting extra edges and rules...\n", totalPhases)
+	// Phase 11: Insert extra edges + extra rules (batched).
+	fmt.Printf("  Phase 11/%d: Inserting extra edges and rules (batch size %d)...\n", totalPhases, edgeBatchSize)
 	phaseStart = time.Now()
-	extraEdgeInsertSQL := fmt.Sprintf(`INSERT INTO edges (
-			uuid, group_id, source_id, target_id, type, name, fact,
-			fact_embedding, embedding, attributes, source_ids,
-			strength, created_at, updated_at, valid_from
-		)
-		SELECT
-			t.id,
-			COALESCE(t.group_id, '%s'),
-			subj.uuid,
-			obj.uuid,
-			'entity',
-			COALESCE(t.predicate, ''),
-			`+factDescriptionExpr+`,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			(SELECT json_group_object(k, v) FROM (
-				VALUES
-					('condition', t.condition),
-					('temporal', t.temporal),
-					('location', t.location),
-					('certainty', t.certainty),
-					('scope', t.scope),
-					('source_attribution', t.source_attribution)
-			) AS ctx(k, v) WHERE v IS NOT NULL AND v != ''),
-			json_array(COALESCE(t.source_id, 'wikidata')),
-			COALESCE(t.confidence, 0.0),
-			COALESCE(t.created_at, CURRENT_TIMESTAMP),
-			CURRENT_TIMESTAMP,
-			COALESCE(t.created_at, CURRENT_TIMESTAMP)
-		FROM _extra_edges t
-		JOIN entities subj
-			ON LOWER(TRIM(t.subject)) = LOWER(TRIM(subj.name))
-			AND subj.group_id = COALESCE(t.group_id, '%s')
-		JOIN entities obj
-			ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
-			AND obj.group_id = COALESCE(t.group_id, '%s')
-		QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
-		groupID, dim, dim, groupID, groupID, groupID)
-	res, err = conn.ExecContext(ctx, extraEdgeInsertSQL)
-	if err != nil {
-		return nodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to insert extra edges: %w", err)
+	conn.ExecContext(ctx, "ALTER TABLE _extra_edges ADD COLUMN IF NOT EXISTS _rownum INTEGER")
+	conn.ExecContext(ctx, "UPDATE _extra_edges SET _rownum = rowid")
+	var extraEdgesInserted int64
+	for offset := int64(0); ; offset += edgeBatchSize {
+		batchSQL := fmt.Sprintf(`INSERT INTO edges (
+				uuid, group_id, source_id, target_id, type, name, fact,
+				fact_embedding, embedding, attributes, source_ids,
+				strength, created_at, updated_at, valid_from
+			)
+			SELECT
+				t.id,
+				COALESCE(t.group_id, '%s'),
+				subj.uuid,
+				obj.uuid,
+				'entity',
+				COALESCE(t.predicate, ''),
+				`+factDescriptionExpr+`,
+				CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+				CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+				(SELECT json_group_object(k, v) FROM (
+					VALUES
+						('condition', t.condition),
+						('temporal', t.temporal),
+						('location', t.location),
+						('certainty', t.certainty),
+						('scope', t.scope),
+						('source_attribution', t.source_attribution)
+				) AS ctx(k, v) WHERE v IS NOT NULL AND v != ''),
+				json_array(COALESCE(t.source_id, 'wikidata')),
+				COALESCE(t.confidence, 0.0),
+				COALESCE(t.created_at, CURRENT_TIMESTAMP),
+				CURRENT_TIMESTAMP,
+				COALESCE(t.created_at, CURRENT_TIMESTAMP)
+			FROM (SELECT * FROM _extra_edges ORDER BY _rownum LIMIT %d OFFSET %d) t
+			JOIN entities subj
+				ON LOWER(TRIM(t.subject)) = LOWER(TRIM(subj.name))
+				AND subj.group_id = COALESCE(t.group_id, '%s')
+			JOIN entities obj
+				ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
+				AND obj.group_id = COALESCE(t.group_id, '%s')
+			QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
+			groupID, dim, dim, edgeBatchSize, offset, groupID, groupID, groupID)
+		res, err = conn.ExecContext(ctx, batchSQL)
+		if err != nil {
+			return nodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to insert extra edges (offset %d): %w", offset, err)
+		}
+		n, _ := res.RowsAffected()
+		extraEdgesInserted += n
+		if n == 0 && offset >= extraEdgeCount {
+			break
+		}
+		fmt.Printf("    Phase 11: batch %d-%d done (+%d edges, %d total)\n",
+			offset+1, offset+edgeBatchSize, n, extraEdgesInserted)
+		if offset+edgeBatchSize >= extraEdgeCount {
+			break
+		}
 	}
-	extraEdgesInserted, _ := res.RowsAffected()
 
 	// Insert extra rules as edges.
 	extraRuleInsertSQL := fmt.Sprintf(`INSERT INTO edges (
