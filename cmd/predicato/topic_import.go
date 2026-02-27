@@ -28,11 +28,11 @@ Exactly one of --topic or --topic-vector must be provided:
 Examples:
   # Embed topic at runtime (requires embedder config):
   predicato topic-import --input-dir ./wikidata-output --output ./diabetes.duckdb \
-    --topic "diabetes mellitus type 2 treatment" --threshold 0.65
+    --topic "diabetes mellitus type 2 treatment" --threshold 0.7
 
   # Use a pre-computed vector (no API key needed):
   predicato topic-import --input-dir ./wikidata-output --output ./diabetes.duckdb \
-    --topic-vector ./diabetes_vector.json --threshold 0.65`,
+    --topic-vector ./diabetes_vector.json --threshold 0.7`,
 	RunE: runTopicImport,
 }
 
@@ -44,8 +44,8 @@ func init() {
 	topicImportCmd.Flags().String("output", "", "output database file path")
 	topicImportCmd.Flags().String("topic", "", "topic string to embed at runtime")
 	topicImportCmd.Flags().String("topic-vector", "", "path to JSON file with pre-computed []float32 vector")
-	topicImportCmd.Flags().Float64("threshold", 0.65, "minimum cosine similarity [0,1] for node inclusion")
-	topicImportCmd.Flags().Float64("triple-threshold", 0, "minimum cosine similarity for triple/rule inclusion (0 = use --threshold)")
+	topicImportCmd.Flags().Float64("threshold", 0.7, "minimum cosine similarity [0,1] for node inclusion")
+	topicImportCmd.Flags().Float64("triple-threshold", 0.6, "minimum cosine similarity for triple/rule inclusion (0 = use --threshold)")
 	topicImportCmd.Flags().String("group-id", "wikidata", "group ID for multi-tenant isolation")
 	topicImportCmd.Flags().Int("embedding-dim", 1024, "embedding vector dimension")
 	topicImportCmd.Flags().Int("threads", 0, "DuckDB thread count (0 = system default, duckpgq only)")
