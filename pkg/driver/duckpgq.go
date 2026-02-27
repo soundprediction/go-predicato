@@ -2163,25 +2163,99 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	fmt.Printf("  Phase 3/%d: Done — %d rules match threshold in %s\n", totalPhases, filtRuleCount, time.Since(phaseStart).Round(time.Second))
 
 	// Phase 4: Build core qualifying node set = filtered nodes + triple endpoints + rule-referenced nodes.
+	// The rule-referenced lookup is done in two passes to avoid a full O(nodes×rules) cross-join:
+	//   4a: Build initial core set from filtered nodes + triple endpoints (fast).
+	//   4b: Check which initial core names appear in rule text, then scan only the
+	//        parquet partitions that might contain additional rule-referenced names
+	//        in batches to limit memory/time.
 	fmt.Printf("  Phase 4/%d: Building core qualifying node set...\n", totalPhases)
 	phaseStart = time.Now()
-	coreNamesSQL := fmt.Sprintf(`CREATE TEMP TABLE _core_names AS
+
+	// 4a: Fast core set from filtered nodes + triple endpoints.
+	coreNamesSQL := `CREATE TEMP TABLE _core_names AS
 		SELECT nm FROM _filt_nodes
 		UNION
 		SELECT DISTINCT LOWER(TRIM(subject)) AS nm FROM _filt_triples
 		UNION
-		SELECT DISTINCT LOWER(TRIM(object)) AS nm FROM _filt_triples
-		UNION
-		SELECT DISTINCT LOWER(TRIM(n.name)) AS nm
-		FROM read_parquet('%s') n
-		WHERE EXISTS (
-			SELECT 1 FROM _filt_rules r
-			WHERE position(LOWER(TRIM(n.name)) IN LOWER(r.antecedent)) > 0
-			   OR position(LOWER(TRIM(n.name)) IN LOWER(r.consequent)) > 0
-		)`, nodesPath)
+		SELECT DISTINCT LOWER(TRIM(object)) AS nm FROM _filt_triples`
 	if _, err := conn.ExecContext(ctx, coreNamesSQL); err != nil {
-		return 0, 0, 0, fmt.Errorf("failed to build core node set: %w", err)
+		return 0, 0, 0, fmt.Errorf("failed to build initial core node set: %w", err)
 	}
+	var initialCoreCount int64
+	if row := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM _core_names"); row != nil {
+		_ = row.Scan(&initialCoreCount)
+	}
+	fmt.Printf("    Phase 4a: %d core names from nodes+triples in %s\n", initialCoreCount, time.Since(phaseStart).Round(time.Second))
+
+	// 4b: Find additional names mentioned in rules by scanning nodes parquet against
+	// a single concatenated rule-text blob. This avoids an O(nodes × rules) EXISTS
+	// correlated subquery — instead each node does one position() against the blob.
+	// Process parquet partitions in chunks for progress + memory control.
+	if filtRuleCount > 0 {
+		rulePhaseStart := time.Now()
+		// Build a single blob of all rule text for substring matching.
+		blobSQL := `CREATE TEMP TABLE _rule_blob AS
+			SELECT string_agg(LOWER(COALESCE(antecedent,'') || ' ' || COALESCE(consequent,'')), ' ||| ') AS txt
+			FROM _filt_rules`
+		if _, err := conn.ExecContext(ctx, blobSQL); err != nil {
+			fmt.Printf("    Warning: failed to build rule text blob: %v\n", err)
+		} else {
+			// Discover parquet partition files.
+			var partFiles []string
+			partRows, err := conn.QueryContext(ctx, fmt.Sprintf(
+				`SELECT file FROM glob('%s')`, nodesPath))
+			if err == nil {
+				for partRows.Next() {
+					var f string
+					if partRows.Scan(&f) == nil {
+						partFiles = append(partFiles, f)
+					}
+				}
+				partRows.Close()
+			}
+
+			if len(partFiles) == 0 {
+				// Single file, not a partitioned directory.
+				partFiles = []string{nodesPath}
+			}
+
+			// Process in chunks.
+			const chunkSize = 20
+			var ruleNamesAdded int64
+			for i := 0; i < len(partFiles); i += chunkSize {
+				end := i + chunkSize
+				if end > len(partFiles) {
+					end = len(partFiles)
+				}
+				// Build a list of partition files for this chunk.
+				chunkList := "'" + partFiles[i] + "'"
+				for _, f := range partFiles[i+1 : end] {
+					chunkList += ",'" + f + "'"
+				}
+				chunkSQL := fmt.Sprintf(`INSERT INTO _core_names
+					SELECT DISTINCT nm FROM (
+						SELECT LOWER(TRIM(n.name)) AS nm
+						FROM read_parquet([%s]) n
+					) sub
+					WHERE nm NOT IN (SELECT nm FROM _core_names)
+					  AND EXISTS (SELECT 1 FROM _rule_blob WHERE position(sub.nm IN txt) > 0)`,
+					chunkList)
+				res, err := conn.ExecContext(ctx, chunkSQL)
+				if err != nil {
+					fmt.Printf("    Warning: chunk %d-%d/%d failed: %v\n", i+1, end, len(partFiles), err)
+					continue
+				}
+				n, _ := res.RowsAffected()
+				ruleNamesAdded += n
+				fmt.Printf("    Phase 4b: chunk %d-%d/%d done (+%d names)\n",
+					i+1, end, len(partFiles), n)
+			}
+			conn.ExecContext(ctx, "DROP TABLE IF EXISTS _rule_blob")
+			fmt.Printf("    Phase 4b: %d rule-referenced names added in %s\n",
+				ruleNamesAdded, time.Since(rulePhaseStart).Round(time.Second))
+		}
+	}
+
 	var coreNameCount int64
 	if row := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM _core_names"); row != nil {
 		_ = row.Scan(&coreNameCount)
