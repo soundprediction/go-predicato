@@ -151,6 +151,11 @@ type ParquetTopicFilter struct {
 	// Embedding is the topic vector. Length must equal the driver's embeddingDim.
 	Embedding []float32
 
+	// PostgresConnStr, when non-empty, reads source data from PostgreSQL instead
+	// of parquet files. The connection string is a libpq-style DSN
+	// (e.g. "host=localhost port=5432 dbname=glancedb user=admin password=pass").
+	PostgresConnStr string
+
 	// Threshold is the minimum cosine similarity [0, 1] for node embedding inclusion.
 	// A value of 0.0 includes all nodes with non-null embeddings.
 	Threshold float64

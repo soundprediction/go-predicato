@@ -58,8 +58,9 @@ func init() {
 	topicImportCmd.Flags().Bool("build-communities", false, "run community detection after graph construction")
 	topicImportCmd.Flags().Bool("force", false, "overwrite output file if it exists")
 	topicImportCmd.Flags().Bool("skip-indexes", false, "skip index creation")
+	topicImportCmd.Flags().String("source", "parquet", "data source: parquet or postgres")
+	topicImportCmd.Flags().String("pg-conn", "", "PostgreSQL connection string (e.g. 'host=localhost port=5432 dbname=glancedb user=admin password=pass')")
 
-	_ = topicImportCmd.MarkFlagRequired("input-dir")
 	_ = topicImportCmd.MarkFlagRequired("output")
 }
 
@@ -83,6 +84,8 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	buildCommunities, _ := cmd.Flags().GetBool("build-communities")
 	force, _ := cmd.Flags().GetBool("force")
 	skipIndexes, _ := cmd.Flags().GetBool("skip-indexes")
+	source, _ := cmd.Flags().GetString("source")
+	pgConn, _ := cmd.Flags().GetString("pg-conn")
 
 	// Validate: exactly one of --topic or --topic-vector required.
 	if topicStr == "" && topicVectorPath == "" {
@@ -92,10 +95,24 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("exactly one of --topic or --topic-vector must be provided, not both")
 	}
 
-	// Validate input directory.
-	info, err := os.Stat(inputDir)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("input directory not found: %s", inputDir)
+	// Validate source.
+	if source == "postgres" {
+		if pgConn == "" {
+			return fmt.Errorf("--pg-conn is required when --source=postgres")
+		}
+	} else if source != "parquet" {
+		return fmt.Errorf("--source must be 'parquet' or 'postgres', got %q", source)
+	}
+
+	// Validate input directory (required for parquet source).
+	if source == "parquet" {
+		if inputDir == "" {
+			return fmt.Errorf("--input-dir is required when --source=parquet")
+		}
+		info, err := os.Stat(inputDir)
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("input directory not found: %s", inputDir)
+		}
 	}
 
 	// Check output path.
@@ -109,6 +126,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 
 	// Build or load the topic vector.
 	var topicVec []float32
+	var err error
 	if topicVectorPath != "" {
 		topicVec, err = loadVectorJSON(topicVectorPath)
 		if err != nil {
@@ -154,7 +172,12 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Triple thresh:  %.2f (same as node threshold)\n", threshold)
 	}
 	fmt.Printf("Driver:         %s\n", driverName)
-	fmt.Printf("Input:          %s\n", inputDir)
+	fmt.Printf("Source:         %s\n", source)
+	if source == "postgres" {
+		fmt.Printf("PG conn:        %s\n", pgConn)
+	} else {
+		fmt.Printf("Input:          %s\n", inputDir)
+	}
 	fmt.Printf("Output:         %s\n", output)
 	fmt.Printf("Group ID:       %s\n", groupID)
 	fmt.Printf("Embedding dim:  %d\n", embDim)
@@ -209,6 +232,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 
 	filter := &driver.ParquetTopicFilter{
 		Embedding:       topicVec,
+		PostgresConnStr: pgConn,
 		Threshold:       threshold,
 		TripleThreshold: tripleThreshold,
 		MaxNodes:        maxNodes,
@@ -217,7 +241,11 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		EdgeBatchSize:   edgeBatchSize,
 	}
 
-	fmt.Println("Loading topic-filtered parquet files...")
+	if source == "postgres" {
+		fmt.Println("Loading topic-filtered data from PostgreSQL...")
+	} else {
+		fmt.Println("Loading topic-filtered parquet files...")
+	}
 	loadStart := time.Now()
 
 	nodesLoaded, edgesLoaded, rulesLoaded, err := filtImporter.BulkLoadFromParquetWithFilter(ctx, inputDir, groupID, filter)
