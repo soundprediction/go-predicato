@@ -1907,10 +1907,9 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	filtNodesSQL := fmt.Sprintf(`CREATE TEMP TABLE _filt_nodes AS
 		SELECT id, name, LOWER(TRIM(name)) AS nm
 		FROM read_parquet('%s')
-		WHERE embedding IS NOT NULL
-		  AND array_length(embedding) = %d
-		  AND array_cosine_similarity(embedding::FLOAT[%d], %s::FLOAT[%d]) >= %g`,
-		nodesPath, dim, dim, vecLit, dim, filter.Threshold)
+		WHERE list_count(embedding) = %d
+		  AND list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) >= %g`,
+		nodesPath, dim, vecLit, filter.Threshold)
 	if _, err := conn.ExecContext(ctx, filtNodesSQL); err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to filter nodes: %w", err)
 	}
@@ -1925,10 +1924,9 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	phaseStart = time.Now()
 	filtTriplesSQL := fmt.Sprintf(`CREATE TEMP TABLE _filt_triples AS
 		SELECT * FROM read_parquet('%s')
-		WHERE embedding IS NOT NULL
-		  AND array_length(embedding) = %d
-		  AND array_cosine_similarity(embedding::FLOAT[%d], %s::FLOAT[%d]) >= %g`,
-		triplesPath, dim, dim, vecLit, dim, tripleThreshold)
+		WHERE list_count(embedding) = %d
+		  AND list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) >= %g`,
+		triplesPath, dim, vecLit, tripleThreshold)
 	if _, err := conn.ExecContext(ctx, filtTriplesSQL); err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to filter triples: %w", err)
 	}
@@ -1944,10 +1942,9 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	if rulesPath != "" {
 		filtRulesSQL := fmt.Sprintf(`CREATE TEMP TABLE _filt_rules AS
 			SELECT * FROM read_parquet('%s')
-			WHERE embedding IS NOT NULL
-			  AND array_length(embedding) = %d
-			  AND array_cosine_similarity(embedding::FLOAT[%d], %s::FLOAT[%d]) >= %g`,
-			rulesPath, dim, dim, vecLit, dim, tripleThreshold)
+			WHERE list_count(embedding) = %d
+			  AND list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) >= %g`,
+			rulesPath, dim, vecLit, tripleThreshold)
 		if _, err := conn.ExecContext(ctx, filtRulesSQL); err != nil {
 			return 0, 0, 0, fmt.Errorf("failed to filter rules: %w", err)
 		}
@@ -2249,12 +2246,12 @@ func (d *DuckPGQDriver) TopSimilarTriples(ctx context.Context, inputDir string, 
 	vecLit := float32SliceLiteral(vec)
 	q := fmt.Sprintf(`
 		SELECT COALESCE(subject,''), COALESCE(predicate,''), COALESCE(object,''),
-		       array_cosine_similarity(embedding::FLOAT[%d], %s::FLOAT[%d]) AS sim
+		       list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) AS sim
 		FROM read_parquet('%s')
-		WHERE embedding IS NOT NULL AND array_length(embedding) = %d
+		WHERE list_count(embedding) = %d
 		ORDER BY sim DESC
 		LIMIT %d`,
-		dim, vecLit, dim, triplesPath, dim, limit)
+		vecLit, triplesPath, dim, limit)
 
 	rows, err := memDB.QueryContext(ctx, q)
 	if err != nil {
@@ -2297,12 +2294,12 @@ func (d *DuckPGQDriver) TopSimilarRules(ctx context.Context, inputDir string, ve
 	vecLit := float32SliceLiteral(vec)
 	q := fmt.Sprintf(`
 		SELECT COALESCE(antecedent,''), COALESCE(consequent,''),
-		       array_cosine_similarity(embedding::FLOAT[%d], %s::FLOAT[%d]) AS sim
+		       list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) AS sim
 		FROM read_parquet('%s')
-		WHERE embedding IS NOT NULL AND array_length(embedding) = %d
+		WHERE list_count(embedding) = %d
 		ORDER BY sim DESC
 		LIMIT %d`,
-		dim, vecLit, dim, rulesPath, dim, limit)
+		vecLit, rulesPath, dim, limit)
 
 	rows, err := memDB.QueryContext(ctx, q)
 	if err != nil {
