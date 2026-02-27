@@ -1,3 +1,5 @@
+//go:build system_duckpgq
+
 package predicato
 
 import (
