@@ -632,3 +632,175 @@ func TestDuckPGQDriver_BulkLoadFromParquet(t *testing.T) {
 	assert.Equal(t, "n1", edge.SourceID) // Aspirin
 	assert.Equal(t, "n2", edge.TargetID) // Headache
 }
+
+// makeEmb builds a dim-element float32 slice where element 0 = scale, rest = 0.
+// Mimics a unit-ish vector in the first dimension.
+func makeEmb(dim int, scale float32) []float32 {
+	v := make([]float32, dim)
+	v[0] = scale
+	return v
+}
+
+// TestExploreParquet verifies ExploreParquet returns accurate frequency stats.
+func TestExploreParquet(t *testing.T) {
+	inputDir := t.TempDir()
+	now := time.Now().Truncate(time.Microsecond)
+	emb := makeEmb(4, 1.0)
+
+	// 3 DISEASE nodes, 2 DRUG nodes.
+	nodes := []parquetNode{
+		{ID: "d1", SourceID: "w", GroupID: "g", Name: "Diabetes", Type: "DISEASE", Embedding: emb, CreatedAt: now},
+		{ID: "d2", SourceID: "w", GroupID: "g", Name: "Hypertension", Type: "DISEASE", Embedding: emb, CreatedAt: now},
+		{ID: "d3", SourceID: "w", GroupID: "g", Name: "Asthma", Type: "DISEASE", Embedding: emb, CreatedAt: now},
+		{ID: "dr1", SourceID: "w", GroupID: "g", Name: "Metformin", Type: "DRUG", Embedding: emb, CreatedAt: now},
+		{ID: "dr2", SourceID: "w", GroupID: "g", Name: "Lisinopril", Type: "DRUG", Embedding: emb, CreatedAt: now},
+	}
+	writeTestParquet(t, filepath.Join(inputDir, "nodes.parquet"), nodes)
+
+	// 5 triples with predicate "treats".
+	triples := []parquetTriple{
+		{ID: "t1", SourceID: "w", GroupID: "g", Subject: "Metformin", Predicate: "treats", Object: "Diabetes", Embedding: emb, CreatedAt: now},
+		{ID: "t2", SourceID: "w", GroupID: "g", Subject: "Metformin", Predicate: "treats", Object: "Hypertension", Embedding: emb, CreatedAt: now},
+		{ID: "t3", SourceID: "w", GroupID: "g", Subject: "Lisinopril", Predicate: "treats", Object: "Hypertension", Embedding: emb, CreatedAt: now},
+		{ID: "t4", SourceID: "w", GroupID: "g", Subject: "Lisinopril", Predicate: "treats", Object: "Asthma", Embedding: emb, CreatedAt: now},
+		{ID: "t5", SourceID: "w", GroupID: "g", Subject: "Metformin", Predicate: "treats", Object: "Asthma", Embedding: emb, CreatedAt: now},
+	}
+	writeTestParquet(t, filepath.Join(inputDir, "extracted_triples.parquet"), triples)
+
+	// 1 rule for coverage check.
+	rules := []parquetRule{
+		{ID: "r1", SourceID: "w", Antecedent: "patient has diabetes", Consequent: "metformin indicated",
+			RuleType: "treatment", Scope: "endocrinology", Embedding: emb, CreatedAt: now},
+	}
+	writeTestParquet(t, filepath.Join(inputDir, "extracted_rules.parquet"), rules)
+
+	d, err := driver.NewDuckPGQDriver("", 4)
+	require.NoError(t, err)
+	defer d.Close()
+
+	stats, err := d.ExploreParquet(context.Background(), inputDir)
+	require.NoError(t, err)
+	require.NotNil(t, stats)
+
+	assert.Equal(t, int64(5), stats.NodeCount)
+	assert.Equal(t, int64(5), stats.TripleCount)
+	assert.Equal(t, int64(1), stats.RuleCount)
+
+	require.GreaterOrEqual(t, len(stats.TopEntityTypes), 2)
+	typeMap := make(map[string]int64)
+	for _, tc := range stats.TopEntityTypes {
+		typeMap[tc.Value] = tc.Count
+	}
+	assert.Equal(t, int64(3), typeMap["DISEASE"])
+	assert.Equal(t, int64(2), typeMap["DRUG"])
+
+	require.GreaterOrEqual(t, len(stats.TopPredicates), 1)
+	assert.Equal(t, "treats", stats.TopPredicates[0].Value)
+	assert.Equal(t, int64(5), stats.TopPredicates[0].Count)
+
+	assert.Equal(t, 1.0, stats.EmbeddingCoverage.NodesFraction)
+	assert.Equal(t, 1.0, stats.EmbeddingCoverage.TriplesFraction)
+	assert.Equal(t, 1.0, stats.EmbeddingCoverage.RulesFraction)
+}
+
+// TestBulkLoadFromParquetWithFilter verifies topic-scoped graph loading.
+func TestBulkLoadFromParquetWithFilter(t *testing.T) {
+	inputDir := t.TempDir()
+	now := time.Now().Truncate(time.Microsecond)
+
+	// Topic vector points in direction of dimension 0.
+	// High-sim embeddings: large component in dim 0 → cosine ≈ 0.99 with topic.
+	// Low-sim embeddings:  large component in dim 2 → cosine ≈ 0.0  with topic.
+	topicVec := makeEmb(4, 1.0)
+	highEmb := []float32{0.99, 0.10, 0.0, 0.0}
+	lowEmb := []float32{0.0, 0.10, 0.99, 0.0}
+
+	nodes := []parquetNode{
+		{ID: "n1", SourceID: "w", GroupID: "g", Name: "Aspirin", Type: "DRUG", Embedding: highEmb, CreatedAt: now},
+		{ID: "n2", SourceID: "w", GroupID: "g", Name: "Headache", Type: "CONDITION", Embedding: highEmb, CreatedAt: now},
+		{ID: "n3", SourceID: "w", GroupID: "g", Name: "Fever", Type: "CONDITION", Embedding: highEmb, CreatedAt: now},
+		{ID: "n4", SourceID: "w", GroupID: "g", Name: "Ibuprofen", Type: "DRUG", Embedding: highEmb, CreatedAt: now},
+		{ID: "n5", SourceID: "w", GroupID: "g", Name: "Bleeding", Type: "CONDITION", Embedding: lowEmb, CreatedAt: now},
+	}
+	writeTestParquet(t, filepath.Join(inputDir, "nodes.parquet"), nodes)
+
+	// 3 high-similarity triples (involving Aspirin, Headache, Fever, Ibuprofen).
+	// 2 low-similarity triples  (involving Aspirin/Bleeding, Ibuprofen/Bleeding).
+	triples := []parquetTriple{
+		{ID: "t1", SourceID: "w", GroupID: "g", Subject: "Aspirin", Predicate: "TREATS", Object: "Headache", Embedding: highEmb, CreatedAt: now},
+		{ID: "t2", SourceID: "w", GroupID: "g", Subject: "Ibuprofen", Predicate: "TREATS", Object: "Headache", Embedding: highEmb, CreatedAt: now},
+		{ID: "t3", SourceID: "w", GroupID: "g", Subject: "Aspirin", Predicate: "REDUCES", Object: "Fever", Embedding: highEmb, CreatedAt: now},
+		{ID: "t4", SourceID: "w", GroupID: "g", Subject: "Aspirin", Predicate: "CAUSES", Object: "Bleeding", Embedding: lowEmb, CreatedAt: now},
+		{ID: "t5", SourceID: "w", GroupID: "g", Subject: "Ibuprofen", Predicate: "CAUSES_RISK", Object: "Bleeding", Embedding: lowEmb, CreatedAt: now},
+	}
+	writeTestParquet(t, filepath.Join(inputDir, "extracted_triples.parquet"), triples)
+
+	t.Run("threshold 0.7 selects only high-sim triples", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "test.db")
+		d, err := driver.NewDuckPGQDriver(dbPath, 4)
+		require.NoError(t, err)
+		defer d.Close()
+
+		filter := &driver.TopicFilter{Embedding: topicVec, Threshold: 0.7}
+		nodesLoaded, edgesLoaded, _, err := d.BulkLoadFromParquetWithFilter(
+			context.Background(), inputDir, "g", filter)
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(3), edgesLoaded, "should load 3 high-sim edges")
+		// Required nodes: Aspirin, Headache, Ibuprofen, Fever → 4 nodes; Bleeding excluded.
+		assert.LessOrEqual(t, nodesLoaded, int64(4))
+		assert.GreaterOrEqual(t, nodesLoaded, int64(4))
+	})
+
+	t.Run("threshold 0.0 includes all triples with embeddings", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "test.db")
+		d, err := driver.NewDuckPGQDriver(dbPath, 4)
+		require.NoError(t, err)
+		defer d.Close()
+
+		filter := &driver.TopicFilter{Embedding: topicVec, Threshold: 0.0}
+		nodesLoaded, edgesLoaded, _, err := d.BulkLoadFromParquetWithFilter(
+			context.Background(), inputDir, "g", filter)
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(5), edgesLoaded, "should load all 5 edges")
+		assert.Equal(t, int64(5), nodesLoaded, "all 5 nodes should be referenced")
+	})
+
+	t.Run("nil filter delegates to full load", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "test.db")
+		d, err := driver.NewDuckPGQDriver(dbPath, 4)
+		require.NoError(t, err)
+		defer d.Close()
+
+		nodesLoaded, edgesLoaded, _, err := d.BulkLoadFromParquetWithFilter(
+			context.Background(), inputDir, "g", nil)
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), nodesLoaded)
+		assert.Equal(t, int64(5), edgesLoaded)
+	})
+
+	t.Run("embedding dimension mismatch returns error", func(t *testing.T) {
+		d, err := driver.NewDuckPGQDriver("", 4)
+		require.NoError(t, err)
+		defer d.Close()
+
+		filter := &driver.TopicFilter{Embedding: make([]float32, 8), Threshold: 0.5}
+		_, _, _, err = d.BulkLoadFromParquetWithFilter(context.Background(), inputDir, "g", filter)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "embedding dimension mismatch")
+	})
+
+	t.Run("MaxEdges caps inserted edges", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "test.db")
+		d, err := driver.NewDuckPGQDriver(dbPath, 4)
+		require.NoError(t, err)
+		defer d.Close()
+
+		filter := &driver.TopicFilter{Embedding: topicVec, Threshold: 0.0, MaxEdges: 2}
+		_, edgesLoaded, _, err := d.BulkLoadFromParquetWithFilter(
+			context.Background(), inputDir, "g", filter)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, edgesLoaded, int64(2))
+	})
+}

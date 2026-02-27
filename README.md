@@ -593,6 +593,93 @@ The `parquet-import` command loads predicato-format parquet files directly into 
 
 Both drivers also support `BulkLoadFromPostgres()` for loading directly from a PostgreSQL fact store.
 
+### Topic-Scoped Graph Loading
+
+The full wikidata knowledge graph is enormous (100M+ nodes, billions of edges). For most
+applications a smaller, domain-specific graph is more useful. The `topic-import` and
+`topic-explore` commands let you create a focused graph around any topic by leveraging the
+pre-computed embeddings already present in the parquet files.
+
+#### Discovering the data with `topic-explore`
+
+Before importing, use `topic-explore` to inspect the parquet files without writing any
+output database:
+
+```bash
+# Print entity type distribution, top predicates, and embedding coverage:
+./bin/predicato topic-explore --input-dir ./wikidata-output
+
+# Rank the top-20 triples by semantic similarity to a topic (requires embedder config):
+./bin/predicato topic-explore --input-dir ./wikidata-output --topic "diabetes mellitus"
+```
+
+Example output (no `--topic`):
+```
+=== Parquet Statistics ===
+Nodes:   94325811
+Triples: 312456789
+Rules:   8234567
+
+--- Top Entity Types ---
+  DISEASE                                  12345678
+  DRUG                                      9876543
+  ...
+
+--- Embedding Coverage ---
+  Nodes:   92.3%
+  Triples: 98.1%
+  Rules:   95.4%
+```
+
+#### Building a topic-specific graph with `topic-import`
+
+`topic-import` loads only the triples and rules whose embeddings have cosine similarity
+≥ `--threshold` to the topic vector, then inserts only the nodes referenced by those
+triples/rules.
+
+```bash
+# Embed the topic at runtime (requires PREDICATO_EMBEDDING_API_KEY or config):
+./bin/predicato topic-import \
+  --input-dir ./wikidata-output \
+  --output   ./diabetes.duckdb \
+  --topic    "diabetes mellitus type 2 treatment" \
+  --threshold 0.65 \
+  --group-id  wikidata \
+  --embedding-dim 1024
+
+# Use a pre-computed vector (no API key needed — safe for offline/HPC):
+./bin/predicato topic-import \
+  --input-dir    ./wikidata-output \
+  --output       ./diabetes.duckdb \
+  --topic-vector ./diabetes_vector.json \
+  --threshold    0.65
+```
+
+The `--topic-vector` flag accepts a JSON file containing a `[]float32` array of exactly
+`--embedding-dim` floats, e.g.:
+```json
+[0.012, -0.034, 0.091, ...]
+```
+
+**Key flags:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--topic` | | Topic string embedded at runtime via configured embedder |
+| `--topic-vector` | | Path to pre-computed `[]float32` JSON vector |
+| `--threshold` | `0.65` | Minimum cosine similarity for triple/rule inclusion |
+| `--max-nodes` | `0` (unlimited) | Hard cap on nodes inserted |
+| `--max-edges` | `0` (unlimited) | Hard cap on edges inserted |
+| `--force` | | Overwrite existing output file |
+
+**Calibrating the threshold:**
+- `0.0` — include all triples/rules with non-null embeddings (same as full import)
+- `0.5` — broad domain coverage
+- `0.65` — default; focused on the topic with some contextual neighbours
+- `0.8` — tight focus; may miss important context
+
+Use `topic-explore --topic "..."` to see the distribution of similarity scores before
+committing to a threshold.
+
 > [!NOTE]
 > **GLiNER2 Support**: Use the `--gliner2` flag to enable the GLiNER2 entity extraction provider.
 > Predicato will automatically start the local GLiNER2 Python service (port 11435) if it is not already running.
