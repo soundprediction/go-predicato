@@ -49,7 +49,8 @@ func init() {
 	topicImportCmd.Flags().String("output", "", "output database file path")
 	topicImportCmd.Flags().String("topic", "", "topic string to embed at runtime")
 	topicImportCmd.Flags().String("topic-vector", "", "path to JSON file with pre-computed []float32 vector")
-	topicImportCmd.Flags().Float64("threshold", 0.65, "minimum cosine similarity [0,1] for inclusion")
+	topicImportCmd.Flags().Float64("threshold", 0.65, "minimum cosine similarity [0,1] for node inclusion")
+	topicImportCmd.Flags().Float64("triple-threshold", 0, "minimum cosine similarity for triple/rule inclusion (0 = use --threshold)")
 	topicImportCmd.Flags().String("group-id", "wikidata", "group ID for multi-tenant isolation")
 	topicImportCmd.Flags().Int("embedding-dim", 1024, "embedding vector dimension")
 	topicImportCmd.Flags().Int("threads", 0, "DuckDB thread count (0 = system default, duckpgq only)")
@@ -71,6 +72,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	topicStr, _ := cmd.Flags().GetString("topic")
 	topicVectorPath, _ := cmd.Flags().GetString("topic-vector")
 	threshold, _ := cmd.Flags().GetFloat64("threshold")
+	tripleThreshold, _ := cmd.Flags().GetFloat64("triple-threshold")
 	groupID, _ := cmd.Flags().GetString("group-id")
 	embDim, _ := cmd.Flags().GetInt("embedding-dim")
 	threads, _ := cmd.Flags().GetInt("threads")
@@ -144,7 +146,12 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("Topic vector:   %s (%d dims)\n", topicVectorPath, len(topicVec))
 	}
-	fmt.Printf("Threshold:      %.2f\n", threshold)
+	fmt.Printf("Threshold:      %.2f (nodes)\n", threshold)
+	if tripleThreshold > 0 {
+		fmt.Printf("Triple thresh:  %.2f (triples/rules)\n", tripleThreshold)
+	} else {
+		fmt.Printf("Triple thresh:  %.2f (same as node threshold)\n", threshold)
+	}
 	fmt.Printf("Driver:         %s\n", driverName)
 	fmt.Printf("Input:          %s\n", inputDir)
 	fmt.Printf("Output:         %s\n", output)
@@ -199,10 +206,11 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	}
 
 	filter := &driver.TopicFilter{
-		Embedding: topicVec,
-		Threshold: threshold,
-		MaxNodes:  maxNodes,
-		MaxEdges:  maxEdges,
+		Embedding:       topicVec,
+		Threshold:       threshold,
+		TripleThreshold: tripleThreshold,
+		MaxNodes:        maxNodes,
+		MaxEdges:        maxEdges,
 	}
 
 	fmt.Println("Loading topic-filtered parquet files...")

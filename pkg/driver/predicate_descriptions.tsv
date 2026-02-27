@@ -1,0 +1,344 @@
+# Predicate-to-template mapping for natural-language fact descriptions.
+# Format: PREDICATE<tab>template with {subject} and {object} placeholders.
+# Lines starting with # are comments. Blank lines are ignored.
+#
+# The ELSE fallback for unknown predicates is:
+#   "{subject} <lowercased predicate> {object}"
+
+# ── General / Taxonomic / Structural ──────────────────────────────────────────
+IS_A	{subject} is a kind of {object}
+INSTANCE_OF	{subject} is an instance of {object}
+SUBCLASS_OF	{subject} is a subclass of {object}
+PART_OF	{subject} is part of {object}
+HAS_PART	{subject} has part {object}
+AUTHOR_OF	{subject} is the author of {object}
+COMPRISES	{subject} is made up of {object}
+CONTAINS	{subject} contains {object}
+COMPONENT_OF	{subject} is a component of {object}
+MEMBER_OF	{subject} is a member of {object}
+HAS_MEMBER	{subject} has member {object}
+SUBSET_OF	{subject} is a subset of {object}
+SUPERCLASS_OF	{subject} is a superclass of {object}
+CATEGORY	{subject} belongs to the category {object}
+TYPE_OF	{subject} is a type of {object}
+FACET_OF	{subject} is a facet of {object}
+ASPECT_OF	{subject} is an aspect of {object}
+CONSISTS_OF	{subject} consists of {object}
+MANIFESTATION_OF	{subject} is a manifestation of {object}
+USE	{subject} is used for {object}
+USED_FOR	{subject} is used for {object}
+ITEM_OPERATED	{subject} operates {object}
+DIFFERENT_FROM	{subject} is different from {object}
+SAME_AS	{subject} is the same as {object}
+EQUIVALENT_TO	{subject} is equivalent to {object}
+
+# ── Spatial / Geography / Location ────────────────────────────────────────────
+FOUND_IN	{subject} is found in {object}
+LOCATED_AT	{subject} is located at {object}
+LOCATED_IN	{subject} is located in {object}
+LOCATED_ON	{subject} is located on {object}
+LOCATION	the location of {subject} is {object}
+COUNTRY	{subject} is in the country {object}
+CONTINENT	{subject} is on the continent {object}
+CAPITAL_OF	{subject} is the capital of {object}
+CAPITAL	{subject} has the capital {object}
+HAS_CAPITAL	{subject} has the capital {object}
+SHARES_BORDER_WITH	{subject} shares a border with {object}
+ADJACENT_TO	{subject} is adjacent to {object}
+CONTAINS_SETTLEMENT	{subject} contains the settlement {object}
+PLACE_OF_BIRTH	{subject} was born in {object}
+PLACE_OF_DEATH	{subject} died in {object}
+PLACE_OF_BURIAL	{subject} is buried in {object}
+HEADQUARTERS_LOCATION	{subject} is headquartered in {object}
+TERRITORY_OF	{subject} is in the territory of {object}
+APPLIES_TO_JURISDICTION	{subject} applies to the jurisdiction of {object}
+NATIVE_TO	{subject} is native to {object}
+ENDEMIC_TO	{subject} is endemic to {object}
+DISTRIBUTED_IN	{subject} is distributed in {object}
+LOCATED_IN_THE_ADMINISTRATIVE_TERRITORIAL_ENTITY	{subject} is located in the administrative entity {object}
+
+# ── Temporal / History / Events ─────────────────────────────────────────────
+FOLLOWS	{subject} follows {object}
+PRECEDES	{subject} precedes {object}
+REPLACED_BY	{subject} was replaced by {object}
+REPLACES	{subject} replaces {object}
+SUCCEEDED_BY	{subject} was succeeded by {object}
+SUCCEEDS	{subject} succeeds {object}
+CONTEMPORARY_OF	{subject} was a contemporary of {object}
+CONCURRENT_WITH	{subject} is concurrent with {object}
+START_TIME	{subject} started at {object}
+END_TIME	{subject} ended at {object}
+TIME_OF_DISCOVERY_OR_INVENTION	{subject} was discovered or invented in {object}
+DATE_OF_BIRTH	{subject} was born on {object}
+DATE_OF_DEATH	{subject} died on {object}
+PARTICIPANT_IN	{subject} participated in {object}
+SIGNIFICANT_EVENT	a significant event for {subject} is {object}
+
+# ── People / Biographical / Roles ───────────────────────────────────────────
+CHILD_OF	{subject} is a child of {object}
+FATHER	the father of {subject} is {object}
+MOTHER	the mother of {subject} is {object}
+CHILD	a child of {subject} is {object}
+PARENT_OF	{subject} is a parent of {object}
+SIBLING_OF	{subject} is a sibling of {object}
+SPOUSE_OF	{subject} is the spouse of {object}
+SPOUSE	the spouse of {subject} is {object}
+UNMARRIED_PARTNER	the unmarried partner of {subject} is {object}
+RELATIVE_OF	{subject} is a relative of {object}
+STUDENT_OF	{subject} was a student of {object}
+STUDENT	a student of {subject} is {object}
+TEACHER_OF	{subject} was a teacher of {object}
+EMPLOYER	{subject} is employed by {object}
+EMPLOYEE	{subject} employs {object}
+OCCUPATION	{subject} works as {object}
+EDUCATED_AT	{subject} was educated at {object}
+POSITION_HELD	{subject} held the position of {object}
+MEMBER_OF_POLITICAL_PARTY	{subject} is a member of {object}
+CITIZEN_OF	{subject} is a citizen of {object}
+CITIZENSHIP	{subject} is a citizen of {object}
+COUNTRY_OF_CITIZENSHIP	{subject} is a citizen of {object}
+NATIONALITY	{subject} has the nationality {object}
+ETHNIC_GROUP	{subject} belongs to the ethnic group {object}
+RELIGION	{subject} practices {object}
+RELIGION_OR_WORLDVIEW	the religion or worldview of {subject} is {object}
+NATIVE_LANGUAGE	{subject} speaks {object} natively
+LANGUAGES_SPOKEN	{subject} speaks {object}
+LANGUAGES_SPOKEN_OR_WRITTEN	{subject} speaks or writes {object}
+SEX_OR_GENDER	{subject} has the sex or gender {object}
+AWARD_RECEIVED	{subject} received the award {object}
+
+# ── Organizations / Business / Governance ───────────────────────────────────
+FOUNDED_BY	{subject} was founded by {object}
+FOUNDER_OF	{subject} founded {object}
+FOUNDER	the founder of {subject} is {object}
+HEAD_OF_STATE	the head of state of {subject} is {object}
+HEAD_OF_GOVERNMENT	the head of government of {subject} is {object}
+LEGISLATIVE_BODY	the legislative body of {subject} is {object}
+OWNED_BY	{subject} is owned by {object}
+OWNER_OF	{subject} owns {object}
+OWNER	the owner of {subject} is {object}
+SUBSIDIARY_OF	{subject} is a subsidiary of {object}
+HAS_SUBSIDIARY	{subject} has the subsidiary {object}
+PARENT_ORGANIZATION	the parent organization of {subject} is {object}
+OPERATOR	the operator of {subject} is {object}
+OPERATES	{subject} operates {object}
+OPERATED_BY	{subject} is operated by {object}
+AFFILIATED_WITH	{subject} is affiliated with {object}
+SPONSOR	{subject} is sponsored by {object}
+PARTNER_OF	{subject} is a partner of {object}
+INDUSTRY	{subject} is in the industry of {object}
+
+# ── Creative Works / Authorship / Art ────────────────────────────────────────
+AUTHOR	{subject} was authored by {object}
+AUTHORED_BY	{subject} was authored by {object}
+CREATOR_OF	{subject} is the creator of {object}
+CREATED_BY	{subject} was created by {object}
+CREATOR	{subject} was created by {object}
+DIRECTOR_OF	{subject} directed {object}
+DIRECTED_BY	{subject} was directed by {object}
+DIRECTOR	{subject} was directed by {object}
+SCREENWRITER	{subject} was written by {object}
+PRODUCER	{subject} was produced by {object}
+PERFORMER	{subject} was performed by {object}
+CAST_MEMBER	a cast member of {subject} is {object}
+COMPOSER	the composer of {subject} is {object}
+PUBLISHER	{subject} was published by {object}
+PUBLISHED_BY	{subject} was published by {object}
+PUBLISHED_IN	{subject} was published in {object}
+EDITOR	the editor of {subject} is {object}
+ILLUSTRATOR	the illustrator of {subject} is {object}
+ADAPTED_FROM	{subject} was adapted from {object}
+ADAPTATION_OF	{subject} is an adaptation of {object}
+BASED_ON	{subject} is based on {object}
+INSPIRED_BY	{subject} was inspired by {object}
+SEQUEL_TO	{subject} is a sequel to {object}
+PREQUEL_TO	{subject} is a prequel to {object}
+SERIES	{subject} is part of the series {object}
+PART_OF_THE_SERIES	{subject} is a part of the series {object}
+GENRE	{subject} belongs to the genre {object}
+LANGUAGE_OF_WORK	{subject} is in the language {object}
+LANGUAGE_OF_WORK_OR_NAME	{subject} is in the language {object}
+ORIGINAL_LANGUAGE_OF_FILM_OR_TV_SHOW	the original language of {subject} is {object}
+ORIGINAL_NETWORK	the original network of {subject} is {object}
+PRODUCTION_COMPANY	the production company for {subject} is {object}
+CHARACTER_IN	{subject} is a character in {object}
+CHARACTERS	{subject} includes the character {object}
+SET_IN	{subject} is set in {object}
+DEPICTS	{subject} depicts {object}
+DEPICTED_BY	{subject} is depicted by {object}
+NARRATIVE_LOCATION	{subject} takes place in {object}
+MAIN_SUBJECT	the main subject of {subject} is {object}
+
+# ── Science / Research / Environment ───────────────────────────────────────
+DISCOVERER	{subject} was discovered by {object}
+DISCOVERED_BY	{subject} was discovered by {object}
+INVENTOR	{subject} was invented by {object}
+INVENTED_BY	{subject} was invented by {object}
+DISCOVERER_OR_INVENTOR	{subject} was discovered or invented by {object}
+NAMED_AFTER	{subject} is named after {object}
+FIELD_OF_WORK	{subject} works in the field of {object}
+STUDIES	{subject} studies {object}
+STUDIED_BY	{subject} is studied by {object}
+STUDIED_IN	{subject} is studied in {object}
+MEASURED_PHYSICAL_QUANTITY	{subject} measures {object}
+ORBITING	{subject} orbits {object}
+NOTABLE_WORK	a notable work of {subject} is {object}
+
+# ── Evidence / Literature / Academic ────────────────────────────────────────
+CITED_IN	{subject} is cited in {object}
+SUPPORTS	{subject} supports {object}
+CONTRADICTS	{subject} contradicts {object}
+DERIVED_FROM	{subject} is derived from {object}
+DESCRIBED_BY_SOURCE	{subject} is described by {object}
+
+# ── Causation / Effects (Neutralized context) ───────────────────────────────
+CAUSES	{subject} causes {object}
+CAUSED_BY	{subject} is caused by {object}
+HAS_CAUSE	{subject} has the cause {object}
+TRIGGERED_BY	{subject} can be triggered by {object}
+EFFECT	{subject} has the effect {object}
+HAS_EFFECT	{subject} has the effect {object}
+AFFECTS	{subject} affects {object}
+AFFECTED_BY	{subject} is affected by {object}
+INCREASES	{subject} increases {object}
+DECREASES	{subject} decreases {object}
+IMPROVES	{subject} improves {object}
+WORSENS	{subject} worsens {object}
+ENABLES	{subject} enables {object}
+INHIBITS	{subject} inhibits {object}
+PREVENTS	{subject} helps prevent {object}
+INFLUENCES	{subject} influences {object}
+
+# ── Association / Correlation / Relations ───────────────────────────────────
+ASSOCIATED_WITH	{subject} is associated with {object}
+CORRELATES_TO	{subject} correlates with {object}
+RELATED_TO	{subject} is related to {object}
+SIMILAR_TO	{subject} is similar to {object}
+OPPOSITE_OF	{subject} is the opposite of {object}
+ANALOGY_OF	{subject} is analogous to {object}
+HAS_QUALITY	{subject} has the quality {object}
+HAS_CHARACTERISTIC	{subject} has the characteristic {object}
+
+# ── Biology / Genomics / Taxonomy ─────────────────────────────────────────
+PARENT_TAXON	the parent taxon of {subject} is {object}
+CHILD_TAXON	a child taxon of {subject} is {object}
+TAXON_RANK	the taxon rank of {subject} is {object}
+HOST	{subject} has the host {object}
+PARASITE_OF	{subject} is a parasite of {object}
+SYMBIONT_OF	{subject} is a symbiont of {object}
+PREDATOR_OF	{subject} is a predator of {object}
+PREY_OF	{subject} is prey of {object}
+POLLINATES	{subject} pollinates {object}
+POLLINATED_BY	{subject} is pollinated by {object}
+FEEDS_ON	{subject} feeds on {object}
+HABITAT	{subject} lives in {object}
+PARTICIPATES_IN	{subject} participates in {object}
+ENCODES	{subject} encodes {object}
+ENCODED_BY	{subject} is encoded by {object}
+HAS_FUNCTION	{subject} has the function {object}
+BIOLOGICAL_PROCESS	{subject} is involved in the biological process {object}
+MOLECULAR_FUNCTION	{subject} has the molecular function {object}
+REGULATES	{subject} regulates {object}
+REGULATED_BY	{subject} is regulated by {object}
+ORTHOLOG_OF	{subject} is an ortholog of {object}
+HAS_SYMBOL	{subject} has the symbol {object}
+BINDS_TO	{subject} binds to {object}
+CATALYZES	{subject} catalyzes {object}
+EXPRESSED_IN	{subject} is expressed in {object}
+SUBSTRATE_OF	{subject} is a substrate of {object}
+PRODUCT_OF	{subject} is a product of {object}
+PATHWAY	{subject} is involved in the pathway {object}
+
+# ── Medicine / Health (Generalized constraints) ────────────────────────────
+TREATS	{subject} treats {object}
+MEDICAL_CONDITION_TREATED	{subject} treats the medical condition {object}
+DRUG_OR_THERAPY_USED_FOR_TREATMENT	{subject} is treated with {object}
+MANAGES	{subject} manages {object}
+CONTRAINDICATED_IN	{subject} is contraindicated for {object}
+ALTERNATIVE_TO	{subject} is an alternative to {object}
+SYMPTOM_OF	{subject} is a symptom of {object}
+SIGN_OF	{subject} is a sign of {object}
+SIDE_EFFECT_OF	{subject} is a possible side effect of {object}
+HAS_SYMPTOM	{subject} has the symptom {object}
+HAS_CONDITION	{subject} has the condition {object}
+DIAGNOSES	{subject} is used to diagnose {object}
+MONITORS	{subject} monitors {object}
+MEASURED_BY	{subject} is measured by {object}
+PREDICTS	{subject} predicts {object}
+PREDISPOSES_TO	{subject} predisposes to {object}
+RISK_FACTOR	a risk factor for {subject} is {object}
+INCREASES_RISK_OF	{subject} increases the risk of {object}
+DECREASES_RISK_OF	{subject} decreases the risk of {object}
+PROTECTIVE_AGAINST	{subject} is protective against {object}
+INTERACTS_WITH	{subject} interacts with {object}
+ADMINISTERED_VIA	{subject} is administered via {object}
+HAS_DOSAGE	the dosage of {subject} is {object}
+HAS_PREGNANCY_CATEGORY	{subject} has pregnancy category {object}
+METABOLIZED_BY	{subject} is metabolized by {object}
+PERFORMS	{subject} performs {object}
+RECOMMENDS	{subject} recommends {object}
+PRESCRIBES	{subject} prescribes {object}
+UNDERGOES	{subject} undergoes {object}
+
+# ── Production / Origin / Materials ───────────────────────────────────────
+PRODUCED_BY	{subject} is produced by {object}
+PRODUCES	{subject} produces {object}
+PRODUCT_OR_MATERIAL_PRODUCED	{subject} produces {object}
+NATURAL_PRODUCT_OF	{subject} is a natural product of {object}
+NATURAL_PRODUCT_OF_TAXON	{subject} is a natural product of {object}
+MADE_FROM	{subject} is made from {object}
+MATERIAL_USED	{subject} is made from {object}
+MADE_FROM_MATERIAL	{subject} is made from {object}
+MANUFACTURED_BY	{subject} is manufactured by {object}
+MANUFACTURER	the manufacturer of {subject} is {object}
+RAW_MATERIAL	{subject} is a raw material for {object}
+
+# ── Technology / Software / Mechanics ─────────────────────────────────────
+CONNECTS_WITH	{subject} connects with {object}
+USED_BY	{subject} is used by {object}
+REQUIRES	{subject} requires {object}
+DEPENDS_ON	{subject} depends on {object}
+POWERS	{subject} powers {object}
+POWERED_BY	{subject} is powered by {object}
+IMPLEMENTS	{subject} implements {object}
+IMPLEMENTED_BY	{subject} is implemented by {object}
+COMPATIBLE_WITH	{subject} is compatible with {object}
+RUNS_ON	{subject} runs on {object}
+OPERATING_SYSTEM	the operating system for {subject} is {object}
+DEVELOPED_BY	{subject} was developed by {object}
+DEVELOPER	the developer of {subject} is {object}
+WRITTEN_IN	{subject} is written in {object}
+PROGRAMMING_LANGUAGE	{subject} is written in {object}
+PLATFORM	{subject} has the platform {object}
+LICENSE	{subject} is licensed under {object}
+VERSION_OF	{subject} is a version of {object}
+SOFTWARE_VERSION_IDENTIFIER	the version for {subject} is {object}
+SOFTWARE_ENGINE	{subject} uses the software engine {object}
+
+# ── Chemistry / Physics ───────────────────────────────────────────────────
+COMPOSED_OF	{subject} is composed of {object}
+DISSOLVES_IN	{subject} dissolves in {object}
+REACTS_WITH	{subject} reacts with {object}
+ALLOTROPE_OF	{subject} is an allotrope of {object}
+ISOTOPE_OF	{subject} is an isotope of {object}
+PHASE_OF	{subject} is a phase of {object}
+
+# ── Education / Curriculum ────────────────────────────────────────────────
+PREREQUISITE_FOR	{subject} is a prerequisite for {object}
+TEACHES	{subject} teaches {object}
+TAUGHT_BY	{subject} is taught by {object}
+CURRICULUM_OF	{subject} is part of the curriculum of {object}
+
+# ── Legal / Regulatory ────────────────────────────────────────────────────
+REGULATED_BY	{subject} is regulated by {object}
+APPROVED_BY	{subject} is approved by {object}
+BANNED_IN	{subject} is banned in {object}
+LEGAL_IN	{subject} is legal in {object}
+CLASSIFIED_AS	{subject} is classified as {object}
+
+# ── Sport / Recreation / Entertainment ────────────────────────────────────
+SPORT	the sport of {subject} is {object}
+LEAGUE	{subject} plays in the league {object}
+PLAYS_FOR	{subject} plays for {object}
+COACHES	{subject} coaches {object}
+COMPETES_IN	{subject} competes in {object}
