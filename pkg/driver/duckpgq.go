@@ -2312,6 +2312,15 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	coreNodesLoaded, _ := res.RowsAffected()
 	fmt.Printf("  Phase 5/%d: Done — %d core nodes inserted in %s\n", totalPhases, coreNodesLoaded, time.Since(phaseStart).Round(time.Second))
 
+	// Create a lightweight entity lookup table (uuid + name + group_id only, no embeddings)
+	// for edge INSERT JOINs. The full entities table with 1024-dim embeddings is too large
+	// to join against repeatedly without OOM.
+	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _entity_lookup")
+	if _, err := conn.ExecContext(ctx, `CREATE TEMP TABLE _entity_lookup AS
+		SELECT uuid, LOWER(TRIM(name)) AS nm, group_id FROM entities WHERE type = 'entity'`); err != nil {
+		return coreNodesLoaded, 0, 0, fmt.Errorf("failed to create entity lookup: %w", err)
+	}
+
 	// Phase 6: Insert filtered triples as edges in batches (entity resolution JOIN + dedup).
 	fmt.Printf("  Phase 6/%d: Inserting filtered triples as edges (batch size %d)...\n", totalPhases, edgeBatchSize)
 	phaseStart = time.Now()
@@ -2350,11 +2359,11 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 				CURRENT_TIMESTAMP,
 				COALESCE(t.created_at, CURRENT_TIMESTAMP)
 			FROM (SELECT * FROM _filt_triples ORDER BY _rownum LIMIT %d OFFSET %d) t
-			JOIN entities subj
-				ON LOWER(TRIM(t.subject)) = LOWER(TRIM(subj.name))
+			JOIN _entity_lookup subj
+				ON LOWER(TRIM(t.subject)) = subj.nm
 				AND subj.group_id = COALESCE(t.group_id, '%s')
-			JOIN entities obj
-				ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
+			JOIN _entity_lookup obj
+				ON LOWER(TRIM(t.object)) = obj.nm
 				AND obj.group_id = COALESCE(t.group_id, '%s')
 			QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
 			groupID, dim, dim, edgeBatchSize, offset, groupID, groupID, groupID)
@@ -2554,6 +2563,13 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	fmt.Printf("  Phase 10/%d: Done — %d neighbor nodes inserted (%d total) in %s\n",
 		totalPhases, neighborNodesLoaded, nodesLoaded, time.Since(phaseStart).Round(time.Second))
 
+	// Refresh _entity_lookup to include neighbor nodes inserted in Phase 10.
+	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _entity_lookup")
+	if _, err := conn.ExecContext(ctx, `CREATE TEMP TABLE _entity_lookup AS
+		SELECT uuid, LOWER(TRIM(name)) AS nm, group_id FROM entities WHERE type = 'entity'`); err != nil {
+		return nodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to refresh entity lookup: %w", err)
+	}
+
 	// Phase 11: Insert extra edges + extra rules (batched).
 	fmt.Printf("  Phase 11/%d: Inserting extra edges and rules (batch size %d)...\n", totalPhases, edgeBatchSize)
 	phaseStart = time.Now()
@@ -2591,11 +2607,11 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 				CURRENT_TIMESTAMP,
 				COALESCE(t.created_at, CURRENT_TIMESTAMP)
 			FROM (SELECT * FROM _extra_edges ORDER BY _rownum LIMIT %d OFFSET %d) t
-			JOIN entities subj
-				ON LOWER(TRIM(t.subject)) = LOWER(TRIM(subj.name))
+			JOIN _entity_lookup subj
+				ON LOWER(TRIM(t.subject)) = subj.nm
 				AND subj.group_id = COALESCE(t.group_id, '%s')
-			JOIN entities obj
-				ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
+			JOIN _entity_lookup obj
+				ON LOWER(TRIM(t.object)) = obj.nm
 				AND obj.group_id = COALESCE(t.group_id, '%s')
 			QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
 			groupID, dim, dim, edgeBatchSize, offset, groupID, groupID, groupID)
