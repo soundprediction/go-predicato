@@ -224,3 +224,13 @@ func (k *LadybugDriver) GetEntityNodesByGroup(ctx context.Context, groupID strin
 func (k *LadybugDriver) GetAllGroupIDs(ctx context.Context) ([]string, error) {
 	return nil, ErrCGORequired
 }
+
+// BulkLoadFromParquet returns ErrCGORequired
+func (k *LadybugDriver) BulkLoadFromParquet(ctx context.Context, inputDir, groupID string) (int64, int64, int64, error) {
+	return 0, 0, 0, ErrCGORequired
+}
+
+// BulkLoadFromParquetWithFilter returns ErrCGORequired
+func (k *LadybugDriver) BulkLoadFromParquetWithFilter(ctx context.Context, inputDir, groupID string, filter *ParquetTopicFilter) (int64, int64, int64, error) {
+	return 0, 0, 0, ErrCGORequired
+}

@@ -1,5 +1,3 @@
-//go:build system_duckpgq
-
 package predicato
 
 import (
@@ -14,11 +12,6 @@ import (
 	"github.com/soundprediction/predicato/pkg/embedder"
 	"github.com/spf13/cobra"
 )
-
-// FilteredParquetImporter is implemented by drivers that support topic-filtered parquet import.
-type FilteredParquetImporter interface {
-	BulkLoadFromParquetWithFilter(ctx context.Context, inputDir, groupID string, filter *driver.TopicFilter) (int64, int64, int64, error)
-}
 
 var topicImportCmd = &cobra.Command{
 	Use:   "topic-import",
@@ -46,7 +39,7 @@ Examples:
 func init() {
 	rootCmd.AddCommand(topicImportCmd)
 
-	topicImportCmd.Flags().String("driver", "duckpgq", "graph driver (duckpgq)")
+	topicImportCmd.Flags().String("driver", "duckpgq", "graph driver (duckpgq, ladybug)")
 	topicImportCmd.Flags().String("input-dir", "", "directory containing parquet files")
 	topicImportCmd.Flags().String("output", "", "output database file path")
 	topicImportCmd.Flags().String("topic", "", "topic string to embed at runtime")
@@ -209,12 +202,12 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	filtImporter, ok := graphDriver.(FilteredParquetImporter)
+	filtImporter, ok := graphDriver.(driver.FilteredParquetImporter)
 	if !ok {
 		return fmt.Errorf("driver %q does not support topic-filtered parquet import", driverName)
 	}
 
-	filter := &driver.TopicFilter{
+	filter := &driver.ParquetTopicFilter{
 		Embedding:       topicVec,
 		Threshold:       threshold,
 		TripleThreshold: tripleThreshold,

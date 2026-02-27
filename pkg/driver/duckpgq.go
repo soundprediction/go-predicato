@@ -1794,37 +1794,6 @@ func duckCosineSimilarity(a, b []float32) float64 {
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
-// TopicFilter restricts graph loading to triples/rules semantically similar
-// to a pre-computed topic embedding vector.
-type TopicFilter struct {
-	// Embedding is the topic vector. Length must equal the driver's embeddingDim.
-	Embedding []float32
-
-	// Threshold is the minimum cosine similarity [0, 1] for node embedding inclusion.
-	// A value of 0.0 includes all nodes with non-null embeddings.
-	Threshold float64
-
-	// TripleThreshold is the minimum cosine similarity for triple/rule embedding inclusion.
-	// When 0, falls back to Threshold.
-	TripleThreshold float64
-
-	// MaxNodes caps the number of nodes inserted (0 = unlimited).
-	MaxNodes int64
-
-	// MaxEdges caps the number of edges (triples + rules combined) inserted (0 = unlimited).
-	MaxEdges int64
-
-	// EdgeThreshold is the minimum cosine similarity for expansion edges
-	// (edges collected during neighbor expansion that were not in the filtered set).
-	// When 0, defaults to 0.4.
-	EdgeThreshold float64
-
-	// EdgeBatchSize is the number of triples to INSERT per batch when joining
-	// against the entities table. Smaller batches reduce peak memory.
-	// When 0, defaults to 10000.
-	EdgeBatchSize int64
-}
-
 // TypeCount holds a value and its occurrence count.
 type TypeCount struct {
 	Value string
@@ -2009,7 +1978,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	ctx context.Context,
 	inputDir string,
 	groupID string,
-	filter *TopicFilter,
+	filter *ParquetTopicFilter,
 ) (int64, int64, int64, error) {
 	if filter == nil {
 		return d.BulkLoadFromParquet(ctx, inputDir, groupID)
@@ -2041,6 +2010,40 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		return 0, 0, 0, fmt.Errorf("failed to acquire connection: %w", err)
 	}
 	defer conn.Close()
+
+	// Propagate temp_directory and memory settings to this connection so
+	// DuckDB can spill temp tables to disk instead of OOM-ing.
+	if rows, err := d.db.QueryContext(ctx, "SELECT current_setting('temp_directory')"); err == nil {
+		var tempDir string
+		if rows.Next() {
+			rows.Scan(&tempDir)
+		}
+		rows.Close()
+		if tempDir != "" {
+			conn.ExecContext(ctx, fmt.Sprintf("SET temp_directory = '%s'", tempDir))
+		}
+	}
+	if rows, err := d.db.QueryContext(ctx, "SELECT current_setting('memory_limit')"); err == nil {
+		var memLimit string
+		if rows.Next() {
+			rows.Scan(&memLimit)
+		}
+		rows.Close()
+		if memLimit != "" {
+			conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit = '%s'", memLimit))
+		}
+	}
+	if rows, err := d.db.QueryContext(ctx, "SELECT current_setting('threads')"); err == nil {
+		var threads string
+		if rows.Next() {
+			rows.Scan(&threads)
+		}
+		rows.Close()
+		if threads != "" {
+			conn.ExecContext(ctx, fmt.Sprintf("SET threads = %s", threads))
+		}
+	}
+	conn.ExecContext(ctx, "SET max_temp_directory_size = '500GB'")
 
 	tempTables := []string{
 		"_filt_nodes", "_filt_triples", "_filt_rules",

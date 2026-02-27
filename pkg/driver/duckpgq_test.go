@@ -741,7 +741,7 @@ func TestBulkLoadFromParquetWithFilter(t *testing.T) {
 		require.NoError(t, err)
 		defer d.Close()
 
-		filter := &driver.TopicFilter{Embedding: topicVec, Threshold: 0.7}
+		filter := &driver.ParquetTopicFilter{Embedding: topicVec, Threshold: 0.7}
 		nodesLoaded, edgesLoaded, _, err := d.BulkLoadFromParquetWithFilter(
 			context.Background(), inputDir, "g", filter)
 		require.NoError(t, err)
@@ -758,7 +758,7 @@ func TestBulkLoadFromParquetWithFilter(t *testing.T) {
 		require.NoError(t, err)
 		defer d.Close()
 
-		filter := &driver.TopicFilter{Embedding: topicVec, Threshold: 0.0}
+		filter := &driver.ParquetTopicFilter{Embedding: topicVec, Threshold: 0.0}
 		nodesLoaded, edgesLoaded, _, err := d.BulkLoadFromParquetWithFilter(
 			context.Background(), inputDir, "g", filter)
 		require.NoError(t, err)
@@ -785,7 +785,7 @@ func TestBulkLoadFromParquetWithFilter(t *testing.T) {
 		require.NoError(t, err)
 		defer d.Close()
 
-		filter := &driver.TopicFilter{Embedding: make([]float32, 8), Threshold: 0.5}
+		filter := &driver.ParquetTopicFilter{Embedding: make([]float32, 8), Threshold: 0.5}
 		_, _, _, err = d.BulkLoadFromParquetWithFilter(context.Background(), inputDir, "g", filter)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "embedding dimension mismatch")
@@ -797,7 +797,7 @@ func TestBulkLoadFromParquetWithFilter(t *testing.T) {
 		require.NoError(t, err)
 		defer d.Close()
 
-		filter := &driver.TopicFilter{Embedding: topicVec, Threshold: 0.0, MaxEdges: 2}
+		filter := &driver.ParquetTopicFilter{Embedding: topicVec, Threshold: 0.0, MaxEdges: 2}
 		_, edgesLoaded, _, err := d.BulkLoadFromParquetWithFilter(
 			context.Background(), inputDir, "g", filter)
 		require.NoError(t, err)

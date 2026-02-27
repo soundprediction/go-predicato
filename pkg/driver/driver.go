@@ -145,6 +145,42 @@ type VectorSearchOptions struct {
 	MinScore  float64          `json:"min_score"`
 }
 
+// ParquetTopicFilter restricts graph loading to triples/rules semantically similar
+// to a pre-computed topic embedding vector.
+type ParquetTopicFilter struct {
+	// Embedding is the topic vector. Length must equal the driver's embeddingDim.
+	Embedding []float32
+
+	// Threshold is the minimum cosine similarity [0, 1] for node embedding inclusion.
+	// A value of 0.0 includes all nodes with non-null embeddings.
+	Threshold float64
+
+	// TripleThreshold is the minimum cosine similarity for triple/rule embedding inclusion.
+	// When 0, falls back to Threshold.
+	TripleThreshold float64
+
+	// MaxNodes caps the number of nodes inserted (0 = unlimited).
+	MaxNodes int64
+
+	// MaxEdges caps the number of edges (triples + rules combined) inserted (0 = unlimited).
+	MaxEdges int64
+
+	// EdgeThreshold is the minimum cosine similarity for expansion edges
+	// (edges collected during neighbor expansion that were not in the filtered set).
+	// When 0, defaults to 0.4.
+	EdgeThreshold float64
+
+	// EdgeBatchSize is the number of triples to INSERT per batch when joining
+	// against the entities table. Smaller batches reduce peak memory.
+	// When 0, defaults to 10000.
+	EdgeBatchSize int64
+}
+
+// FilteredParquetImporter is implemented by drivers that support topic-filtered parquet import.
+type FilteredParquetImporter interface {
+	BulkLoadFromParquetWithFilter(ctx context.Context, inputDir, groupID string, filter *ParquetTopicFilter) (int64, int64, int64, error)
+}
+
 // convertRecordToEdge converts a database record to an Edge object
 func convertRecordToEdge(record map[string]interface{}) (*types.Edge, error) {
 	edge := &types.Edge{}
