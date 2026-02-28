@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/soundprediction/predicato/pkg/config"
@@ -140,13 +141,28 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to load config for embedder: %w", err)
 		}
-		if cfg.Embedding.APIKey == "" {
-			return fmt.Errorf("--topic requires an embedder API key; set PREDICATO_EMBEDDING_API_KEY or use --topic-vector for offline use")
+
+		var emb embedder.Client
+		if strings.HasPrefix(cfg.Embedding.BaseURL, "embedeverything://") {
+			eeClient, eeErr := embedder.NewEmbedEverythingClient(&embedder.EmbedEverythingConfig{
+				Config: &embedder.Config{
+					Model:      cfg.Embedding.Model,
+					Dimensions: embDim,
+				},
+			})
+			if eeErr != nil {
+				return fmt.Errorf("failed to create embedeverything embedder: %w", eeErr)
+			}
+			emb = eeClient
+		} else {
+			if cfg.Embedding.APIKey == "" {
+				return fmt.Errorf("--topic requires an embedder API key; set PREDICATO_EMBEDDING_API_KEY or use --topic-vector for offline use")
+			}
+			emb = embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedder.Config{
+				Model:   cfg.Embedding.Model,
+				BaseURL: cfg.Embedding.BaseURL,
+			})
 		}
-		emb := embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedder.Config{
-			Model:   cfg.Embedding.Model,
-			BaseURL: cfg.Embedding.BaseURL,
-		})
 		defer emb.Close()
 
 		ctx := context.Background()
