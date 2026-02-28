@@ -179,6 +179,10 @@ type ParquetTopicFilter struct {
 	// against the entities table. Smaller batches reduce peak memory.
 	// When 0, defaults to 10000.
 	EdgeBatchSize int64
+
+	// ExcludePredicates is a list of predicate strings to filter out from triples.
+	// Triples whose predicate matches any of these (case-insensitive) are excluded.
+	ExcludePredicates []string
 }
 
 // FilteredParquetImporter is implemented by drivers that support topic-filtered parquet import.

@@ -2183,6 +2183,14 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		SELECT * FROM _valid_emb_triples
 		WHERE list_cosine_similarity(emb::FLOAT[], %s::FLOAT[]) >= %g`,
 		vecLit, tripleThreshold)
+	// Exclude specific predicates if configured
+	if len(filter.ExcludePredicates) > 0 {
+		quoted := make([]string, len(filter.ExcludePredicates))
+		for i, p := range filter.ExcludePredicates {
+			quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(strings.ToLower(p), "'", "''"))
+		}
+		filtTriplesSQL += fmt.Sprintf("\n\t\tAND LOWER(TRIM(predicate)) NOT IN (%s)", strings.Join(quoted, ", "))
+	}
 	if _, err := conn.ExecContext(ctx, filtTriplesSQL); err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to filter triples: %w", err)
 	}
@@ -2517,6 +2525,14 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		   OR  LOWER(TRIM(object))  IN (SELECT nm FROM _core_names))
 		  AND id NOT IN (SELECT id FROM _filt_triples)`,
 		dim)
+	// Exclude specific predicates from expansion edges too
+	if len(filter.ExcludePredicates) > 0 {
+		quoted := make([]string, len(filter.ExcludePredicates))
+		for i, p := range filter.ExcludePredicates {
+			quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(strings.ToLower(p), "'", "''"))
+		}
+		validExtraTriplesSQL += fmt.Sprintf("\n\t\t  AND LOWER(TRIM(predicate)) NOT IN (%s)", strings.Join(quoted, ", "))
+	}
 	if _, err := conn.ExecContext(ctx, validExtraTriplesSQL); err != nil {
 		return coreNodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to create valid extra edges: %w", err)
 	}
@@ -2563,6 +2579,13 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		_ = row.Scan(&extraRuleCount)
 	}
 	fmt.Printf("  Phase 8/%d: Done — %d extra triples + %d extra rules collected in %s\n", totalPhases, extraEdgeCount, extraRuleCount, time.Since(phaseStart).Round(time.Second))
+
+	// Drop embedding columns from temp tables — they're no longer needed after
+	// similarity filtering and consume ~4KB per row (1024 floats).
+	for _, tbl := range []string{"_extra_edges", "_extra_rules", "_filt_triples", "_filt_rules"} {
+		conn.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS emb", tbl))
+		conn.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS embedding", tbl))
+	}
 
 	// Phase 9: Find neighbor nodes from extra edges (endpoints not already in core set).
 	fmt.Printf("  Phase 9/%d: Finding neighbor nodes...\n", totalPhases)

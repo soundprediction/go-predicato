@@ -61,6 +61,7 @@ func init() {
 	topicImportCmd.Flags().Bool("skip-indexes", false, "skip index creation")
 	topicImportCmd.Flags().String("source", "parquet", "data source: parquet or postgres")
 	topicImportCmd.Flags().String("pg-conn", "", "PostgreSQL connection string (e.g. 'host=localhost port=5432 dbname=glancedb user=admin password=pass')")
+	topicImportCmd.Flags().StringSlice("exclude-predicates", nil, "predicates to exclude from triples (comma-separated, e.g. 'CONDITION_OF,INSTANCE_OF')")
 
 	_ = topicImportCmd.MarkFlagRequired("output")
 }
@@ -87,6 +88,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	skipIndexes, _ := cmd.Flags().GetBool("skip-indexes")
 	source, _ := cmd.Flags().GetString("source")
 	pgConn, _ := cmd.Flags().GetString("pg-conn")
+	excludePredicates, _ := cmd.Flags().GetStringSlice("exclude-predicates")
 
 	// Validate: exactly one of --topic or --topic-vector required.
 	if topicStr == "" && topicVectorPath == "" {
@@ -204,6 +206,9 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Max edges:      %d\n", maxEdges)
 	}
 	fmt.Printf("Edge threshold: %.2f (expansion edges)\n", edgeThreshold)
+	if len(excludePredicates) > 0 {
+		fmt.Printf("Exclude preds:  %v\n", excludePredicates)
+	}
 	fmt.Println()
 
 	totalStart := time.Now()
@@ -247,14 +252,15 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	}
 
 	filter := &driver.ParquetTopicFilter{
-		Embedding:       topicVec,
-		PostgresConnStr: pgConn,
-		Threshold:       threshold,
-		TripleThreshold: tripleThreshold,
-		MaxNodes:        maxNodes,
-		MaxEdges:        maxEdges,
-		EdgeThreshold:   edgeThreshold,
-		EdgeBatchSize:   edgeBatchSize,
+		Embedding:         topicVec,
+		PostgresConnStr:   pgConn,
+		Threshold:         threshold,
+		TripleThreshold:   tripleThreshold,
+		MaxNodes:          maxNodes,
+		MaxEdges:          maxEdges,
+		EdgeThreshold:     edgeThreshold,
+		EdgeBatchSize:     edgeBatchSize,
+		ExcludePredicates: excludePredicates,
 	}
 
 	if source == "postgres" {
