@@ -366,11 +366,18 @@ var predicateDescriptionsTSV string
 
 // createPredicateMapTable creates a temp table _predicate_map from the
 // embedded TSV, for use in edge INSERT queries.
+//
+// The TSV supports entity-type-conditioned templates via the pipe syntax:
+//
+//	PREDICATE|SUBJ_TYPE|OBJ_TYPE<tab>template
+//
+// where SUBJ_TYPE and OBJ_TYPE are entity types (e.g. CLINICAL_STUDY, CONDITION)
+// or * for any type. Plain PREDICATE lines (no pipes) are equivalent to PREDICATE|*|*.
 func createPredicateMapTable(ctx context.Context, conn interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }) error {
 	if _, err := conn.ExecContext(ctx,
-		"CREATE OR REPLACE TEMP TABLE _predicate_map (predicate VARCHAR, template VARCHAR)"); err != nil {
+		"CREATE OR REPLACE TEMP TABLE _predicate_map (predicate VARCHAR, subj_type VARCHAR, obj_type VARCHAR, template VARCHAR)"); err != nil {
 		return err
 	}
 
@@ -386,16 +393,23 @@ func createPredicateMapTable(ctx context.Context, conn interface {
 		if len(parts) != 2 {
 			continue
 		}
-		pred := strings.TrimSpace(parts[0])
+		key := strings.TrimSpace(parts[0])
 		tmpl := strings.TrimSpace(parts[1])
-		if pred == "" || tmpl == "" {
+		if key == "" || tmpl == "" {
 			continue
+		}
+		// Parse PREDICATE or PREDICATE|SUBJ_TYPE|OBJ_TYPE
+		pred, subjType, objType := key, "*", "*"
+		if pipeParts := strings.SplitN(key, "|", 3); len(pipeParts) == 3 {
+			pred = strings.TrimSpace(pipeParts[0])
+			subjType = strings.TrimSpace(pipeParts[1])
+			objType = strings.TrimSpace(pipeParts[2])
 		}
 		if !first {
 			b.WriteString(",\n")
 		}
 		escaped := strings.ReplaceAll(tmpl, "'", "''")
-		fmt.Fprintf(&b, "  ('%s', '%s')", pred, escaped)
+		fmt.Fprintf(&b, "  ('%s', '%s', '%s', '%s')", pred, subjType, objType, escaped)
 		first = false
 	}
 	if first {
@@ -407,11 +421,23 @@ func createPredicateMapTable(ctx context.Context, conn interface {
 
 // factDescriptionExpr is a SQL expression that looks up the predicate in
 // _predicate_map and substitutes {subject}/{object} into the template.
-// Falls back to "subject <predicate> object" when no template exists.
-// The caller must ensure _predicate_map has been created on the same connection.
+// It tries type-specific matches first (using subj.entity_type and obj.entity_type
+// from the _entity_lookup JOINs), then falls back to generic (*/*) templates,
+// then to "subject <predicate> object" when no template exists.
+// The caller must ensure _predicate_map and _entity_lookup have been created,
+// and that the query JOINs _entity_lookup as subj/obj.
 const factDescriptionExpr = `COALESCE(
 				(SELECT REPLACE(REPLACE(pm.template, '{subject}', t.subject), '{object}', t.object)
-				 FROM _predicate_map pm WHERE pm.predicate = t.predicate),
+				 FROM _predicate_map pm
+				 WHERE pm.predicate = t.predicate
+				   AND pm.subj_type = COALESCE(subj.entity_type, '*')
+				   AND pm.obj_type = COALESCE(obj.entity_type, '*')
+				 LIMIT 1),
+				(SELECT REPLACE(REPLACE(pm.template, '{subject}', t.subject), '{object}', t.object)
+				 FROM _predicate_map pm
+				 WHERE pm.predicate = t.predicate
+				   AND pm.subj_type = '*' AND pm.obj_type = '*'
+				 LIMIT 1),
 				t.subject || ' ' || LOWER(REPLACE(t.predicate, '_', ' ')) || ' ' || t.object
 			)`
 
@@ -507,8 +533,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 			'entity',
 			COALESCE(t.predicate, ''),
 			`+factDescriptionExpr+`,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+			CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
+			CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
 			(SELECT json_group_object(k, v) FROM (
 				VALUES
 					('condition', t.condition),
@@ -2225,7 +2251,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		if _, err := conn.ExecContext(ctx, `CREATE TEMP TABLE _filt_rules (
 			id VARCHAR, source_id VARCHAR, antecedent VARCHAR, consequent VARCHAR,
 			exception VARCHAR, rule_type VARCHAR, scope VARCHAR,
-			source_attribution VARCHAR, embedding FLOAT[], confidence DOUBLE,
+			source_attribution VARCHAR, emb FLOAT[], confidence DOUBLE,
 			created_at TIMESTAMP, chunk_index INTEGER
 		)`); err != nil {
 			return 0, 0, 0, fmt.Errorf("failed to create empty rules table: %w", err)
@@ -2398,7 +2424,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	// to join against repeatedly without OOM.
 	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _entity_lookup")
 	if _, err := conn.ExecContext(ctx, `CREATE TEMP TABLE _entity_lookup AS
-		SELECT uuid, LOWER(TRIM(name)) AS nm, group_id FROM entities WHERE type = 'entity'`); err != nil {
+		SELECT uuid, LOWER(TRIM(name)) AS nm, group_id, entity_type FROM entities WHERE type = 'entity'`); err != nil {
 		return coreNodesLoaded, 0, 0, fmt.Errorf("failed to create entity lookup: %w", err)
 	}
 
@@ -2423,8 +2449,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 				'entity',
 				COALESCE(t.predicate, ''),
 				`+factDescriptionExpr+`,
-				CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-				CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+				CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
+				CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
 				(SELECT json_group_object(k, v) FROM (
 					VALUES
 						('condition', t.condition),
@@ -2485,8 +2511,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 				THEN 'IF ' || antecedent || ' THEN ' || consequent || ' UNLESS ' || exception
 				ELSE 'IF ' || antecedent || ' THEN ' || consequent
 			END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
 			json_object(
 				'antecedent', antecedent,
 				'consequent', consequent,
@@ -2566,7 +2592,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		conn.ExecContext(ctx, `CREATE TEMP TABLE _extra_rules (
 			id VARCHAR, source_id VARCHAR, antecedent VARCHAR, consequent VARCHAR,
 			exception VARCHAR, rule_type VARCHAR, scope VARCHAR,
-			source_attribution VARCHAR, embedding FLOAT[], confidence DOUBLE,
+			source_attribution VARCHAR, emb FLOAT[], confidence DOUBLE,
 			created_at TIMESTAMP, chunk_index INTEGER
 		)`)
 	}
@@ -2579,13 +2605,6 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		_ = row.Scan(&extraRuleCount)
 	}
 	fmt.Printf("  Phase 8/%d: Done — %d extra triples + %d extra rules collected in %s\n", totalPhases, extraEdgeCount, extraRuleCount, time.Since(phaseStart).Round(time.Second))
-
-	// Drop embedding columns from temp tables — they're no longer needed after
-	// similarity filtering and consume ~4KB per row (1024 floats).
-	for _, tbl := range []string{"_extra_edges", "_extra_rules", "_filt_triples", "_filt_rules"} {
-		conn.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS emb", tbl))
-		conn.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS embedding", tbl))
-	}
 
 	// Phase 9: Find neighbor nodes from extra edges (endpoints not already in core set).
 	fmt.Printf("  Phase 9/%d: Finding neighbor nodes...\n", totalPhases)
@@ -2641,7 +2660,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	// Refresh _entity_lookup to include neighbor nodes inserted in Phase 10.
 	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _entity_lookup")
 	if _, err := conn.ExecContext(ctx, `CREATE TEMP TABLE _entity_lookup AS
-		SELECT uuid, LOWER(TRIM(name)) AS nm, group_id FROM entities WHERE type = 'entity'`); err != nil {
+		SELECT uuid, LOWER(TRIM(name)) AS nm, group_id, entity_type FROM entities WHERE type = 'entity'`); err != nil {
 		return nodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to refresh entity lookup: %w", err)
 	}
 
@@ -2665,8 +2684,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 				'entity',
 				COALESCE(t.predicate, ''),
 				`+factDescriptionExpr+`,
-				CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-				CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+				CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
+				CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
 				(SELECT json_group_object(k, v) FROM (
 					VALUES
 						('condition', t.condition),
@@ -2724,8 +2743,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 				THEN 'IF ' || antecedent || ' THEN ' || consequent || ' UNLESS ' || exception
 				ELSE 'IF ' || antecedent || ' THEN ' || consequent
 			END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
 			json_object(
 				'antecedent', antecedent,
 				'consequent', consequent,
