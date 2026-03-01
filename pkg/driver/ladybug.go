@@ -727,10 +727,11 @@ func (k *LadybugDriver) setupSchema() {
 
 	// Load FTS extension for this temporary setup connection
 	// Note: Each connection needs to load extensions separately
+	ftsLoaded := true
 	_, err = conn.Query("LOAD EXTENSION FTS;")
 	if err != nil && !strings.Contains(err.Error(), "already loaded") {
 		log.Printf("Failed to load FTS extension for setup: %v", err)
-		return
+		ftsLoaded = false
 	}
 
 	// Create schema tables
@@ -742,6 +743,9 @@ func (k *LadybugDriver) setupSchema() {
 	// Create fulltext indexes for BM25 search (matching Python implementation)
 	// From graph_queries.py get_fulltext_indices() for ladybug provider
 	// Note: These can be created before or after data exists in the tables
+	if !ftsLoaded {
+		return
+	}
 	fulltextIndexQueries := []string{
 		"CALL CREATE_FTS_INDEX('Episodic', 'episode_content', ['content', 'source', 'source_description']);",
 		"CALL CREATE_FTS_INDEX('Entity', 'node_name_and_summary', ['name', 'summary']);",
