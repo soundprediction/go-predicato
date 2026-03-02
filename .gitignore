@@ -52,6 +52,8 @@ temp/
 # Build artifacts
 bin/
 graphiti
+graphconv
+main
 examples/basic/basic
 examples/chat/chat
 examples/ladybug_ollama/ladybug_ollama
@@ -71,6 +73,7 @@ ladybug_db.*
 *.corrupt
 integration_test_db/
 test_ladybug_db/
+test_ladybug_db
 
 # Dolt/DoltGres database files
 .predicato/

@@ -1,5 +1,12 @@
 # Predicate-to-template mapping for natural-language fact descriptions.
 # Format: PREDICATE<tab>template with {subject} and {object} placeholders.
+#
+# Entity-type-conditioned templates use pipe syntax:
+#   PREDICATE|SUBJ_TYPE|OBJ_TYPE<tab>template
+# where SUBJ_TYPE and OBJ_TYPE are entity types (e.g. CLINICAL_STUDY, CONDITION)
+# or * for any type. Plain PREDICATE lines (no pipes) are equivalent to PREDICATE|*|*.
+# Type-specific templates take precedence over generic (*/*) templates.
+#
 # Lines starting with # are comments. Blank lines are ignored.
 #
 # The ELSE fallback for unknown predicates is:
@@ -7,13 +14,34 @@
 
 # ── General / Taxonomic / Structural ──────────────────────────────────────────
 IS_A	{subject} is a kind of {object}
+IS_A|CONDITION|CLINICAL_STUDY	{subject} is classified under {object}
+IS_A|SYMPTOM|CLINICAL_STUDY	{subject} is classified under {object}
+IS_A|PROTEIN|CLINICAL_STUDY	{subject} is classified as {object}
+IS_A|GENE|CLINICAL_STUDY	the gene {subject} is classified as {object}
+IS_A|MEDICATION|CLINICAL_STUDY	{subject} is a type of {object}
+IS_A|CLINICAL_STUDY|CLINICAL_STUDY	{subject} is a type of {object}
+IS_A|CLINICAL_STUDY|SYMPTOM	{subject} is classified under {object}
+IS_A|CLINICAL_STUDY|MEDICATION	{subject} is a type of {object}
+IS_A|CLINICAL_STUDY|SIDE_EFFECT	{subject} is classified as {object}
+IS_A|SYMPTOM|CONDITION	{subject} is a type of {object}
+IS_A|CONDITION|SYMPTOM	{subject} is a type of {object}
+IS_A|SYMPTOM|SIDE_EFFECT	{subject} is classified as {object}
 INSTANCE_OF	{subject} is an instance of {object}
 SUBCLASS_OF	{subject} is a subclass of {object}
 PART_OF	{subject} is part of {object}
 HAS_PART	{subject} has part {object}
 AUTHOR_OF	{subject} is the author of {object}
 COMPRISES	{subject} is made up of {object}
+COMPRISES|SIDE_EFFECT|GENE	{subject} involves the gene {object}
+COMPRISES|CONDITION|GENE	{subject} involves the gene {object}
+COMPRISES|BIOLOGICAL_PROCESS|CLINICAL_STUDY	{subject} involves {object}
+COMPRISES|MEDICATION|CLINICAL_STUDY	{subject} contains {object}
+COMPRISES|CLINICAL_STUDY|CLINICAL_STUDY	{subject} involves {object}
+COMPRISES|CLINICAL_STUDY|GENE	{subject} involves the gene {object}
+COMPRISES|SIDE_EFFECT|CLINICAL_STUDY	{subject} involves {object}
 CONTAINS	{subject} contains {object}
+CONTAINS|DRUG_CLASS|CLINICAL_STUDY	{subject} contains {object}
+CONTAINS|DRUG_CLASS|MEDICATION	{subject} contains the ingredient {object}
 COMPONENT_OF	{subject} is a component of {object}
 MEMBER_OF	{subject} is a member of {object}
 HAS_MEMBER	{subject} has member {object}
@@ -34,6 +62,8 @@ EQUIVALENT_TO	{subject} is equivalent to {object}
 
 # ── Spatial / Geography / Location ────────────────────────────────────────────
 FOUND_IN	{subject} is found in {object}
+FOUND_IN|GENE|CLINICAL_STUDY	the gene {subject} is found in {object}
+FOUND_IN|PROTEIN|CLINICAL_STUDY	the protein {subject} is found in {object}
 LOCATED_AT	{subject} is located at {object}
 LOCATED_IN	{subject} is located in {object}
 LOCATED_ON	{subject} is located on {object}
@@ -193,12 +223,15 @@ DESCRIBED_BY_SOURCE	{subject} is described by {object}
 
 # ── Causation / Effects (Neutralized context) ───────────────────────────────
 CAUSES	{subject} causes {object}
+CAUSES|CLINICAL_STUDY|CLINICAL_STUDY	{subject} can cause {object}
+CAUSES|CONDITION|CLINICAL_STUDY	{subject} can cause {object}
 CAUSED_BY	{subject} is caused by {object}
 HAS_CAUSE	{subject} has the cause {object}
 TRIGGERED_BY	{subject} can be triggered by {object}
 EFFECT	{subject} has the effect {object}
 HAS_EFFECT	{subject} has the effect {object}
 AFFECTS	{subject} affects {object}
+AFFECTS|CONDITION|CLINICAL_STUDY	{subject} affects {object}
 AFFECTED_BY	{subject} is affected by {object}
 INCREASES	{subject} increases {object}
 DECREASES	{subject} decreases {object}
@@ -211,6 +244,17 @@ INFLUENCES	{subject} influences {object}
 
 # ── Association / Correlation / Relations ───────────────────────────────────
 ASSOCIATED_WITH	{subject} is associated with {object}
+ASSOCIATED_WITH|SYMPTOM|CLINICAL_STUDY	{subject} is relevant to {object}
+ASSOCIATED_WITH|CONDITION|CLINICAL_STUDY	{subject} is relevant to {object}
+ASSOCIATED_WITH|CLINICAL_STUDY|CLINICAL_STUDY	{subject} is related to {object}
+ASSOCIATED_WITH|CLINICAL_STUDY|GENE	{subject} is associated with the gene {object}
+ASSOCIATED_WITH|GENE|CLINICAL_STUDY	the gene {subject} is associated with {object}
+ASSOCIATED_WITH|GENE|SYMPTOM	the gene {subject} is associated with {object}
+ASSOCIATED_WITH|SYMPTOM|GENE	{subject} is associated with the gene {object}
+ASSOCIATED_WITH|CONDITION|GENE	{subject} is associated with the gene {object}
+ASSOCIATED_WITH|SIDE_EFFECT|GENE	{subject} is associated with the gene {object}
+ASSOCIATED_WITH|DRUG_CLASS|CLINICAL_STUDY	{subject} is used in treating {object}
+ASSOCIATED_WITH|PROTEIN|CLINICAL_STUDY	the protein {subject} is associated with {object}
 CORRELATES_TO	{subject} correlates with {object}
 RELATED_TO	{subject} is related to {object}
 SIMILAR_TO	{subject} is similar to {object}
@@ -233,6 +277,8 @@ POLLINATED_BY	{subject} is pollinated by {object}
 FEEDS_ON	{subject} feeds on {object}
 HABITAT	{subject} lives in {object}
 PARTICIPATES_IN	{subject} participates in {object}
+PARTICIPATES_IN|PROTEIN|CLINICAL_STUDY	the protein {subject} participates in {object}
+PARTICIPATES_IN|PROTEIN|BIOLOGICAL_PROCESS	the protein {subject} participates in {object}
 ENCODES	{subject} encodes {object}
 ENCODED_BY	{subject} is encoded by {object}
 HAS_FUNCTION	{subject} has the function {object}
@@ -251,16 +297,31 @@ PATHWAY	{subject} is involved in the pathway {object}
 
 # ── Medicine / Health (Generalized constraints) ────────────────────────────
 TREATS	{subject} treats {object}
+TREATS|MEDICATION|CLINICAL_STUDY	{subject} is used to treat {object}
+TREATS|CLINICAL_STUDY|CLINICAL_STUDY	{subject} treats {object}
+TREATS|CLINICAL_STUDY|SYMPTOM	{subject} treats {object}
+TREATS|MEDICATION|SYMPTOM	{subject} is used to treat {object}
+TREATS|MEDICATION|CONDITION	{subject} is used to treat {object}
+TREATS|CLINICAL_STUDY|CONDITION	{subject} treats {object}
+TREATS|DRUG_CLASS|CLINICAL_STUDY	{subject} is used to treat {object}
 MEDICAL_CONDITION_TREATED	{subject} treats the medical condition {object}
 DRUG_OR_THERAPY_USED_FOR_TREATMENT	{subject} is treated with {object}
 MANAGES	{subject} manages {object}
 CONTRAINDICATED_IN	{subject} is contraindicated for {object}
 ALTERNATIVE_TO	{subject} is an alternative to {object}
 SYMPTOM_OF	{subject} is a symptom of {object}
+SYMPTOM_OF|CLINICAL_STUDY|CONDITION	{subject} is a symptom of {object}
+SYMPTOM_OF|CLINICAL_STUDY|CLINICAL_STUDY	{subject} is a symptom of {object}
+SYMPTOM_OF|COMPLICATION|CONDITION	{subject} is a complication of {object}
 SIGN_OF	{subject} is a sign of {object}
 SIDE_EFFECT_OF	{subject} is a possible side effect of {object}
 HAS_SYMPTOM	{subject} has the symptom {object}
 HAS_CONDITION	{subject} has the condition {object}
+HAS_CONDITION|CONDITION|CLINICAL_STUDY	{subject} involves the condition {object}
+HAS_CONDITION|CLINICAL_STUDY|CLINICAL_STUDY	{subject} is associated with the condition {object}
+HAS_CONDITION|CLINICAL_STUDY|CONDITION	{subject} involves the condition {object}
+HAS_CONDITION|CLINICAL_STUDY|SYMPTOM	{subject} involves the symptom {object}
+HAS_CONDITION|CONDITION|GENE	{subject} involves the gene {object}
 DIAGNOSES	{subject} is used to diagnose {object}
 MONITORS	{subject} monitors {object}
 MEASURED_BY	{subject} is measured by {object}
@@ -271,6 +332,14 @@ INCREASES_RISK_OF	{subject} increases the risk of {object}
 DECREASES_RISK_OF	{subject} decreases the risk of {object}
 PROTECTIVE_AGAINST	{subject} is protective against {object}
 INTERACTS_WITH	{subject} interacts with {object}
+INTERACTS_WITH|MEDICATION|CLINICAL_STUDY	{subject} interacts with {object}
+INTERACTS_WITH|CLINICAL_STUDY|CLINICAL_STUDY	{subject} interacts with {object}
+INTERACTS_WITH|CLINICAL_STUDY|MEDICATION	{subject} interacts with {object}
+INTERACTS_WITH|MEDICATION|PROTEIN	{subject} interacts with the protein {object}
+INTERACTS_WITH|CLINICAL_STUDY|PROTEIN	{subject} interacts with the protein {object}
+INTERACTS_WITH|PROTEIN|CLINICAL_STUDY	the protein {subject} interacts with {object}
+INTERACTS_WITH|DRUG_CLASS|CLINICAL_STUDY	{subject} interacts with {object}
+INTERACTS_WITH|DRUG_CLASS|MEDICATION	{subject} interacts with {object}
 ADMINISTERED_VIA	{subject} is administered via {object}
 HAS_DOSAGE	the dosage of {subject} is {object}
 HAS_PREGNANCY_CATEGORY	{subject} has pregnancy category {object}

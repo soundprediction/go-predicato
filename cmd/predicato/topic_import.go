@@ -1,5 +1,3 @@
-//go:build system_duckpgq
-
 package predicato
 
 import (
@@ -7,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/soundprediction/predicato/pkg/config"
@@ -14,11 +13,6 @@ import (
 	"github.com/soundprediction/predicato/pkg/embedder"
 	"github.com/spf13/cobra"
 )
-
-// FilteredParquetImporter is implemented by drivers that support topic-filtered parquet import.
-type FilteredParquetImporter interface {
-	BulkLoadFromParquetWithFilter(ctx context.Context, inputDir, groupID string, filter *driver.TopicFilter) (int64, int64, int64, error)
-}
 
 var topicImportCmd = &cobra.Command{
 	Use:   "topic-import",
@@ -35,24 +29,24 @@ Exactly one of --topic or --topic-vector must be provided:
 Examples:
   # Embed topic at runtime (requires embedder config):
   predicato topic-import --input-dir ./wikidata-output --output ./diabetes.duckdb \
-    --topic "diabetes mellitus type 2 treatment" --threshold 0.65
+    --topic "diabetes mellitus type 2 treatment" --threshold 0.7
 
   # Use a pre-computed vector (no API key needed):
   predicato topic-import --input-dir ./wikidata-output --output ./diabetes.duckdb \
-    --topic-vector ./diabetes_vector.json --threshold 0.65`,
+    --topic-vector ./diabetes_vector.json --threshold 0.7`,
 	RunE: runTopicImport,
 }
 
 func init() {
 	rootCmd.AddCommand(topicImportCmd)
 
-	topicImportCmd.Flags().String("driver", "duckpgq", "graph driver (duckpgq)")
+	topicImportCmd.Flags().String("driver", "duckpgq", "graph driver (duckpgq, ladybug)")
 	topicImportCmd.Flags().String("input-dir", "", "directory containing parquet files")
 	topicImportCmd.Flags().String("output", "", "output database file path")
 	topicImportCmd.Flags().String("topic", "", "topic string to embed at runtime")
 	topicImportCmd.Flags().String("topic-vector", "", "path to JSON file with pre-computed []float32 vector")
-	topicImportCmd.Flags().Float64("threshold", 0.65, "minimum cosine similarity [0,1] for node inclusion")
-	topicImportCmd.Flags().Float64("triple-threshold", 0, "minimum cosine similarity for triple/rule inclusion (0 = use --threshold)")
+	topicImportCmd.Flags().Float64("threshold", 0.75, "minimum cosine similarity [0,1] for node inclusion")
+	topicImportCmd.Flags().Float64("triple-threshold", 0.65, "minimum cosine similarity for triple/rule inclusion (0 = use --threshold)")
 	topicImportCmd.Flags().String("group-id", "wikidata", "group ID for multi-tenant isolation")
 	topicImportCmd.Flags().Int("embedding-dim", 1024, "embedding vector dimension")
 	topicImportCmd.Flags().Int("threads", 0, "DuckDB thread count (0 = system default, duckpgq only)")
@@ -60,12 +54,15 @@ func init() {
 	topicImportCmd.Flags().String("temp-dir", "", "DuckDB temp directory for disk spill (duckpgq only, defaults to system temp)")
 	topicImportCmd.Flags().Int64("max-nodes", 0, "maximum nodes to insert (0 = unlimited)")
 	topicImportCmd.Flags().Int64("max-edges", 0, "maximum edges to insert (0 = unlimited)")
-	topicImportCmd.Flags().Float64("edge-threshold", 0.4, "minimum cosine similarity for expansion edges (neighbor discovery)")
+	topicImportCmd.Flags().Float64("edge-threshold", 0.55, "minimum cosine similarity for expansion edges (neighbor discovery)")
+	topicImportCmd.Flags().Int64("edge-batch-size", 10000, "number of edges to INSERT per batch (reduces peak memory)")
 	topicImportCmd.Flags().Bool("build-communities", false, "run community detection after graph construction")
 	topicImportCmd.Flags().Bool("force", false, "overwrite output file if it exists")
 	topicImportCmd.Flags().Bool("skip-indexes", false, "skip index creation")
+	topicImportCmd.Flags().String("source", "parquet", "data source: parquet or postgres")
+	topicImportCmd.Flags().String("pg-conn", "", "PostgreSQL connection string (e.g. 'host=localhost port=5432 dbname=glancedb user=admin password=pass')")
+	topicImportCmd.Flags().StringSlice("exclude-predicates", nil, "predicates to exclude from triples (comma-separated, e.g. 'CONDITION_OF,INSTANCE_OF')")
 
-	_ = topicImportCmd.MarkFlagRequired("input-dir")
 	_ = topicImportCmd.MarkFlagRequired("output")
 }
 
@@ -85,9 +82,13 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	maxNodes, _ := cmd.Flags().GetInt64("max-nodes")
 	maxEdges, _ := cmd.Flags().GetInt64("max-edges")
 	edgeThreshold, _ := cmd.Flags().GetFloat64("edge-threshold")
+	edgeBatchSize, _ := cmd.Flags().GetInt64("edge-batch-size")
 	buildCommunities, _ := cmd.Flags().GetBool("build-communities")
 	force, _ := cmd.Flags().GetBool("force")
 	skipIndexes, _ := cmd.Flags().GetBool("skip-indexes")
+	source, _ := cmd.Flags().GetString("source")
+	pgConn, _ := cmd.Flags().GetString("pg-conn")
+	excludePredicates, _ := cmd.Flags().GetStringSlice("exclude-predicates")
 
 	// Validate: exactly one of --topic or --topic-vector required.
 	if topicStr == "" && topicVectorPath == "" {
@@ -97,10 +98,24 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("exactly one of --topic or --topic-vector must be provided, not both")
 	}
 
-	// Validate input directory.
-	info, err := os.Stat(inputDir)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("input directory not found: %s", inputDir)
+	// Validate source.
+	if source == "postgres" {
+		if pgConn == "" {
+			return fmt.Errorf("--pg-conn is required when --source=postgres")
+		}
+	} else if source != "parquet" {
+		return fmt.Errorf("--source must be 'parquet' or 'postgres', got %q", source)
+	}
+
+	// Validate input directory (required for parquet source).
+	if source == "parquet" {
+		if inputDir == "" {
+			return fmt.Errorf("--input-dir is required when --source=parquet")
+		}
+		info, err := os.Stat(inputDir)
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("input directory not found: %s", inputDir)
+		}
 	}
 
 	// Check output path.
@@ -114,6 +129,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 
 	// Build or load the topic vector.
 	var topicVec []float32
+	var err error
 	if topicVectorPath != "" {
 		topicVec, err = loadVectorJSON(topicVectorPath)
 		if err != nil {
@@ -127,13 +143,28 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to load config for embedder: %w", err)
 		}
-		if cfg.Embedding.APIKey == "" {
-			return fmt.Errorf("--topic requires an embedder API key; set PREDICATO_EMBEDDING_API_KEY or use --topic-vector for offline use")
+
+		var emb embedder.Client
+		if strings.HasPrefix(cfg.Embedding.BaseURL, "embedeverything://") {
+			eeClient, eeErr := embedder.NewEmbedEverythingClient(&embedder.EmbedEverythingConfig{
+				Config: &embedder.Config{
+					Model:      cfg.Embedding.Model,
+					Dimensions: embDim,
+				},
+			})
+			if eeErr != nil {
+				return fmt.Errorf("failed to create embedeverything embedder: %w", eeErr)
+			}
+			emb = eeClient
+		} else {
+			if cfg.Embedding.APIKey == "" {
+				return fmt.Errorf("--topic requires an embedder API key; set PREDICATO_EMBEDDING_API_KEY or use --topic-vector for offline use")
+			}
+			emb = embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedder.Config{
+				Model:   cfg.Embedding.Model,
+				BaseURL: cfg.Embedding.BaseURL,
+			})
 		}
-		emb := embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedder.Config{
-			Model:   cfg.Embedding.Model,
-			BaseURL: cfg.Embedding.BaseURL,
-		})
 		defer emb.Close()
 
 		ctx := context.Background()
@@ -159,7 +190,12 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Triple thresh:  %.2f (same as node threshold)\n", threshold)
 	}
 	fmt.Printf("Driver:         %s\n", driverName)
-	fmt.Printf("Input:          %s\n", inputDir)
+	fmt.Printf("Source:         %s\n", source)
+	if source == "postgres" {
+		fmt.Printf("PG conn:        %s\n", pgConn)
+	} else {
+		fmt.Printf("Input:          %s\n", inputDir)
+	}
 	fmt.Printf("Output:         %s\n", output)
 	fmt.Printf("Group ID:       %s\n", groupID)
 	fmt.Printf("Embedding dim:  %d\n", embDim)
@@ -170,6 +206,9 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Max edges:      %d\n", maxEdges)
 	}
 	fmt.Printf("Edge threshold: %.2f (expansion edges)\n", edgeThreshold)
+	if len(excludePredicates) > 0 {
+		fmt.Printf("Exclude preds:  %v\n", excludePredicates)
+	}
 	fmt.Println()
 
 	totalStart := time.Now()
@@ -207,21 +246,28 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	filtImporter, ok := graphDriver.(FilteredParquetImporter)
+	filtImporter, ok := graphDriver.(driver.FilteredParquetImporter)
 	if !ok {
 		return fmt.Errorf("driver %q does not support topic-filtered parquet import", driverName)
 	}
 
-	filter := &driver.TopicFilter{
-		Embedding:       topicVec,
-		Threshold:       threshold,
-		TripleThreshold: tripleThreshold,
-		MaxNodes:        maxNodes,
-		MaxEdges:        maxEdges,
-		EdgeThreshold:   edgeThreshold,
+	filter := &driver.ParquetTopicFilter{
+		Embedding:         topicVec,
+		PostgresConnStr:   pgConn,
+		Threshold:         threshold,
+		TripleThreshold:   tripleThreshold,
+		MaxNodes:          maxNodes,
+		MaxEdges:          maxEdges,
+		EdgeThreshold:     edgeThreshold,
+		EdgeBatchSize:     edgeBatchSize,
+		ExcludePredicates: excludePredicates,
 	}
 
-	fmt.Println("Loading topic-filtered parquet files...")
+	if source == "postgres" {
+		fmt.Println("Loading topic-filtered data from PostgreSQL...")
+	} else {
+		fmt.Println("Loading topic-filtered parquet files...")
+	}
 	loadStart := time.Now()
 
 	nodesLoaded, edgesLoaded, rulesLoaded, err := filtImporter.BulkLoadFromParquetWithFilter(ctx, inputDir, groupID, filter)

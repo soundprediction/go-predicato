@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -725,10 +727,11 @@ func (k *LadybugDriver) setupSchema() {
 
 	// Load FTS extension for this temporary setup connection
 	// Note: Each connection needs to load extensions separately
+	ftsLoaded := true
 	_, err = conn.Query("LOAD EXTENSION FTS;")
 	if err != nil && !strings.Contains(err.Error(), "already loaded") {
 		log.Printf("Failed to load FTS extension for setup: %v", err)
-		return
+		ftsLoaded = false
 	}
 
 	// Create schema tables
@@ -740,6 +743,9 @@ func (k *LadybugDriver) setupSchema() {
 	// Create fulltext indexes for BM25 search (matching Python implementation)
 	// From graph_queries.py get_fulltext_indices() for ladybug provider
 	// Note: These can be created before or after data exists in the tables
+	if !ftsLoaded {
+		return
+	}
 	fulltextIndexQueries := []string{
 		"CALL CREATE_FTS_INDEX('Episodic', 'episode_content', ['content', 'source', 'source_description']);",
 		"CALL CREATE_FTS_INDEX('Entity', 'node_name_and_summary', ['name', 'summary']);",
@@ -2029,6 +2035,403 @@ func (k *LadybugDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 	}
 
 	return nodesLoaded, edgesLoaded, rulesLoaded, nil
+}
+
+// BulkLoadFromParquetWithFilter loads a topic-filtered subset of predicato fact store
+// parquet files into the Ladybug graph. It reads the parquet files into memory, filters
+// by cosine similarity against the topic embedding, then writes filtered intermediate
+// parquet files and uses COPY FROM to load them.
+//
+// If filter is nil, delegates to BulkLoadFromParquet (full load).
+func (k *LadybugDriver) BulkLoadFromParquetWithFilter(ctx context.Context, inputDir, groupID string, filter *ParquetTopicFilter) (int64, int64, int64, error) {
+	if filter == nil {
+		return k.BulkLoadFromParquet(ctx, inputDir, groupID)
+	}
+
+	if len(filter.Embedding) == 0 {
+		return 0, 0, 0, fmt.Errorf("filter embedding is empty")
+	}
+
+	tripleThreshold := filter.TripleThreshold
+	if tripleThreshold == 0 {
+		tripleThreshold = filter.Threshold
+	}
+	edgeThreshold := filter.EdgeThreshold
+	if edgeThreshold == 0 {
+		edgeThreshold = 0.4
+	}
+
+	// Phase 1: Read all parquet data
+	nodesPath := findFactstoreParquet(inputDir, "nodes.parquet")
+	if nodesPath == "" {
+		return 0, 0, 0, fmt.Errorf("nodes.parquet not found in %s", inputDir)
+	}
+	allNodes, err := readFactstoreNodes(nodesPath)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to read nodes: %w", err)
+	}
+
+	triplesPath := findFactstoreParquet(inputDir, "extracted_triples.parquet.gz")
+	if triplesPath == "" {
+		triplesPath = findFactstoreParquet(inputDir, "extracted_triples.parquet")
+	}
+	if triplesPath == "" {
+		return 0, 0, 0, fmt.Errorf("extracted_triples parquet not found in %s", inputDir)
+	}
+	allTriples, err := readFactstoreTriples(triplesPath)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to read triples: %w", err)
+	}
+
+	var allRules []factstoreRule
+	rulesPath := findFactstoreParquet(inputDir, "extracted_rules.parquet.gz")
+	if rulesPath == "" {
+		rulesPath = findFactstoreParquet(inputDir, "extracted_rules.parquet")
+	}
+	if rulesPath != "" {
+		allRules, err = readFactstoreRules(rulesPath)
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("failed to read rules: %w", err)
+		}
+	}
+
+	// Phase 2: Filter by cosine similarity
+
+	// Build node lookup by name (lowered, trimmed)
+	type nodeWithSim struct {
+		node factstoreNode
+		sim  float64
+	}
+	nodeByName := make(map[string]*nodeWithSim, len(allNodes))
+	for _, n := range allNodes {
+		key := strings.ToLower(strings.TrimSpace(n.Name))
+		sim := 0.0
+		if len(n.Embedding) > 0 {
+			sim = parquetCosineSimilarity(filter.Embedding, n.Embedding)
+		}
+		nodeByName[key] = &nodeWithSim{node: n, sim: sim}
+	}
+
+	// Filter triples: keep those with similarity >= tripleThreshold
+	type tripleWithSim struct {
+		triple factstoreTriple
+		sim    float64
+	}
+	var filteredTriples []tripleWithSim
+	for _, t := range allTriples {
+		sim := 0.0
+		if len(t.Embedding) > 0 {
+			sim = parquetCosineSimilarity(filter.Embedding, t.Embedding)
+		}
+		if sim >= tripleThreshold {
+			filteredTriples = append(filteredTriples, tripleWithSim{triple: t, sim: sim})
+		}
+	}
+
+	// Sort filtered triples by similarity descending for consistent cap behavior
+	sort.Slice(filteredTriples, func(i, j int) bool {
+		return filteredTriples[i].sim > filteredTriples[j].sim
+	})
+
+	// Filter rules: keep those with similarity >= tripleThreshold
+	type ruleWithSim struct {
+		rule factstoreRule
+		sim  float64
+	}
+	var filteredRules []ruleWithSim
+	for _, r := range allRules {
+		sim := 0.0
+		if len(r.Embedding) > 0 {
+			sim = parquetCosineSimilarity(filter.Embedding, r.Embedding)
+		}
+		if sim >= tripleThreshold {
+			filteredRules = append(filteredRules, ruleWithSim{rule: r, sim: sim})
+		}
+	}
+
+	sort.Slice(filteredRules, func(i, j int) bool {
+		return filteredRules[i].sim > filteredRules[j].sim
+	})
+
+	// Phase 3: Build core node set from filtered triples + rules
+	coreNodes := make(map[string]bool)
+
+	// Add nodes directly passing the node threshold
+	for _, ns := range nodeByName {
+		if ns.sim >= filter.Threshold {
+			coreNodes[strings.ToLower(strings.TrimSpace(ns.node.Name))] = true
+		}
+	}
+
+	// Add subject/object of filtered triples
+	for _, ft := range filteredTriples {
+		coreNodes[strings.ToLower(strings.TrimSpace(ft.triple.Subject))] = true
+		coreNodes[strings.ToLower(strings.TrimSpace(ft.triple.Object))] = true
+	}
+
+	// Phase 4: Expansion edges — unfiltered triples touching core nodes with sim >= edgeThreshold
+	var expansionTriples []tripleWithSim
+	filteredTripleIDs := make(map[string]bool, len(filteredTriples))
+	for _, ft := range filteredTriples {
+		filteredTripleIDs[ft.triple.ID] = true
+	}
+
+	for _, t := range allTriples {
+		if filteredTripleIDs[t.ID] {
+			continue
+		}
+		subjKey := strings.ToLower(strings.TrimSpace(t.Subject))
+		objKey := strings.ToLower(strings.TrimSpace(t.Object))
+		if !coreNodes[subjKey] && !coreNodes[objKey] {
+			continue
+		}
+		sim := 0.0
+		if len(t.Embedding) > 0 {
+			sim = parquetCosineSimilarity(filter.Embedding, t.Embedding)
+		}
+		if sim >= edgeThreshold {
+			expansionTriples = append(expansionTriples, tripleWithSim{triple: t, sim: sim})
+		}
+	}
+
+	sort.Slice(expansionTriples, func(i, j int) bool {
+		return expansionTriples[i].sim > expansionTriples[j].sim
+	})
+
+	// Expand node set with neighbor endpoints from expansion edges
+	for _, et := range expansionTriples {
+		coreNodes[strings.ToLower(strings.TrimSpace(et.triple.Subject))] = true
+		coreNodes[strings.ToLower(strings.TrimSpace(et.triple.Object))] = true
+	}
+
+	// Combine all triples (filtered + expansion)
+	allSelectedTriples := append(filteredTriples, expansionTriples...)
+	sort.Slice(allSelectedTriples, func(i, j int) bool {
+		return allSelectedTriples[i].sim > allSelectedTriples[j].sim
+	})
+
+	// Phase 5: Apply MaxEdges cap (triples + rules combined)
+	totalEdges := int64(len(allSelectedTriples)) + int64(len(filteredRules))
+	if filter.MaxEdges > 0 && totalEdges > filter.MaxEdges {
+		// Prioritize filtered triples over expansion, then rules
+		if int64(len(allSelectedTriples)) > filter.MaxEdges {
+			allSelectedTriples = allSelectedTriples[:filter.MaxEdges]
+			filteredRules = nil
+		} else {
+			remaining := filter.MaxEdges - int64(len(allSelectedTriples))
+			if int64(len(filteredRules)) > remaining {
+				filteredRules = filteredRules[:remaining]
+			}
+		}
+	}
+
+	// Collect final node set from selected triples
+	finalNodes := make(map[string]bool)
+	for _, t := range allSelectedTriples {
+		finalNodes[strings.ToLower(strings.TrimSpace(t.triple.Subject))] = true
+		finalNodes[strings.ToLower(strings.TrimSpace(t.triple.Object))] = true
+	}
+	// Also include nodes passing the threshold even if no triples reference them
+	for key := range coreNodes {
+		finalNodes[key] = true
+	}
+
+	// Apply MaxNodes cap
+	var selectedNodeRows []factstoreNode
+	for key := range finalNodes {
+		if ns, ok := nodeByName[key]; ok {
+			selectedNodeRows = append(selectedNodeRows, ns.node)
+		}
+	}
+	// Sort by similarity for consistent capping
+	sort.Slice(selectedNodeRows, func(i, j int) bool {
+		simI := 0.0
+		if ns, ok := nodeByName[strings.ToLower(strings.TrimSpace(selectedNodeRows[i].Name))]; ok {
+			simI = ns.sim
+		}
+		simJ := 0.0
+		if ns, ok := nodeByName[strings.ToLower(strings.TrimSpace(selectedNodeRows[j].Name))]; ok {
+			simJ = ns.sim
+		}
+		return simI > simJ
+	})
+	if filter.MaxNodes > 0 && int64(len(selectedNodeRows)) > filter.MaxNodes {
+		selectedNodeRows = selectedNodeRows[:filter.MaxNodes]
+	}
+
+	// Phase 6: Write filtered data as parquet and COPY into Ladybug
+	tmpDir, err := os.MkdirTemp("", "ladybug-parquet-filter-*")
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Build name→uuid lookup from selected nodes
+	nameToUUID := make(map[string]string, len(selectedNodeRows))
+	for _, n := range selectedNodeRows {
+		nameToUUID[strings.ToLower(strings.TrimSpace(n.Name))] = n.ID
+	}
+
+	// Transform and write entities
+	entities := make([]ladybugEntity, len(selectedNodeRows))
+	for i, n := range selectedNodeRows {
+		var labels []string
+		if n.Type != "" {
+			labels = []string{n.Type}
+		}
+		attrs := "{}"
+		if n.Description != "" {
+			if data, err := json.Marshal(map[string]string{
+				"description": n.Description,
+				"entity_type": n.Type,
+			}); err == nil {
+				attrs = string(data)
+			}
+		}
+		entities[i] = ladybugEntity{
+			Uuid:          n.ID,
+			Name:          n.Name,
+			GroupID:       groupID,
+			Labels:        labels,
+			CreatedAt:     n.CreatedAt,
+			NameEmbedding: n.Embedding,
+			Summary:       n.Description,
+			Attributes:    attrs,
+		}
+	}
+
+	entityPath := filepath.Join(tmpDir, "entities.parquet")
+	if err := writeParquetFile(entityPath, entities); err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to write entity parquet: %w", err)
+	}
+	copyQuery := fmt.Sprintf(`COPY Entity FROM "%s"`, entityPath)
+	if _, _, _, err := k.ExecuteQuery(ctx, copyQuery, nil); err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to COPY Entity: %w", err)
+	}
+	nodesLoaded := int64(len(entities))
+
+	// Transform and write triples
+	var relNodes []ladybugRelatesToNode
+	var relEdges []ladybugRelatesToRel
+	var skipped int64
+	now := time.Now()
+
+	for _, ts := range allSelectedTriples {
+		t := ts.triple
+		subjUUID, subjOK := nameToUUID[strings.ToLower(strings.TrimSpace(t.Subject))]
+		objUUID, objOK := nameToUUID[strings.ToLower(strings.TrimSpace(t.Object))]
+		if !subjOK || !objOK {
+			skipped++
+			continue
+		}
+		attrs := buildTripleAttributes(t)
+		relNodes = append(relNodes, ladybugRelatesToNode{
+			Uuid:          t.ID,
+			GroupID:       groupID,
+			CreatedAt:     t.CreatedAt,
+			Name:          t.Predicate,
+			Fact:          t.Description,
+			FactEmbedding: t.Embedding,
+			Episodes:      []string{},
+			ValidAt:       &now,
+			Attributes:    attrs,
+		})
+		relEdges = append(relEdges,
+			ladybugRelatesToRel{From: subjUUID, To: t.ID},
+			ladybugRelatesToRel{From: t.ID, To: objUUID},
+		)
+	}
+
+	if len(relNodes) > 0 {
+		relNodePath := filepath.Join(tmpDir, "relates_to_nodes.parquet")
+		if err := writeParquetFile(relNodePath, relNodes); err != nil {
+			return nodesLoaded, 0, 0, fmt.Errorf("failed to write RelatesToNode_ parquet: %w", err)
+		}
+		copyQuery = fmt.Sprintf(`COPY RelatesToNode_ FROM "%s"`, relNodePath)
+		if _, _, _, err := k.ExecuteQuery(ctx, copyQuery, nil); err != nil {
+			return nodesLoaded, 0, 0, fmt.Errorf("failed to COPY RelatesToNode_: %w", err)
+		}
+		relEdgePath := filepath.Join(tmpDir, "relates_to_edges.parquet")
+		if err := writeParquetFile(relEdgePath, relEdges); err != nil {
+			return nodesLoaded, 0, 0, fmt.Errorf("failed to write RELATES_TO parquet: %w", err)
+		}
+		copyQuery = fmt.Sprintf(`COPY RELATES_TO FROM "%s"`, relEdgePath)
+		if _, _, _, err := k.ExecuteQuery(ctx, copyQuery, nil); err != nil {
+			return nodesLoaded, 0, 0, fmt.Errorf("failed to COPY RELATES_TO: %w", err)
+		}
+	}
+	edgesLoaded := int64(len(relNodes))
+
+	if skipped > 0 {
+		log.Printf("BulkLoadFromParquetWithFilter: %d triples skipped (unresolved entities)", skipped)
+	}
+
+	// Transform and write rules
+	var rulesLoaded int64
+	if len(filteredRules) > 0 {
+		rules := make([]ladybugRule, len(filteredRules))
+		for i, rs := range filteredRules {
+			r := rs.rule
+			fact := "IF " + r.Antecedent + " THEN " + r.Consequent
+			if r.Exception != "" {
+				fact += " UNLESS " + r.Exception
+			}
+			attrs := "{}"
+			if data, err := json.Marshal(map[string]interface{}{
+				"antecedent":         r.Antecedent,
+				"consequent":         r.Consequent,
+				"exception":          r.Exception,
+				"rule_type":          r.RuleType,
+				"scope":              r.Scope,
+				"source_attribution": r.SourceAttribution,
+				"confidence":         r.Confidence,
+			}); err == nil {
+				attrs = string(data)
+			}
+			rules[i] = ladybugRule{
+				Uuid:          r.ID,
+				Name:          r.RuleType + ": " + r.Antecedent,
+				GroupID:       groupID,
+				EntityType:    r.RuleType,
+				Summary:       fact,
+				Content:       fact,
+				Embedding:     r.Embedding,
+				NameEmbedding: r.Embedding,
+				CreatedAt:     r.CreatedAt,
+				UpdatedAt:     r.CreatedAt,
+				ValidFrom:     r.CreatedAt,
+				Attributes:    attrs,
+			}
+		}
+		rulePath := filepath.Join(tmpDir, "rules.parquet")
+		if err := writeParquetFile(rulePath, rules); err != nil {
+			return nodesLoaded, edgesLoaded, 0, fmt.Errorf("failed to write Rule parquet: %w", err)
+		}
+		copyQuery = fmt.Sprintf(`COPY Rule FROM "%s"`, rulePath)
+		if _, _, _, err := k.ExecuteQuery(ctx, copyQuery, nil); err != nil {
+			return nodesLoaded, edgesLoaded, 0, fmt.Errorf("failed to COPY Rule: %w", err)
+		}
+		rulesLoaded = int64(len(rules))
+	}
+
+	return nodesLoaded, edgesLoaded, rulesLoaded, nil
+}
+
+// parquetCosineSimilarity computes cosine similarity between two float32 vectors.
+func parquetCosineSimilarity(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		normA += float64(a[i]) * float64(a[i])
+		normB += float64(b[i]) * float64(b[i])
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
 // ladybugRule matches the Ladybug Rule node table column order for COPY FROM parquet.

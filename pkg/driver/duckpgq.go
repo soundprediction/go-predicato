@@ -366,11 +366,18 @@ var predicateDescriptionsTSV string
 
 // createPredicateMapTable creates a temp table _predicate_map from the
 // embedded TSV, for use in edge INSERT queries.
+//
+// The TSV supports entity-type-conditioned templates via the pipe syntax:
+//
+//	PREDICATE|SUBJ_TYPE|OBJ_TYPE<tab>template
+//
+// where SUBJ_TYPE and OBJ_TYPE are entity types (e.g. CLINICAL_STUDY, CONDITION)
+// or * for any type. Plain PREDICATE lines (no pipes) are equivalent to PREDICATE|*|*.
 func createPredicateMapTable(ctx context.Context, conn interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }) error {
 	if _, err := conn.ExecContext(ctx,
-		"CREATE OR REPLACE TEMP TABLE _predicate_map (predicate VARCHAR, template VARCHAR)"); err != nil {
+		"CREATE OR REPLACE TEMP TABLE _predicate_map (predicate VARCHAR, subj_type VARCHAR, obj_type VARCHAR, template VARCHAR)"); err != nil {
 		return err
 	}
 
@@ -386,16 +393,23 @@ func createPredicateMapTable(ctx context.Context, conn interface {
 		if len(parts) != 2 {
 			continue
 		}
-		pred := strings.TrimSpace(parts[0])
+		key := strings.TrimSpace(parts[0])
 		tmpl := strings.TrimSpace(parts[1])
-		if pred == "" || tmpl == "" {
+		if key == "" || tmpl == "" {
 			continue
+		}
+		// Parse PREDICATE or PREDICATE|SUBJ_TYPE|OBJ_TYPE
+		pred, subjType, objType := key, "*", "*"
+		if pipeParts := strings.SplitN(key, "|", 3); len(pipeParts) == 3 {
+			pred = strings.TrimSpace(pipeParts[0])
+			subjType = strings.TrimSpace(pipeParts[1])
+			objType = strings.TrimSpace(pipeParts[2])
 		}
 		if !first {
 			b.WriteString(",\n")
 		}
 		escaped := strings.ReplaceAll(tmpl, "'", "''")
-		fmt.Fprintf(&b, "  ('%s', '%s')", pred, escaped)
+		fmt.Fprintf(&b, "  ('%s', '%s', '%s', '%s')", pred, subjType, objType, escaped)
 		first = false
 	}
 	if first {
@@ -407,11 +421,23 @@ func createPredicateMapTable(ctx context.Context, conn interface {
 
 // factDescriptionExpr is a SQL expression that looks up the predicate in
 // _predicate_map and substitutes {subject}/{object} into the template.
-// Falls back to "subject <predicate> object" when no template exists.
-// The caller must ensure _predicate_map has been created on the same connection.
+// It tries type-specific matches first (using subj.entity_type and obj.entity_type
+// from the _entity_lookup JOINs), then falls back to generic (*/*) templates,
+// then to "subject <predicate> object" when no template exists.
+// The caller must ensure _predicate_map and _entity_lookup have been created,
+// and that the query JOINs _entity_lookup as subj/obj.
 const factDescriptionExpr = `COALESCE(
 				(SELECT REPLACE(REPLACE(pm.template, '{subject}', t.subject), '{object}', t.object)
-				 FROM _predicate_map pm WHERE pm.predicate = t.predicate),
+				 FROM _predicate_map pm
+				 WHERE pm.predicate = t.predicate
+				   AND pm.subj_type = COALESCE(subj.entity_type, '*')
+				   AND pm.obj_type = COALESCE(obj.entity_type, '*')
+				 LIMIT 1),
+				(SELECT REPLACE(REPLACE(pm.template, '{subject}', t.subject), '{object}', t.object)
+				 FROM _predicate_map pm
+				 WHERE pm.predicate = t.predicate
+				   AND pm.subj_type = '*' AND pm.obj_type = '*'
+				 LIMIT 1),
 				t.subject || ' ' || LOWER(REPLACE(t.predicate, '_', ' ')) || ' ' || t.object
 			)`
 
@@ -507,8 +533,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 			'entity',
 			COALESCE(t.predicate, ''),
 			`+factDescriptionExpr+`,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
+			CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
+			CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
 			(SELECT json_group_object(k, v) FROM (
 				VALUES
 					('condition', t.condition),
@@ -1794,32 +1820,6 @@ func duckCosineSimilarity(a, b []float32) float64 {
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
-// TopicFilter restricts graph loading to triples/rules semantically similar
-// to a pre-computed topic embedding vector.
-type TopicFilter struct {
-	// Embedding is the topic vector. Length must equal the driver's embeddingDim.
-	Embedding []float32
-
-	// Threshold is the minimum cosine similarity [0, 1] for node embedding inclusion.
-	// A value of 0.0 includes all nodes with non-null embeddings.
-	Threshold float64
-
-	// TripleThreshold is the minimum cosine similarity for triple/rule embedding inclusion.
-	// When 0, falls back to Threshold.
-	TripleThreshold float64
-
-	// MaxNodes caps the number of nodes inserted (0 = unlimited).
-	MaxNodes int64
-
-	// MaxEdges caps the number of edges (triples + rules combined) inserted (0 = unlimited).
-	MaxEdges int64
-
-	// EdgeThreshold is the minimum cosine similarity for expansion edges
-	// (edges collected during neighbor expansion that were not in the filtered set).
-	// When 0, defaults to 0.4.
-	EdgeThreshold float64
-}
-
 // TypeCount holds a value and its occurrence count.
 type TypeCount struct {
 	Value string
@@ -2004,7 +2004,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	ctx context.Context,
 	inputDir string,
 	groupID string,
-	filter *TopicFilter,
+	filter *ParquetTopicFilter,
 ) (int64, int64, int64, error) {
 	if filter == nil {
 		return d.BulkLoadFromParquet(ctx, inputDir, groupID)
@@ -2014,20 +2014,65 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 			len(filter.Embedding), d.embeddingDim)
 	}
 
-	nodesPath := resolveParquetPath(inputDir, "nodes.parquet")
-	if nodesPath == "" {
-		return 0, 0, 0, fmt.Errorf("nodes.parquet not found in %s", inputDir)
-	}
-	triplesPath := resolveParquetPath(inputDir, "extracted_triples.parquet.gz")
-	if triplesPath == "" {
-		triplesPath = resolveParquetPath(inputDir, "extracted_triples.parquet")
-	}
-	if triplesPath == "" {
-		return 0, 0, 0, fmt.Errorf("extracted_triples parquet not found in %s", inputDir)
-	}
-	rulesPath := resolveParquetPath(inputDir, "extracted_rules.parquet.gz")
-	if rulesPath == "" {
-		rulesPath = resolveParquetPath(inputDir, "extracted_rules.parquet")
+	// Determine data source: PostgreSQL or parquet files.
+	usePostgres := filter.PostgresConnStr != ""
+	var nodesPath, triplesPath, rulesPath string
+
+	if usePostgres {
+		// Install postgres_scanner and attach the remote database.
+		for _, stmt := range []string{
+			"INSTALL postgres_scanner",
+			"LOAD postgres_scanner",
+			fmt.Sprintf("ATTACH 'dbname=glancedb %s' AS pg (TYPE POSTGRES, READ_ONLY)", filter.PostgresConnStr),
+		} {
+			if _, err := d.db.ExecContext(ctx, stmt); err != nil {
+				return 0, 0, 0, fmt.Errorf("postgres setup failed (%s): %w", stmt, err)
+			}
+		}
+		// Create source views that normalize PG vector(1024) → FLOAT[] via cast.
+		srcViews := map[string]string{
+			"_src_nodes":   "SELECT *, embedding::FLOAT[] AS emb FROM pg.extracted_nodes",
+			"_src_triples": "SELECT *, embedding::FLOAT[] AS emb FROM pg.extracted_triples",
+			"_src_rules":   "SELECT *, embedding::FLOAT[] AS emb FROM pg.extracted_rules",
+		}
+		for name, query := range srcViews {
+			if _, err := d.db.ExecContext(ctx, fmt.Sprintf("CREATE OR REPLACE VIEW %s AS %s", name, query)); err != nil {
+				return 0, 0, 0, fmt.Errorf("failed to create view %s: %w", name, err)
+			}
+		}
+		fmt.Println("  Source: PostgreSQL (via postgres_scanner)")
+	} else {
+		nodesPath = resolveParquetPath(inputDir, "nodes.parquet")
+		if nodesPath == "" {
+			return 0, 0, 0, fmt.Errorf("nodes.parquet not found in %s", inputDir)
+		}
+		triplesPath = resolveParquetPath(inputDir, "extracted_triples.parquet.gz")
+		if triplesPath == "" {
+			triplesPath = resolveParquetPath(inputDir, "extracted_triples.parquet")
+		}
+		if triplesPath == "" {
+			return 0, 0, 0, fmt.Errorf("extracted_triples parquet not found in %s", inputDir)
+		}
+		rulesPath = resolveParquetPath(inputDir, "extracted_rules.parquet.gz")
+		if rulesPath == "" {
+			rulesPath = resolveParquetPath(inputDir, "extracted_rules.parquet")
+		}
+		// Create source views over parquet files (embedding already FLOAT[]).
+		nodesView := fmt.Sprintf("CREATE OR REPLACE VIEW _src_nodes AS SELECT *, embedding AS emb FROM read_parquet('%s')", nodesPath)
+		triplesView := fmt.Sprintf("CREATE OR REPLACE VIEW _src_triples AS SELECT *, embedding AS emb FROM read_parquet('%s')", triplesPath)
+		if _, err := d.db.ExecContext(ctx, nodesView); err != nil {
+			return 0, 0, 0, fmt.Errorf("failed to create _src_nodes view: %w", err)
+		}
+		if _, err := d.db.ExecContext(ctx, triplesView); err != nil {
+			return 0, 0, 0, fmt.Errorf("failed to create _src_triples view: %w", err)
+		}
+		if rulesPath != "" {
+			rulesView := fmt.Sprintf("CREATE OR REPLACE VIEW _src_rules AS SELECT *, embedding AS emb FROM read_parquet('%s')", rulesPath)
+			if _, err := d.db.ExecContext(ctx, rulesView); err != nil {
+				return 0, 0, 0, fmt.Errorf("failed to create _src_rules view: %w", err)
+			}
+		}
+		fmt.Println("  Source: Parquet files")
 	}
 
 	// Use a dedicated connection so TEMP tables are visible across all statements.
@@ -2036,6 +2081,40 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		return 0, 0, 0, fmt.Errorf("failed to acquire connection: %w", err)
 	}
 	defer conn.Close()
+
+	// Propagate temp_directory and memory settings to this connection so
+	// DuckDB can spill temp tables to disk instead of OOM-ing.
+	if rows, err := d.db.QueryContext(ctx, "SELECT current_setting('temp_directory')"); err == nil {
+		var tempDir string
+		if rows.Next() {
+			rows.Scan(&tempDir)
+		}
+		rows.Close()
+		if tempDir != "" {
+			conn.ExecContext(ctx, fmt.Sprintf("SET temp_directory = '%s'", tempDir))
+		}
+	}
+	if rows, err := d.db.QueryContext(ctx, "SELECT current_setting('memory_limit')"); err == nil {
+		var memLimit string
+		if rows.Next() {
+			rows.Scan(&memLimit)
+		}
+		rows.Close()
+		if memLimit != "" {
+			conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit = '%s'", memLimit))
+		}
+	}
+	if rows, err := d.db.QueryContext(ctx, "SELECT current_setting('threads')"); err == nil {
+		var threads string
+		if rows.Next() {
+			rows.Scan(&threads)
+		}
+		rows.Close()
+		if threads != "" {
+			conn.ExecContext(ctx, fmt.Sprintf("SET threads = %s", threads))
+		}
+	}
+	conn.ExecContext(ctx, "SET max_temp_directory_size = '500GB'")
 
 	tempTables := []string{
 		"_filt_nodes", "_filt_triples", "_filt_rules",
@@ -2049,6 +2128,13 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	defer func() {
 		for _, tbl := range tempTables {
 			_, _ = conn.ExecContext(ctx, "DROP TABLE IF EXISTS "+tbl)
+		}
+		// Clean up source views.
+		for _, v := range []string{"_src_nodes", "_src_triples", "_src_rules"} {
+			_, _ = conn.ExecContext(ctx, "DROP VIEW IF EXISTS "+v)
+		}
+		if usePostgres {
+			_, _ = conn.ExecContext(ctx, "DETACH pg")
 		}
 	}()
 
@@ -2072,6 +2158,12 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		edgeThreshold = 0.4
 	}
 
+	// EdgeBatchSize defaults to 10000 when not set.
+	edgeBatchSize := filter.EdgeBatchSize
+	if edgeBatchSize == 0 {
+		edgeBatchSize = 10000
+	}
+
 	totalPhases := 12
 
 	// Phase 1: Filter nodes by embedding similarity.
@@ -2081,17 +2173,17 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	// DuckDB's optimizer may reorder WHERE predicates, so list_cosine_similarity
 	// can be evaluated on rows with NULL-containing lists before list_count filters them.
 	validNodesSQL := fmt.Sprintf(`CREATE TEMP TABLE _valid_emb_nodes AS
-		SELECT id, name, LOWER(TRIM(name)) AS nm, embedding
-		FROM read_parquet('%s')
-		WHERE list_count(embedding) = %d`,
-		nodesPath, dim)
+		SELECT id, name, LOWER(TRIM(name)) AS nm, emb
+		FROM _src_nodes
+		WHERE list_count(emb) = %d`,
+		dim)
 	if _, err := conn.ExecContext(ctx, validNodesSQL); err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to create valid embedding nodes: %w", err)
 	}
 	filtNodesSQL := fmt.Sprintf(`CREATE TEMP TABLE _filt_nodes AS
 		SELECT id, name, nm
 		FROM _valid_emb_nodes
-		WHERE list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) >= %g`,
+		WHERE list_cosine_similarity(emb::FLOAT[], %s::FLOAT[]) >= %g`,
 		vecLit, filter.Threshold)
 	if _, err := conn.ExecContext(ctx, filtNodesSQL); err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to filter nodes: %w", err)
@@ -2107,16 +2199,24 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	fmt.Printf("  Phase 2/%d: Filtering triples by embedding (threshold %.2f)...\n", totalPhases, tripleThreshold)
 	phaseStart = time.Now()
 	validTriplesSQL := fmt.Sprintf(`CREATE TEMP TABLE _valid_emb_triples AS
-		SELECT * FROM read_parquet('%s')
-		WHERE list_count(embedding) = %d`,
-		triplesPath, dim)
+		SELECT * FROM _src_triples
+		WHERE list_count(emb) = %d`,
+		dim)
 	if _, err := conn.ExecContext(ctx, validTriplesSQL); err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to create valid embedding triples: %w", err)
 	}
 	filtTriplesSQL := fmt.Sprintf(`CREATE TEMP TABLE _filt_triples AS
 		SELECT * FROM _valid_emb_triples
-		WHERE list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) >= %g`,
+		WHERE list_cosine_similarity(emb::FLOAT[], %s::FLOAT[]) >= %g`,
 		vecLit, tripleThreshold)
+	// Exclude specific predicates if configured
+	if len(filter.ExcludePredicates) > 0 {
+		quoted := make([]string, len(filter.ExcludePredicates))
+		for i, p := range filter.ExcludePredicates {
+			quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(strings.ToLower(p), "'", "''"))
+		}
+		filtTriplesSQL += fmt.Sprintf("\n\t\tAND LOWER(TRIM(predicate)) NOT IN (%s)", strings.Join(quoted, ", "))
+	}
 	if _, err := conn.ExecContext(ctx, filtTriplesSQL); err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to filter triples: %w", err)
 	}
@@ -2130,17 +2230,18 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	// Phase 3: Filter rules by embedding similarity (same lower threshold).
 	fmt.Printf("  Phase 3/%d: Filtering rules by embedding (threshold %.2f)...\n", totalPhases, tripleThreshold)
 	phaseStart = time.Now()
-	if rulesPath != "" {
+	hasRules := usePostgres || rulesPath != ""
+	if hasRules {
 		validRulesSQL := fmt.Sprintf(`CREATE TEMP TABLE _valid_emb_rules AS
-			SELECT * FROM read_parquet('%s')
-			WHERE list_count(embedding) = %d`,
-			rulesPath, dim)
+			SELECT * FROM _src_rules
+			WHERE list_count(emb) = %d`,
+			dim)
 		if _, err := conn.ExecContext(ctx, validRulesSQL); err != nil {
 			return 0, 0, 0, fmt.Errorf("failed to create valid embedding rules: %w", err)
 		}
 		filtRulesSQL := fmt.Sprintf(`CREATE TEMP TABLE _filt_rules AS
 			SELECT * FROM _valid_emb_rules
-			WHERE list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) >= %g`,
+			WHERE list_cosine_similarity(emb::FLOAT[], %s::FLOAT[]) >= %g`,
 			vecLit, tripleThreshold)
 		if _, err := conn.ExecContext(ctx, filtRulesSQL); err != nil {
 			return 0, 0, 0, fmt.Errorf("failed to filter rules: %w", err)
@@ -2150,7 +2251,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		if _, err := conn.ExecContext(ctx, `CREATE TEMP TABLE _filt_rules (
 			id VARCHAR, source_id VARCHAR, antecedent VARCHAR, consequent VARCHAR,
 			exception VARCHAR, rule_type VARCHAR, scope VARCHAR,
-			source_attribution VARCHAR, embedding FLOAT[], confidence DOUBLE,
+			source_attribution VARCHAR, emb FLOAT[], confidence DOUBLE,
 			created_at TIMESTAMP, chunk_index INTEGER
 		)`); err != nil {
 			return 0, 0, 0, fmt.Errorf("failed to create empty rules table: %w", err)
@@ -2187,10 +2288,11 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	}
 	fmt.Printf("    Phase 4a: %d core names from nodes+triples in %s\n", initialCoreCount, time.Since(phaseStart).Round(time.Second))
 
-	// 4b: Find additional names mentioned in rules by scanning nodes parquet against
+	// 4b: Find additional names mentioned in rules by scanning nodes against
 	// a single concatenated rule-text blob. This avoids an O(nodes × rules) EXISTS
 	// correlated subquery — instead each node does one position() against the blob.
-	// Process parquet partitions in chunks for progress + memory control.
+	// For parquet: process partitions in chunks for progress + memory control.
+	// For postgres: query _src_nodes directly (PG handles the scan).
 	if filtRuleCount > 0 {
 		rulePhaseStart := time.Now()
 		// Build a single blob of all rule text for substring matching.
@@ -2199,8 +2301,27 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 			FROM _filt_rules`
 		if _, err := conn.ExecContext(ctx, blobSQL); err != nil {
 			fmt.Printf("    Warning: failed to build rule text blob: %v\n", err)
+		} else if usePostgres {
+			// Postgres path: query _src_nodes directly, no chunking needed.
+			ruleNameSQL := `INSERT INTO _core_names
+				SELECT DISTINCT nm FROM (
+					SELECT LOWER(TRIM(n.name)) AS nm
+					FROM _src_nodes n
+				) sub
+				WHERE nm NOT IN (SELECT nm FROM _core_names)
+				  AND EXISTS (SELECT 1 FROM _rule_blob WHERE position(sub.nm IN txt) > 0)`
+			res, err := conn.ExecContext(ctx, ruleNameSQL)
+			var ruleNamesAdded int64
+			if err != nil {
+				fmt.Printf("    Warning: rule-referenced name scan failed: %v\n", err)
+			} else {
+				ruleNamesAdded, _ = res.RowsAffected()
+			}
+			conn.ExecContext(ctx, "DROP TABLE IF EXISTS _rule_blob")
+			fmt.Printf("    Phase 4b: %d rule-referenced names added in %s\n",
+				ruleNamesAdded, time.Since(rulePhaseStart).Round(time.Second))
 		} else {
-			// Discover parquet partition files.
+			// Parquet path: discover partition files and process in chunks.
 			var partFiles []string
 			partRows, err := conn.QueryContext(ctx, fmt.Sprintf(
 				`SELECT file FROM glob('%s')`, nodesPath))
@@ -2281,16 +2402,16 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 			COALESCE(name, ''),
 			COALESCE(description, ''),
 			COALESCE(type, ''),
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
 			json_array(COALESCE(source_id, 'wikidata')),
 			COALESCE(created_at, CURRENT_TIMESTAMP),
 			CURRENT_TIMESTAMP,
 			COALESCE(created_at, CURRENT_TIMESTAMP)
-		FROM read_parquet('%s')
+		FROM _src_nodes
 		WHERE LOWER(TRIM(name)) IN (SELECT nm FROM _core_names)
 		%s`,
-		groupID, dim, dim, nodesPath, nodesLimit)
+		groupID, dim, dim, nodesLimit)
 	res, err := conn.ExecContext(ctx, coreNodeInsertSQL)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to insert core nodes: %w", err)
@@ -2298,52 +2419,76 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	coreNodesLoaded, _ := res.RowsAffected()
 	fmt.Printf("  Phase 5/%d: Done — %d core nodes inserted in %s\n", totalPhases, coreNodesLoaded, time.Since(phaseStart).Round(time.Second))
 
-	// Phase 6: Insert filtered triples as edges (entity resolution JOIN + dedup).
-	fmt.Printf("  Phase 6/%d: Inserting filtered triples as edges...\n", totalPhases)
-	phaseStart = time.Now()
-	filtEdgeInsertSQL := fmt.Sprintf(`INSERT INTO edges (
-			uuid, group_id, source_id, target_id, type, name, fact,
-			fact_embedding, embedding, attributes, source_ids,
-			strength, created_at, updated_at, valid_from
-		)
-		SELECT
-			t.id,
-			COALESCE(t.group_id, '%s'),
-			subj.uuid,
-			obj.uuid,
-			'entity',
-			COALESCE(t.predicate, ''),
-			`+factDescriptionExpr+`,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			(SELECT json_group_object(k, v) FROM (
-				VALUES
-					('condition', t.condition),
-					('temporal', t.temporal),
-					('location', t.location),
-					('certainty', t.certainty),
-					('scope', t.scope),
-					('source_attribution', t.source_attribution)
-			) AS ctx(k, v) WHERE v IS NOT NULL AND v != ''),
-			json_array(COALESCE(t.source_id, 'wikidata')),
-			COALESCE(t.confidence, 0.0),
-			COALESCE(t.created_at, CURRENT_TIMESTAMP),
-			CURRENT_TIMESTAMP,
-			COALESCE(t.created_at, CURRENT_TIMESTAMP)
-		FROM _filt_triples t
-		JOIN entities subj
-			ON LOWER(TRIM(t.subject)) = LOWER(TRIM(subj.name))
-			AND subj.group_id = COALESCE(t.group_id, '%s')
-		JOIN entities obj
-			ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
-			AND obj.group_id = COALESCE(t.group_id, '%s')
-		QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
-		groupID, dim, dim, groupID, groupID, groupID)
-	res, err = conn.ExecContext(ctx, filtEdgeInsertSQL)
-	if err != nil {
-		return coreNodesLoaded, 0, 0, fmt.Errorf("failed to insert filtered triple edges: %w", err)
+	// Create a lightweight entity lookup table (uuid + name + group_id only, no embeddings)
+	// for edge INSERT JOINs. The full entities table with 1024-dim embeddings is too large
+	// to join against repeatedly without OOM.
+	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _entity_lookup")
+	if _, err := conn.ExecContext(ctx, `CREATE TEMP TABLE _entity_lookup AS
+		SELECT uuid, LOWER(TRIM(name)) AS nm, group_id, entity_type FROM entities WHERE type = 'entity'`); err != nil {
+		return coreNodesLoaded, 0, 0, fmt.Errorf("failed to create entity lookup: %w", err)
 	}
-	filtEdgesLoaded, _ := res.RowsAffected()
+
+	// Phase 6: Insert filtered triples as edges in batches (entity resolution JOIN + dedup).
+	fmt.Printf("  Phase 6/%d: Inserting filtered triples as edges (batch size %d)...\n", totalPhases, edgeBatchSize)
+	phaseStart = time.Now()
+	// Add a rowid column for OFFSET/LIMIT batching.
+	conn.ExecContext(ctx, "ALTER TABLE _filt_triples ADD COLUMN IF NOT EXISTS _rownum INTEGER")
+	conn.ExecContext(ctx, "UPDATE _filt_triples SET _rownum = rowid")
+	var filtEdgesLoaded int64
+	for offset := int64(0); ; offset += edgeBatchSize {
+		batchSQL := fmt.Sprintf(`INSERT INTO edges (
+				uuid, group_id, source_id, target_id, type, name, fact,
+				fact_embedding, embedding, attributes, source_ids,
+				strength, created_at, updated_at, valid_from
+			)
+			SELECT
+				t.id,
+				COALESCE(t.group_id, '%s'),
+				subj.uuid,
+				obj.uuid,
+				'entity',
+				COALESCE(t.predicate, ''),
+				`+factDescriptionExpr+`,
+				CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
+				CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
+				(SELECT json_group_object(k, v) FROM (
+					VALUES
+						('condition', t.condition),
+						('temporal', t.temporal),
+						('location', t.location),
+						('certainty', t.certainty),
+						('scope', t.scope),
+						('source_attribution', t.source_attribution)
+				) AS ctx(k, v) WHERE v IS NOT NULL AND v != ''),
+				json_array(COALESCE(t.source_id, 'wikidata')),
+				COALESCE(t.confidence, 0.0),
+				COALESCE(t.created_at, CURRENT_TIMESTAMP),
+				CURRENT_TIMESTAMP,
+				COALESCE(t.created_at, CURRENT_TIMESTAMP)
+			FROM (SELECT * FROM _filt_triples ORDER BY _rownum LIMIT %d OFFSET %d) t
+			JOIN _entity_lookup subj
+				ON LOWER(TRIM(t.subject)) = subj.nm
+				AND subj.group_id = COALESCE(t.group_id, '%s')
+			JOIN _entity_lookup obj
+				ON LOWER(TRIM(t.object)) = obj.nm
+				AND obj.group_id = COALESCE(t.group_id, '%s')
+			QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
+			groupID, dim, dim, edgeBatchSize, offset, groupID, groupID, groupID)
+		res, err = conn.ExecContext(ctx, batchSQL)
+		if err != nil {
+			return coreNodesLoaded, filtEdgesLoaded, 0, fmt.Errorf("failed to insert filtered triple edges (offset %d): %w", offset, err)
+		}
+		n, _ := res.RowsAffected()
+		filtEdgesLoaded += n
+		if n == 0 && offset >= filtTripleCount {
+			break
+		}
+		fmt.Printf("    Phase 6: batch %d-%d done (+%d edges, %d total)\n",
+			offset+1, offset+edgeBatchSize, n, filtEdgesLoaded)
+		if offset+edgeBatchSize >= filtTripleCount {
+			break
+		}
+	}
 	fmt.Printf("  Phase 6/%d: Done — %d filtered triple edges inserted in %s\n", totalPhases, filtEdgesLoaded, time.Since(phaseStart).Round(time.Second))
 
 	// Phase 7: Insert filtered rules as edges.
@@ -2366,8 +2511,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 				THEN 'IF ' || antecedent || ' THEN ' || consequent || ' UNLESS ' || exception
 				ELSE 'IF ' || antecedent || ' THEN ' || consequent
 			END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
 			json_object(
 				'antecedent', antecedent,
 				'consequent', consequent,
@@ -2400,19 +2545,27 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	}
 	// Step 1: materialize valid extra triples (touching core nodes, not already filtered).
 	validExtraTriplesSQL := fmt.Sprintf(`CREATE TEMP TABLE _valid_extra_edges AS
-		SELECT * FROM read_parquet('%s')
-		WHERE list_count(embedding) = %d
+		SELECT * FROM _src_triples
+		WHERE list_count(emb) = %d
 		  AND (LOWER(TRIM(subject)) IN (SELECT nm FROM _core_names)
 		   OR  LOWER(TRIM(object))  IN (SELECT nm FROM _core_names))
 		  AND id NOT IN (SELECT id FROM _filt_triples)`,
-		triplesPath, dim)
+		dim)
+	// Exclude specific predicates from expansion edges too
+	if len(filter.ExcludePredicates) > 0 {
+		quoted := make([]string, len(filter.ExcludePredicates))
+		for i, p := range filter.ExcludePredicates {
+			quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(strings.ToLower(p), "'", "''"))
+		}
+		validExtraTriplesSQL += fmt.Sprintf("\n\t\t  AND LOWER(TRIM(predicate)) NOT IN (%s)", strings.Join(quoted, ", "))
+	}
 	if _, err := conn.ExecContext(ctx, validExtraTriplesSQL); err != nil {
 		return coreNodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to create valid extra edges: %w", err)
 	}
 	// Step 2: filter by edge threshold on embedding similarity.
 	extraEdgesSQL := fmt.Sprintf(`CREATE TEMP TABLE _extra_edges AS
 		SELECT * FROM _valid_extra_edges
-		WHERE list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) >= %g
+		WHERE list_cosine_similarity(emb::FLOAT[], %s::FLOAT[]) >= %g
 		%s`,
 		vecLit, edgeThreshold, edgesLimit)
 	if _, err := conn.ExecContext(ctx, extraEdgesSQL); err != nil {
@@ -2420,39 +2573,18 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	}
 	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _valid_extra_edges")
 	// Also collect extra rules touching core nodes (not already in _filt_rules).
-	if rulesPath != "" {
-		extraRulesSQL := fmt.Sprintf(`INSERT INTO _extra_edges
-			SELECT r.* FROM (
-				SELECT id, source_id, subject, predicate, object,
-					condition, temporal, location, certainty, scope,
-					source_attribution, embedding, confidence, created_at,
-					chunk_index, group_id, description
-				FROM read_parquet('%s')
-				WHERE list_count(embedding) = %d
-				  AND id NOT IN (SELECT id FROM _filt_rules)
-				  AND list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) >= %g
-			) r
-			WHERE EXISTS (
-				SELECT 1 FROM _core_names cn
-				WHERE position(cn.nm IN LOWER(r.subject)) > 0
-				   OR position(cn.nm IN LOWER(r.object)) > 0
-			)`,
-			rulesPath, dim, vecLit, edgeThreshold)
-		// Rules parquet has different columns, so we need to adapt. Actually, rules
-		// don't have subject/object columns — they have antecedent/consequent.
-		// We should look for rules whose antecedent or consequent mentions core nodes.
-		// Let's use the same pattern as phase 4.
-		extraRulesSQL = fmt.Sprintf(`CREATE TEMP TABLE _extra_rules AS
-			SELECT * FROM read_parquet('%s')
-			WHERE list_count(embedding) = %d
+	if hasRules {
+		extraRulesSQL := fmt.Sprintf(`CREATE TEMP TABLE _extra_rules AS
+			SELECT * FROM _src_rules
+			WHERE list_count(emb) = %d
 			  AND id NOT IN (SELECT id FROM _filt_rules)
-			  AND list_cosine_similarity(embedding::FLOAT[], %s::FLOAT[]) >= %g
+			  AND list_cosine_similarity(emb::FLOAT[], %s::FLOAT[]) >= %g
 			  AND EXISTS (
 				SELECT 1 FROM _core_names cn
 				WHERE position(cn.nm IN LOWER(antecedent)) > 0
 				   OR position(cn.nm IN LOWER(consequent)) > 0
 			  )`,
-			rulesPath, dim, vecLit, edgeThreshold)
+			dim, vecLit, edgeThreshold)
 		if _, err := conn.ExecContext(ctx, extraRulesSQL); err != nil {
 			return coreNodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to collect extra rules: %w", err)
 		}
@@ -2460,7 +2592,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		conn.ExecContext(ctx, `CREATE TEMP TABLE _extra_rules (
 			id VARCHAR, source_id VARCHAR, antecedent VARCHAR, consequent VARCHAR,
 			exception VARCHAR, rule_type VARCHAR, scope VARCHAR,
-			source_attribution VARCHAR, embedding FLOAT[], confidence DOUBLE,
+			source_attribution VARCHAR, emb FLOAT[], confidence DOUBLE,
 			created_at TIMESTAMP, chunk_index INTEGER
 		)`)
 	}
@@ -2507,15 +2639,15 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 			COALESCE(name, ''),
 			COALESCE(description, ''),
 			COALESCE(type, ''),
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
 			json_array(COALESCE(source_id, 'wikidata')),
 			COALESCE(created_at, CURRENT_TIMESTAMP),
 			CURRENT_TIMESTAMP,
 			COALESCE(created_at, CURRENT_TIMESTAMP)
-		FROM read_parquet('%s')
+		FROM _src_nodes
 		WHERE LOWER(TRIM(name)) IN (SELECT nm FROM _neighbor_names)`,
-		groupID, dim, dim, nodesPath)
+		groupID, dim, dim)
 	res, err = conn.ExecContext(ctx, neighborNodeInsertSQL)
 	if err != nil {
 		return coreNodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to insert neighbor nodes: %w", err)
@@ -2525,52 +2657,73 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	fmt.Printf("  Phase 10/%d: Done — %d neighbor nodes inserted (%d total) in %s\n",
 		totalPhases, neighborNodesLoaded, nodesLoaded, time.Since(phaseStart).Round(time.Second))
 
-	// Phase 11: Insert extra edges + extra rules.
-	fmt.Printf("  Phase 11/%d: Inserting extra edges and rules...\n", totalPhases)
-	phaseStart = time.Now()
-	extraEdgeInsertSQL := fmt.Sprintf(`INSERT INTO edges (
-			uuid, group_id, source_id, target_id, type, name, fact,
-			fact_embedding, embedding, attributes, source_ids,
-			strength, created_at, updated_at, valid_from
-		)
-		SELECT
-			t.id,
-			COALESCE(t.group_id, '%s'),
-			subj.uuid,
-			obj.uuid,
-			'entity',
-			COALESCE(t.predicate, ''),
-			`+factDescriptionExpr+`,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			CASE WHEN t.embedding IS NOT NULL AND array_length(t.embedding) = %d THEN t.embedding ELSE NULL END,
-			(SELECT json_group_object(k, v) FROM (
-				VALUES
-					('condition', t.condition),
-					('temporal', t.temporal),
-					('location', t.location),
-					('certainty', t.certainty),
-					('scope', t.scope),
-					('source_attribution', t.source_attribution)
-			) AS ctx(k, v) WHERE v IS NOT NULL AND v != ''),
-			json_array(COALESCE(t.source_id, 'wikidata')),
-			COALESCE(t.confidence, 0.0),
-			COALESCE(t.created_at, CURRENT_TIMESTAMP),
-			CURRENT_TIMESTAMP,
-			COALESCE(t.created_at, CURRENT_TIMESTAMP)
-		FROM _extra_edges t
-		JOIN entities subj
-			ON LOWER(TRIM(t.subject)) = LOWER(TRIM(subj.name))
-			AND subj.group_id = COALESCE(t.group_id, '%s')
-		JOIN entities obj
-			ON LOWER(TRIM(t.object)) = LOWER(TRIM(obj.name))
-			AND obj.group_id = COALESCE(t.group_id, '%s')
-		QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
-		groupID, dim, dim, groupID, groupID, groupID)
-	res, err = conn.ExecContext(ctx, extraEdgeInsertSQL)
-	if err != nil {
-		return nodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to insert extra edges: %w", err)
+	// Refresh _entity_lookup to include neighbor nodes inserted in Phase 10.
+	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _entity_lookup")
+	if _, err := conn.ExecContext(ctx, `CREATE TEMP TABLE _entity_lookup AS
+		SELECT uuid, LOWER(TRIM(name)) AS nm, group_id, entity_type FROM entities WHERE type = 'entity'`); err != nil {
+		return nodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to refresh entity lookup: %w", err)
 	}
-	extraEdgesInserted, _ := res.RowsAffected()
+
+	// Phase 11: Insert extra edges + extra rules (batched).
+	fmt.Printf("  Phase 11/%d: Inserting extra edges and rules (batch size %d)...\n", totalPhases, edgeBatchSize)
+	phaseStart = time.Now()
+	conn.ExecContext(ctx, "ALTER TABLE _extra_edges ADD COLUMN IF NOT EXISTS _rownum INTEGER")
+	conn.ExecContext(ctx, "UPDATE _extra_edges SET _rownum = rowid")
+	var extraEdgesInserted int64
+	for offset := int64(0); ; offset += edgeBatchSize {
+		batchSQL := fmt.Sprintf(`INSERT INTO edges (
+				uuid, group_id, source_id, target_id, type, name, fact,
+				fact_embedding, embedding, attributes, source_ids,
+				strength, created_at, updated_at, valid_from
+			)
+			SELECT
+				t.id,
+				COALESCE(t.group_id, '%s'),
+				subj.uuid,
+				obj.uuid,
+				'entity',
+				COALESCE(t.predicate, ''),
+				`+factDescriptionExpr+`,
+				CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
+				CASE WHEN t.emb IS NOT NULL AND array_length(t.emb) = %d THEN t.emb ELSE NULL END,
+				(SELECT json_group_object(k, v) FROM (
+					VALUES
+						('condition', t.condition),
+						('temporal', t.temporal),
+						('location', t.location),
+						('certainty', t.certainty),
+						('scope', t.scope),
+						('source_attribution', t.source_attribution)
+				) AS ctx(k, v) WHERE v IS NOT NULL AND v != ''),
+				json_array(COALESCE(t.source_id, 'wikidata')),
+				COALESCE(t.confidence, 0.0),
+				COALESCE(t.created_at, CURRENT_TIMESTAMP),
+				CURRENT_TIMESTAMP,
+				COALESCE(t.created_at, CURRENT_TIMESTAMP)
+			FROM (SELECT * FROM _extra_edges ORDER BY _rownum LIMIT %d OFFSET %d) t
+			JOIN _entity_lookup subj
+				ON LOWER(TRIM(t.subject)) = subj.nm
+				AND subj.group_id = COALESCE(t.group_id, '%s')
+			JOIN _entity_lookup obj
+				ON LOWER(TRIM(t.object)) = obj.nm
+				AND obj.group_id = COALESCE(t.group_id, '%s')
+			QUALIFY ROW_NUMBER() OVER (PARTITION BY t.id, COALESCE(t.group_id, '%s') ORDER BY subj.uuid) = 1`,
+			groupID, dim, dim, edgeBatchSize, offset, groupID, groupID, groupID)
+		res, err = conn.ExecContext(ctx, batchSQL)
+		if err != nil {
+			return nodesLoaded, filtEdgesLoaded, rulesLoaded, fmt.Errorf("failed to insert extra edges (offset %d): %w", offset, err)
+		}
+		n, _ := res.RowsAffected()
+		extraEdgesInserted += n
+		if n == 0 && offset >= extraEdgeCount {
+			break
+		}
+		fmt.Printf("    Phase 11: batch %d-%d done (+%d edges, %d total)\n",
+			offset+1, offset+edgeBatchSize, n, extraEdgesInserted)
+		if offset+edgeBatchSize >= extraEdgeCount {
+			break
+		}
+	}
 
 	// Insert extra rules as edges.
 	extraRuleInsertSQL := fmt.Sprintf(`INSERT INTO edges (
@@ -2590,8 +2743,8 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 				THEN 'IF ' || antecedent || ' THEN ' || consequent || ' UNLESS ' || exception
 				ELSE 'IF ' || antecedent || ' THEN ' || consequent
 			END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
-			CASE WHEN embedding IS NOT NULL AND array_length(embedding) = %d THEN embedding ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
+			CASE WHEN emb IS NOT NULL AND array_length(emb) = %d THEN emb ELSE NULL END,
 			json_object(
 				'antecedent', antecedent,
 				'consequent', consequent,
