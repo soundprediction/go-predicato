@@ -188,10 +188,6 @@ type Config struct {
 	EdgeMap map[string]map[string][]interface{}
 	// GroupID is used to isolate data for multi-tenant scenarios
 	GroupID string
-
-	// FactsDBURL is the connection string for the Dolt facts database
-	// Deprecated: Use DbConfig instead
-	FactsDBURL string
 }
 
 // AddEpisodeOptions holds options for adding a single episode.
@@ -290,16 +286,6 @@ func NewClient(driver driver.GraphDriver, nlProcessor nlp.Client, embedderClient
 				return nil, fmt.Errorf("failed to initialize factstore: %w", err)
 			}
 		}
-	} else if config.FactsDBURL != "" {
-		// Legacy Dolt support (deprecated)
-		fdb, err := factstore.NewDoltDB(config.FactsDBURL)
-		if err != nil {
-			return nil, err
-		}
-		if err := fdb.Initialize(context.Background()); err != nil {
-			return nil, err
-		}
-		factStore = fdb
 	}
 
 	return &Client{

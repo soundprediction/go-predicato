@@ -27,14 +27,11 @@ func NewFactsDB(config *DbConfig) (FactsDB, error) {
 	}
 
 	switch config.Type {
-	case DbTypePostgres:
+	case DbTypePostgres, "":
 		return NewPostgresDB(config.ConnectionString, config.EmbeddingDimensions)
 
-	case DbTypeDoltGres, "":
-		return NewDoltGresDB(config.ConnectionString, config.EmbeddingDimensions)
-
 	default:
-		return nil, fmt.Errorf("unsupported storage type: %s (supported: postgres, doltgres, mysql, sqlite, duckdb)", config.Type)
+		return nil, fmt.Errorf("unsupported storage type: %s (supported: postgres, duckdb)", config.Type)
 	}
 }
 
@@ -43,15 +40,6 @@ func NewFactsDB(config *DbConfig) (FactsDB, error) {
 func NewFactsDBFromURL(connectionURL string, embeddingDimensions int) (FactsDB, error) {
 	return NewFactsDB(&DbConfig{
 		Type:                DbTypePostgres,
-		ConnectionString:    connectionURL,
-		EmbeddingDimensions: embeddingDimensions,
-	})
-}
-
-// NewDoltGresFactsDB creates a FactsDB for DoltGres (without VectorChord).
-func NewDoltGresFactsDB(connectionURL string, embeddingDimensions int) (FactsDB, error) {
-	return NewFactsDB(&DbConfig{
-		Type:                DbTypeDoltGres,
 		ConnectionString:    connectionURL,
 		EmbeddingDimensions: embeddingDimensions,
 	})

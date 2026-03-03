@@ -10,7 +10,7 @@ The `predicato` package is a temporal knowledge graph framework for Go, designed
 
 Predicato separates knowledge extraction from graph modeling into two distinct, persisted stages:
 
-1. **Fact Store (extraction)** — LLM-powered entity and relationship extraction produces raw nodes, edges, and embeddings that are persisted to PostgreSQL/DoltGres via the `FactsDB` interface. This step is expensive (LLM calls, embedding generation) and its output is stored durably so it never needs to be repeated.
+1. **Fact Store (extraction)** — LLM-powered entity and relationship extraction produces raw nodes, edges, and embeddings that are persisted to PostgreSQL (with VectorChord) via the `FactsDB` interface. This step is expensive (LLM calls, embedding generation) and its output is stored durably so it never needs to be repeated.
 
 2. **Knowledge Graph (modeling)** — The persisted facts are promoted into a graph database (LadybugDB, Neo4j, Memgraph) through entity resolution, deduplication, temporal modeling, and community detection via the `GraphModeler` interface.
 
@@ -35,8 +35,8 @@ Key code paths in `ingestion.go` / `ingestion_factstore.go`:
 - **`driver/`**: Graph database abstraction layer
   - CozoDB (embedded, `system_cozo`), DuckDB+DuckPGQ (embedded, `system_duckpgq`), LadybugDB (embedded, `system_ladybug`), Neo4j, Memgraph, FalkorDB
 - **`factstore/`**: Persistent storage for extracted facts/entities
-  - PostgreSQL with VectorChord extension (primary)
-  - DoltDB/DoltGres (deprecated)
+  - PostgreSQL with VectorChord extension
+  - DuckDB for analytical workloads
   - Hybrid search: vector similarity + keyword/fulltext + RRF merging
 - **`nlp/`**: LLM client interfaces (OpenAI-compatible)
 - **`candle/`**: Local ML models via go-candle (embeddings, reranking, text gen, NER, translation)
@@ -139,7 +139,7 @@ Some packages require CGO (LadybugDB native library), others are pure Go:
 - **CGO required**: `pkg/driver`, `pkg/checkpoint`, `pkg/modeler`, `pkg/utils`, `pkg/factstore`
 - **Pure Go**: `pkg/embedder`, `pkg/nlp`, `pkg/prompts`, `pkg/logger`, `pkg/types`
 
-Files that import CGO-dependent packages use `//go:build cgo` build tags (e.g., `pkg/factstore/dolt.go`, `pkg/factstore/embedded_doltgres.go`).
+Files that import CGO-dependent packages use `//go:build cgo` build tags.
 
 ## CI/CD
 

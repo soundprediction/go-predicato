@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,12 +15,9 @@ import (
 )
 
 // PostgresDB implements FactsDB using PostgreSQL with VectorChord extension.
-// For external PostgreSQL: uses VectorChord for native vector search
-// For DoltGres: uses in-memory vector search (VectorChord not available)
 type PostgresDB struct {
 	db                  *sql.DB
 	embeddingDimensions int
-	usePgVector         bool // true for PostgreSQL with VectorChord, false for DoltGres
 }
 
 // PostgresDBConfig holds configuration options for PostgresDB connection pool.
@@ -52,12 +48,12 @@ func DefaultPostgresDBConfig() *PostgresDBConfig {
 // connectionString should be a valid PostgreSQL DSN, e.g.:
 // "postgres://user:password@localhost:5432/dbname?sslmode=disable"
 func NewPostgresDB(connectionString string, embeddingDimensions int) (*PostgresDB, error) {
-	return NewPostgresDBWithConfig(connectionString, embeddingDimensions, true, nil)
+	return NewPostgresDBWithConfig(connectionString, embeddingDimensions, nil)
 }
 
 // NewPostgresDBWithConfig creates a new PostgresDB instance with custom configuration.
 // If config is nil, default configuration values are used.
-func NewPostgresDBWithConfig(connectionString string, embeddingDimensions int, usePgVector bool, config *PostgresDBConfig) (*PostgresDB, error) {
+func NewPostgresDBWithConfig(connectionString string, embeddingDimensions int, config *PostgresDBConfig) (*PostgresDB, error) {
 	if embeddingDimensions <= 0 {
 		embeddingDimensions = 1024 // Default for qwen3-embedding
 	}
@@ -83,7 +79,6 @@ func NewPostgresDBWithConfig(connectionString string, embeddingDimensions int, u
 	return &PostgresDB{
 		db:                  db,
 		embeddingDimensions: embeddingDimensions,
-		usePgVector:         usePgVector,
 	}, nil
 }
 
@@ -98,29 +93,13 @@ func NewPostgresDBFromConn(db *sql.DB, embeddingDimensions int) *PostgresDB {
 	return &PostgresDB{
 		db:                  db,
 		embeddingDimensions: embeddingDimensions,
-		usePgVector:         true,
 	}
 }
 
-// NewDoltGresDB creates a new PostgresDB instance for DoltGres (without VectorChord).
-// Uses in-memory vector search since DoltGres doesn't support VectorChord extension.
-// connectionString should be a valid PostgreSQL DSN for DoltGres server.
-func NewDoltGresDB(connectionString string, embeddingDimensions int) (*PostgresDB, error) {
-	return NewPostgresDBWithConfig(connectionString, embeddingDimensions, false, nil)
-}
-
-// NewDoltGresDBWithConfig creates a new PostgresDB instance for DoltGres with custom configuration.
-// If config is nil, default configuration values are used.
-func NewDoltGresDBWithConfig(connectionString string, embeddingDimensions int, config *PostgresDBConfig) (*PostgresDB, error) {
-	return NewPostgresDBWithConfig(connectionString, embeddingDimensions, false, config)
-}
-
 func (p *PostgresDB) Initialize(ctx context.Context) error {
-	// Enable VectorChord extension only for PostgreSQL (not DoltGres)
-	if p.usePgVector {
-		if _, err := p.db.ExecContext(ctx, "CREATE EXTENSION IF NOT EXISTS vector"); err != nil {
-			return fmt.Errorf("failed to create vector extension: %w", err)
-		}
+	// Enable VectorChord extension
+	if _, err := p.db.ExecContext(ctx, "CREATE EXTENSION IF NOT EXISTS vector"); err != nil {
+		return fmt.Errorf("failed to create vector extension: %w", err)
 	}
 
 	// Create sources table
@@ -138,90 +117,46 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 	}
 
 	// Create extracted_nodes table
-	// Use vector type for PostgreSQL with VectorChord, JSONB for DoltGres
-	var nodesTable string
-	if p.usePgVector {
-		nodesTable = fmt.Sprintf(`
-			CREATE TABLE IF NOT EXISTS extracted_nodes (
-				id VARCHAR(255) PRIMARY KEY,
-				source_id VARCHAR(255) REFERENCES sources(id),
-				group_id VARCHAR(255),
-				name TEXT,
-				type VARCHAR(50),
-				description TEXT,
-				embedding vector(%d),
-				chunk_index INT,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			)`, p.embeddingDimensions)
-	} else {
-		nodesTable = `
-			CREATE TABLE IF NOT EXISTS extracted_nodes (
-				id VARCHAR(255) PRIMARY KEY,
-				source_id VARCHAR(255) REFERENCES sources(id),
-				group_id VARCHAR(255),
-				name TEXT,
-				type VARCHAR(50),
-				description TEXT,
-				embedding JSONB,
-				chunk_index INT,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			)`
-	}
+	nodesTable := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS extracted_nodes (
+			id VARCHAR(255) PRIMARY KEY,
+			source_id VARCHAR(255) REFERENCES sources(id),
+			group_id VARCHAR(255),
+			name TEXT,
+			type VARCHAR(50),
+			description TEXT,
+			embedding vector(%d),
+			chunk_index INT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`, p.embeddingDimensions)
 	if _, err := p.db.ExecContext(ctx, nodesTable); err != nil {
 		return fmt.Errorf("failed to create extracted_nodes table: %w", err)
 	}
 
 	// Create extracted_triples table (unified: replaces former extracted_edges + extracted_triples)
-	var triplesTable string
-	if p.usePgVector {
-		triplesTable = fmt.Sprintf(`
-			CREATE TABLE IF NOT EXISTS extracted_triples (
-				id VARCHAR(255) PRIMARY KEY,
-				source_id VARCHAR(255) REFERENCES sources(id),
-				group_id VARCHAR(255),
-				subject TEXT,
-				subject_type VARCHAR(50),
-				predicate TEXT,
-				object TEXT,
-				object_type VARCHAR(50),
-				description TEXT,
-				condition TEXT,
-				temporal TEXT,
-				location TEXT,
-				certainty TEXT,
-				scope TEXT,
-				source_attribution TEXT,
-				confidence FLOAT,
-				embedding vector(%d),
-				chunk_index INT,
-				model VARCHAR(255),
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			)`, p.embeddingDimensions)
-	} else {
-		triplesTable = `
-			CREATE TABLE IF NOT EXISTS extracted_triples (
-				id VARCHAR(255) PRIMARY KEY,
-				source_id VARCHAR(255) REFERENCES sources(id),
-				group_id VARCHAR(255),
-				subject TEXT,
-				subject_type VARCHAR(50),
-				predicate TEXT,
-				object TEXT,
-				object_type VARCHAR(50),
-				description TEXT,
-				condition TEXT,
-				temporal TEXT,
-				location TEXT,
-				certainty TEXT,
-				scope TEXT,
-				source_attribution TEXT,
-				confidence FLOAT,
-				embedding JSONB,
-				chunk_index INT,
-				model VARCHAR(255),
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			)`
-	}
+	triplesTable := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS extracted_triples (
+			id VARCHAR(255) PRIMARY KEY,
+			source_id VARCHAR(255) REFERENCES sources(id),
+			group_id VARCHAR(255),
+			subject TEXT,
+			subject_type VARCHAR(50),
+			predicate TEXT,
+			object TEXT,
+			object_type VARCHAR(50),
+			description TEXT,
+			condition TEXT,
+			temporal TEXT,
+			location TEXT,
+			certainty TEXT,
+			scope TEXT,
+			source_attribution TEXT,
+			confidence FLOAT,
+			embedding vector(%d),
+			chunk_index INT,
+			model VARCHAR(255),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`, p.embeddingDimensions)
 	if _, err := p.db.ExecContext(ctx, triplesTable); err != nil {
 		return fmt.Errorf("failed to create extracted_triples table: %w", err)
 	}
@@ -261,40 +196,21 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 	}
 
 	// Create extracted_rules table
-	var rulesTable string
-	if p.usePgVector {
-		rulesTable = fmt.Sprintf(`
-			CREATE TABLE IF NOT EXISTS extracted_rules (
-				id VARCHAR(255) PRIMARY KEY,
-				source_id VARCHAR(255) REFERENCES sources(id),
-				antecedent TEXT,
-				consequent TEXT,
-				exception TEXT,
-				rule_type TEXT,
-				scope TEXT,
-				source_attribution TEXT,
-				confidence FLOAT,
-				embedding vector(%d),
-				chunk_index INT,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			)`, p.embeddingDimensions)
-	} else {
-		rulesTable = `
-			CREATE TABLE IF NOT EXISTS extracted_rules (
-				id VARCHAR(255) PRIMARY KEY,
-				source_id VARCHAR(255) REFERENCES sources(id),
-				antecedent TEXT,
-				consequent TEXT,
-				exception TEXT,
-				rule_type TEXT,
-				scope TEXT,
-				source_attribution TEXT,
-				confidence FLOAT,
-				embedding JSONB,
-				chunk_index INT,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			)`
-	}
+	rulesTable := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS extracted_rules (
+			id VARCHAR(255) PRIMARY KEY,
+			source_id VARCHAR(255) REFERENCES sources(id),
+			antecedent TEXT,
+			consequent TEXT,
+			exception TEXT,
+			rule_type TEXT,
+			scope TEXT,
+			source_attribution TEXT,
+			confidence FLOAT,
+			embedding vector(%d),
+			chunk_index INT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`, p.embeddingDimensions)
 	if _, err := p.db.ExecContext(ctx, rulesTable); err != nil {
 		return fmt.Errorf("failed to create extracted_rules table: %w", err)
 	}
@@ -1151,14 +1067,8 @@ func (p *PostgresDB) HybridSearch(ctx context.Context, query string, embedding [
 // --- Internal search methods ---
 
 func (p *PostgresDB) vectorSearchNodes(ctx context.Context, embedding []float32, config *FactSearchConfig) ([]*ExtractedNode, []float64, error) {
-	// For DoltGres (no VectorChord), use in-memory cosine similarity
-	if !p.usePgVector {
-		return p.inMemoryVectorSearchNodes(ctx, embedding, config)
-	}
-
 	embeddingStr := p.embeddingToString(embedding)
 
-	// Build query with filters (VectorChord mode)
 	sqlQuery := `
 		SELECT id, source_id, group_id, name, normalized_name, type, description, embedding, chunk_index, created_at,
 			   1 - (embedding <=> $1::vector) AS score
@@ -1247,113 +1157,6 @@ func (p *PostgresDB) vectorSearchNodes(ctx context.Context, embedding []float32,
 // MaxInMemorySearchResults is the maximum number of results to process in-memory
 // to prevent excessive memory usage on large datasets.
 const MaxInMemorySearchResults = 10000
-
-// inMemoryVectorSearchNodes performs vector search by loading embeddings and computing
-// cosine similarity in Go. Used for DoltGres which doesn't support VectorChord.
-func (p *PostgresDB) inMemoryVectorSearchNodes(ctx context.Context, embedding []float32, config *FactSearchConfig) ([]*ExtractedNode, []float64, error) {
-	// Build query to fetch all nodes with embeddings
-	// Limit to MaxInMemorySearchResults to prevent excessive memory usage
-	sqlQuery := `
-		SELECT id, source_id, group_id, name, normalized_name, type, description, embedding, chunk_index, created_at
-		FROM extracted_nodes
-		WHERE embedding IS NOT NULL`
-
-	args := []interface{}{}
-	argIdx := 1
-
-	if config.GroupID != "" {
-		sqlQuery += fmt.Sprintf(" AND group_id = $%d", argIdx)
-		args = append(args, config.GroupID)
-		argIdx++
-	}
-
-	if len(config.NodeTypes) > 0 {
-		placeholders := make([]string, len(config.NodeTypes))
-		for i, t := range config.NodeTypes {
-			placeholders[i] = fmt.Sprintf("$%d", argIdx)
-			args = append(args, t)
-			argIdx++
-		}
-		sqlQuery += fmt.Sprintf(" AND type IN (%s)", strings.Join(placeholders, ", "))
-	}
-
-	if config.TimeRange != nil {
-		if !config.TimeRange.Start.IsZero() {
-			sqlQuery += fmt.Sprintf(" AND created_at >= $%d", argIdx)
-			args = append(args, config.TimeRange.Start)
-			argIdx++
-		}
-		if !config.TimeRange.End.IsZero() {
-			sqlQuery += fmt.Sprintf(" AND created_at <= $%d", argIdx)
-			args = append(args, config.TimeRange.End)
-		}
-	}
-
-	rows, err := p.db.QueryContext(ctx, sqlQuery, args...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to query nodes: %w", err)
-	}
-	defer rows.Close()
-
-	// Collect all nodes with their embeddings
-	type nodeWithScore struct {
-		node  *ExtractedNode
-		score float64
-	}
-	var candidates []nodeWithScore
-
-	for rows.Next() {
-		var n ExtractedNode
-		var embeddingJSON sql.NullString
-		var normalizedName sql.NullString
-
-		if err := rows.Scan(&n.ID, &n.SourceID, &n.GroupID, &n.Name, &normalizedName, &n.Type, &n.Description,
-			&embeddingJSON, &n.ChunkIndex, &n.CreatedAt); err != nil {
-			return nil, nil, err
-		}
-
-		if normalizedName.Valid {
-			n.NormalizedName = normalizedName.String
-		}
-
-		if !embeddingJSON.Valid || embeddingJSON.String == "" {
-			continue
-		}
-
-		// Parse embedding from JSONB (stored as JSON array for DoltGres)
-		nodeEmbedding := p.parseEmbeddingJSON(embeddingJSON.String)
-		if len(nodeEmbedding) == 0 {
-			continue
-		}
-
-		// Compute cosine similarity
-		score := cosineSimilarity(embedding, nodeEmbedding)
-		if score >= config.MinScore {
-			n.Embedding = nodeEmbedding
-			candidates = append(candidates, nodeWithScore{node: &n, score: score})
-		}
-	}
-
-	// Log warning if we hit the limit
-	if len(candidates) >= MaxInMemorySearchResults {
-		log.Printf("WARNING: In-memory vector search hit limit of %d results. Consider using VectorChord for better performance.", MaxInMemorySearchResults)
-	}
-
-	// Sort by score descending using O(n log n) sort
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].score > candidates[j].score
-	})
-
-	// Extract top results
-	var nodes []*ExtractedNode
-	var scores []float64
-	for i := 0; i < len(candidates) && i < config.Limit; i++ {
-		nodes = append(nodes, candidates[i].node)
-		scores = append(scores, candidates[i].score)
-	}
-
-	return nodes, scores, nil
-}
 
 func (p *PostgresDB) keywordSearchNodes(ctx context.Context, query string, config *FactSearchConfig) ([]*ExtractedNode, []float64, error) {
 	sqlQuery := `
@@ -1444,11 +1247,6 @@ func (p *PostgresDB) keywordSearchNodes(ctx context.Context, query string, confi
 }
 
 func (p *PostgresDB) vectorSearchTriples(ctx context.Context, embedding []float32, config *FactSearchConfig) ([]*ExtractedTriple, []float64, error) {
-	// For DoltGres (no VectorChord), use in-memory cosine similarity
-	if !p.usePgVector {
-		return p.inMemoryVectorSearchTriples(ctx, embedding, config)
-	}
-
 	embeddingStr := p.embeddingToString(embedding)
 
 	sqlQuery := `
@@ -1554,86 +1352,6 @@ func (p *PostgresDB) vectorSearchTriples(ctx context.Context, embedding []float3
 		if len(triples) >= config.Limit {
 			break
 		}
-	}
-
-	return triples, scores, nil
-}
-
-// inMemoryVectorSearchTriples performs vector search on triples by loading embeddings
-// and computing cosine similarity in Go. Used for DoltGres.
-func (p *PostgresDB) inMemoryVectorSearchTriples(ctx context.Context, embedding []float32, config *FactSearchConfig) ([]*ExtractedTriple, []float64, error) {
-	sqlQuery := `
-		SELECT id, source_id, group_id, subject, subject_type, predicate, object, object_type,
-		       description, condition, temporal, location, certainty, scope, source_attribution,
-		       confidence, embedding, chunk_index, model, created_at
-		FROM extracted_triples
-		WHERE embedding IS NOT NULL`
-
-	args := []interface{}{}
-	argIdx := 1
-
-	if config.GroupID != "" {
-		sqlQuery += fmt.Sprintf(" AND group_id = $%d", argIdx)
-		args = append(args, config.GroupID)
-		argIdx++
-	}
-
-	if config.TimeRange != nil {
-		if !config.TimeRange.Start.IsZero() {
-			sqlQuery += fmt.Sprintf(" AND created_at >= $%d", argIdx)
-			args = append(args, config.TimeRange.Start)
-			argIdx++
-		}
-		if !config.TimeRange.End.IsZero() {
-			sqlQuery += fmt.Sprintf(" AND created_at <= $%d", argIdx)
-			args = append(args, config.TimeRange.End)
-		}
-	}
-
-	rows, err := p.db.QueryContext(ctx, sqlQuery, args...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to query triples: %w", err)
-	}
-	defer rows.Close()
-
-	type tripleWithScore struct {
-		triple *ExtractedTriple
-		score  float64
-	}
-	var candidates []tripleWithScore
-
-	for rows.Next() {
-		t, embJSON, err := p.scanTripleRow(rows)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if embJSON == "" {
-			continue
-		}
-
-		tripleEmbedding := p.parseEmbeddingJSON(embJSON)
-		if len(tripleEmbedding) == 0 {
-			continue
-		}
-
-		score := cosineSimilarity(embedding, tripleEmbedding)
-		if score >= config.MinScore {
-			t.Embedding = tripleEmbedding
-			candidates = append(candidates, tripleWithScore{triple: t, score: score})
-		}
-	}
-
-	// Sort by score descending
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].score > candidates[j].score
-	})
-
-	var triples []*ExtractedTriple
-	var scores []float64
-	for i := 0; i < len(candidates) && i < config.Limit; i++ {
-		triples = append(triples, candidates[i].triple)
-		scores = append(scores, candidates[i].score)
 	}
 
 	return triples, scores, nil
@@ -1883,27 +1601,6 @@ func (p *PostgresDB) parseEmbedding(s string) []float32 {
 	return embedding
 }
 
-// parseEmbeddingJSON parses an embedding stored as JSONB array in DoltGres.
-// Format: [1.0, 2.0, 3.0, ...] (JSON array)
-func (p *PostgresDB) parseEmbeddingJSON(s string) []float32 {
-	if s == "" {
-		return nil
-	}
-
-	// Try parsing as JSON array first
-	var floats []float64
-	if err := json.Unmarshal([]byte(s), &floats); err == nil {
-		embedding := make([]float32, len(floats))
-		for i, v := range floats {
-			embedding[i] = float32(v)
-		}
-		return embedding
-	}
-
-	// Fall back to vector format parsing
-	return p.parseEmbedding(s)
-}
-
 func (p *PostgresDB) scanNodes(rows *sql.Rows) ([]*ExtractedNode, error) {
 	var nodes []*ExtractedNode
 
@@ -1993,57 +1690,3 @@ func (p *PostgresDB) scanTriples(rows *sql.Rows) ([]*ExtractedTriple, error) {
 	return triples, nil
 }
 
-// scanTripleRow scans a single triple row for in-memory vector search.
-// Returns the triple and the raw embedding string for manual parsing.
-func (p *PostgresDB) scanTripleRow(rows *sql.Rows) (*ExtractedTriple, string, error) {
-	var t ExtractedTriple
-	var embJSON sql.NullString
-	var subjectType, objectType, description, condition, temporal, location, certainty, scope, sourceAttr, model sql.NullString
-	var confidence sql.NullFloat64
-
-	if err := rows.Scan(&t.ID, &t.SourceID, &t.GroupID, &t.Subject, &subjectType, &t.Predicate, &t.Object, &objectType,
-		&description, &condition, &temporal, &location, &certainty, &scope, &sourceAttr,
-		&confidence, &embJSON, &t.ChunkIndex, &model, &t.CreatedAt); err != nil {
-		return nil, "", err
-	}
-
-	if subjectType.Valid {
-		t.SubjectType = subjectType.String
-	}
-	if objectType.Valid {
-		t.ObjectType = objectType.String
-	}
-	if description.Valid {
-		t.Description = description.String
-	}
-	if condition.Valid {
-		t.Condition = condition.String
-	}
-	if temporal.Valid {
-		t.Temporal = temporal.String
-	}
-	if location.Valid {
-		t.Location = location.String
-	}
-	if certainty.Valid {
-		t.Certainty = certainty.String
-	}
-	if scope.Valid {
-		t.Scope = scope.String
-	}
-	if sourceAttr.Valid {
-		t.SourceAttribution = sourceAttr.String
-	}
-	if confidence.Valid {
-		t.Confidence = confidence.Float64
-	}
-	if model.Valid {
-		t.Model = model.String
-	}
-
-	embString := ""
-	if embJSON.Valid {
-		embString = embJSON.String
-	}
-	return &t, embString, nil
-}

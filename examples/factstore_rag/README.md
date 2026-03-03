@@ -162,11 +162,8 @@ Demo completed!
 ### FactStore Configuration
 
 ```go
-// For PostgreSQL with VectorChord (production)
+// PostgreSQL with VectorChord
 db, err := factstore.NewPostgresDB(connectionString, 1024)
-
-// For DoltGres (development/testing)
-db, err := factstore.NewDoltGresDB(connectionString, 1024)
 ```
 
 ### Storing Knowledge

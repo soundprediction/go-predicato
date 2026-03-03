@@ -16,7 +16,7 @@ func newMockPostgresDB(t *testing.T) (*PostgresDB, sqlmock.Sqlmock) {
 	if err != nil {
 		t.Fatalf("Failed to create sqlmock: %v", err)
 	}
-	return &PostgresDB{db: db, embeddingDimensions: 1024, usePgVector: false}, mock
+	return &PostgresDB{db: db, embeddingDimensions: 1024}, mock
 }
 
 // expectCommitOnly adds the commit expectation at the end of SaveExtractedKnowledge
