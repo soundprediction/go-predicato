@@ -1689,4 +1689,3 @@ func (p *PostgresDB) scanTriples(rows *sql.Rows) ([]*ExtractedTriple, error) {
 
 	return triples, nil
 }
-
