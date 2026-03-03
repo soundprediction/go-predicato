@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -742,15 +743,18 @@ func (d *DuckPGQDriver) GetNode(ctx context.Context, nodeID, groupID string) (*t
 }
 
 func (d *DuckPGQDriver) GetNodes(ctx context.Context, nodeIDs []string, groupID string) ([]*types.Node, error) {
-	nodes := make([]*types.Node, 0, len(nodeIDs))
-	for _, id := range nodeIDs {
-		node, err := d.GetNode(ctx, id, groupID)
-		if err != nil {
-			continue
-		}
-		nodes = append(nodes, node)
+	if len(nodeIDs) == 0 {
+		return nil, nil
 	}
-	return nodes, nil
+	placeholders := make([]string, len(nodeIDs))
+	args := make([]interface{}, 0, len(nodeIDs)+1)
+	for i, id := range nodeIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, groupID)
+	query := fmt.Sprintf(`SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level FROM entities WHERE uuid IN (%s) AND group_id = ?`, strings.Join(placeholders, ","))
+	return d.queryNodes(ctx, query, args...)
 }
 
 func (d *DuckPGQDriver) DeleteNode(ctx context.Context, nodeID, groupID string) error {
@@ -881,7 +885,7 @@ func (d *DuckPGQDriver) UpsertCommunityEdge(ctx context.Context, communityUUID, 
 }
 
 func (d *DuckPGQDriver) GetBetweenNodes(ctx context.Context, sourceNodeID, targetNodeID string) ([]*types.Edge, error) {
-	return d.queryEdges(ctx, `SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength FROM edges WHERE source_id = ? AND target_id = ?`, sourceNodeID, targetNodeID)
+	return d.queryEdges(ctx, `SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength FROM edges WHERE source_id = ? AND target_id = ? UNION ALL SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength FROM edges WHERE source_id = ? AND target_id = ?`, sourceNodeID, targetNodeID, targetNodeID, sourceNodeID)
 }
 
 // --- Search Operations ---
@@ -1016,13 +1020,7 @@ func (d *DuckPGQDriver) searchNodesByVec(ctx context.Context, vector []float32, 
 		}
 	}
 
-	for i := 0; i < len(results); i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].score > results[i].score {
-				results[i], results[j] = results[j], results[i]
-			}
-		}
-	}
+	sort.Slice(results, func(i, j int) bool { return results[i].score > results[j].score })
 
 	if limit > len(results) {
 		limit = len(results)
@@ -1074,13 +1072,7 @@ func (d *DuckPGQDriver) searchEdgesByVec(ctx context.Context, vector []float32, 
 		}
 	}
 
-	for i := 0; i < len(results); i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].score > results[i].score {
-				results[i], results[j] = results[j], results[i]
-			}
-		}
-	}
+	sort.Slice(results, func(i, j int) bool { return results[i].score > results[j].score })
 
 	if limit > len(results) {
 		limit = len(results)
@@ -1158,18 +1150,14 @@ func (d *DuckPGQDriver) GetNeighbors(ctx context.Context, nodeID, groupID string
 		frontier = nextFrontier
 	}
 
-	var nodes []*types.Node
+	ids := make([]string, 0, len(visited))
 	for id := range visited {
 		if id == nodeID {
 			continue
 		}
-		node, err := d.GetNode(ctx, id, groupID)
-		if err != nil {
-			continue
-		}
-		nodes = append(nodes, node)
+		ids = append(ids, id)
 	}
-	return nodes, nil
+	return d.GetNodes(ctx, ids, groupID)
 }
 
 func (d *DuckPGQDriver) GetRelatedNodes(ctx context.Context, nodeID, groupID string, edgeTypes []types.EdgeType) ([]*types.Node, error) {
@@ -1248,24 +1236,24 @@ func (d *DuckPGQDriver) GetEdgesInTimeRange(ctx context.Context, start, end time
 }
 
 func (d *DuckPGQDriver) RetrieveEpisodes(ctx context.Context, referenceTime time.Time, groupIDs []string, limit int, episodeType *types.EpisodeType) ([]*types.Node, error) {
-	var allNodes []*types.Node
-	for _, gid := range groupIDs {
-		query := `SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level FROM entities WHERE group_id = ? AND type = 'episodic' AND created_at <= ? ORDER BY created_at DESC LIMIT ?`
-		nodes, err := d.queryNodes(ctx, query, gid, referenceTime, limit)
-		if err != nil {
-			continue
-		}
-		for _, n := range nodes {
-			if episodeType != nil && n.EpisodeType != *episodeType {
-				continue
-			}
-			allNodes = append(allNodes, n)
-		}
+	if len(groupIDs) == 0 {
+		return nil, nil
 	}
-	if limit > 0 && len(allNodes) > limit {
-		allNodes = allNodes[:limit]
+	placeholders := make([]string, len(groupIDs))
+	args := make([]interface{}, 0, len(groupIDs)+3)
+	for i, gid := range groupIDs {
+		placeholders[i] = "?"
+		args = append(args, gid)
 	}
-	return allNodes, nil
+	whereClause := fmt.Sprintf("group_id IN (%s) AND type = 'episodic' AND valid_from <= ?", strings.Join(placeholders, ","))
+	args = append(args, referenceTime)
+	if episodeType != nil {
+		whereClause += " AND episode_type = ?"
+		args = append(args, string(*episodeType))
+	}
+	args = append(args, limit)
+	query := fmt.Sprintf(`SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type, embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to, source_ids, entity_edges, level FROM entities WHERE %s ORDER BY valid_from DESC LIMIT ?`, whereClause)
+	return d.queryNodes(ctx, query, args...)
 }
 
 // --- Community Operations ---
