@@ -1,15 +1,13 @@
 // Package main demonstrates factstore RAG (Retrieval-Augmented Generation) usage.
 //
 // This example shows how to:
-// - Configure a PostgreSQL factstore with VectorChord for production
-// - Or use DoltGres for development/testing (in-memory vector search)
+// - Configure a PostgreSQL factstore with VectorChord
 // - Extract knowledge from text documents
 // - Perform hybrid search (vector + keyword) with RRF fusion
 // - Use search results for RAG applications
 //
 // Prerequisites:
-// - For PostgreSQL: PostgreSQL 15+ with VectorChord extension
-// - For DoltGres: No external dependencies (embedded)
+// - PostgreSQL 15+ with VectorChord extension
 // - An embedding model (this example uses a mock for simplicity)
 //
 // For production PostgreSQL setup, see docs/FACTSTORE_RAG.md
@@ -42,9 +40,7 @@ func main() {
 	// ========================================
 	// 1. Configure FactStore Backend
 	// ========================================
-	// Choose your backend:
-	// - PostgreSQL with VectorChord for production (native vector search)
-	// - DoltGres for development/testing (in-memory vector search)
+	// PostgreSQL with VectorChord for vector search
 
 	var db factstore.FactsDB
 	var err error
@@ -65,7 +61,7 @@ func main() {
 		fmt.Println()
 
 		// For this example, we'll demonstrate with a mock/nil database
-		// In real usage, you'd use DoltGres or PostgreSQL
+		// In real usage, you'd use PostgreSQL
 		fmt.Println("      (Skipping database operations - demo mode)")
 		demonstrateMockUsage()
 		return
@@ -338,8 +334,6 @@ func demonstrateMockUsage() {
 	fmt.Println()
 	fmt.Println("1. Create a factstore connection:")
 	fmt.Println("   db, err := factstore.NewPostgresDB(connString, 1024)")
-	fmt.Println("   // or")
-	fmt.Println("   db, err := factstore.NewDoltGresDB(connString, 1024)")
 	fmt.Println()
 	fmt.Println("2. Initialize the schema:")
 	fmt.Println("   db.Initialize(ctx)")

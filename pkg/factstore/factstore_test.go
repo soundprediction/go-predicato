@@ -133,14 +133,6 @@ func TestDbConfigValidation(t *testing.T) {
 			},
 			expectError: false, // Will fail to connect, but validation passes
 		},
-		{
-			name: "valid doltgres config",
-			config: &FactStoreConfig{
-				Type:             FactStoreTypeDoltGres,
-				ConnectionString: "postgres://localhost:5432/test",
-			},
-			expectError: false,
-		},
 	}
 
 	for _, tt := range tests {

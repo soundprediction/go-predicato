@@ -6,9 +6,8 @@
 // # Supported Backends
 //
 // The following storage backends are supported:
-//   - PostgresDB: PostgreSQL with optional VectorChord extension for vector search
-//   - DoltDB: Dolt SQL database (deprecated, use PostgresDB with DoltGres)
-//   - MySQL, SQLite, DuckDB: via migration SQL files (see migrations/ directory)
+//   - PostgresDB: PostgreSQL with VectorChord extension for vector search
+//   - DuckDB: via migration SQL files (see migrations/ directory)
 //
 // # Usage
 //
@@ -34,13 +33,7 @@
 // # Search Capabilities
 //
 // The package provides hybrid search combining:
-//   - Vector similarity search (using embeddings)
+//   - Vector similarity search (using VectorChord extension)
 //   - Keyword/fulltext search
 //   - Reciprocal Rank Fusion (RRF) for result merging
-//
-// # Vector Search
-//
-// For best performance, use PostgreSQL with VectorChord extension.
-// Without VectorChord (e.g., DoltGres), vector search falls back to
-// in-memory cosine similarity calculation.
 package factstore

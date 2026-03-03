@@ -435,12 +435,10 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 		}
 	}
 
-	// Initialize FactStore
-	// Priority: 1. PostgreSQL connection string (VectorChord), 2. Embedded Dolt
+	// Initialize FactStore (PostgreSQL with VectorChord required)
 	var predicatoConfig *predicato.Config
 
 	if cfg.FactStore.ConnectionString != "" {
-		// External PostgreSQL with VectorChord
 		embDim := cfg.FactStore.EmbeddingDimensions
 		if embDim <= 0 {
 			embDim = 1024 // Default for qwen3-embedding
@@ -458,24 +456,10 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 			DbConfig: dbConfig,
 		}
 	} else {
-		// Default to embedded Dolt
-		dataPath := cfg.FactStore.DataPath
-		if dataPath == "" {
-			dataPath, _ = factstore.DefaultDataPath()
-		}
-		if err := os.MkdirAll(dataPath, 0755); err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to create factstore data directory: %w", err)
-		}
-		connString := fmt.Sprintf(
-			"file://%s?commitname=predicato&commitemail=predicato@localhost&database=facts",
-			dataPath,
-		)
-		fmt.Printf("Using embedded Dolt factstore at: %s\n", dataPath)
-
+		fmt.Println("No factstore connection string configured, running without factstore")
 		predicatoConfig = &predicato.Config{
-			GroupID:    "default",
-			TimeZone:   time.UTC,
-			FactsDBURL: connString,
+			GroupID:  "default",
+			TimeZone: time.UTC,
 		}
 	}
 

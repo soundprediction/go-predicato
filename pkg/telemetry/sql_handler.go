@@ -10,8 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/soundprediction/predicato/pkg/types"
-
-	_ "github.com/go-sql-driver/mysql" // Ensure mysql driver is available for Dolt
 )
 
 // SQLDialect controls placeholder style and column types for SQL telemetry.
