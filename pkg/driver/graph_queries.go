@@ -234,9 +234,9 @@ func EscapeQueryString(query string) string {
 }
 
 // BuildParameterizedQuery builds a query with parameter placeholders
-func BuildParameterizedQuery(query string, params map[string]interface{}) (string, map[string]interface{}) {
+func BuildParameterizedQuery(query string, params map[string]any) (string, map[string]any) {
 	// Clean parameters by removing internal driver parameters
-	cleanParams := make(map[string]interface{})
+	cleanParams := make(map[string]any)
 	for key, value := range params {
 		if !strings.HasSuffix(key, "_") && value != nil {
 			cleanParams[key] = value

@@ -2,19 +2,20 @@ package driver
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
 )
 
 // convertNodeToMap converts a graph database node to a map of properties.
 // It handles various node types by using reflection to extract properties
 // from either a Props()/Properties() method or direct field access.
-func convertNodeToMap(nodeInterface interface{}) (map[string]interface{}, error) {
+func convertNodeToMap(nodeInterface any) (map[string]any, error) {
 	// Check for nil input
 	if nodeInterface == nil {
 		return nil, fmt.Errorf("node interface is nil")
 	}
 
-	result := make(map[string]interface{})
+	result := make(map[string]any)
 
 	// Use reflection to access the node's properties
 	nodeValue := reflect.ValueOf(nodeInterface)
@@ -25,7 +26,7 @@ func convertNodeToMap(nodeInterface interface{}) (map[string]interface{}, error)
 	}
 
 	// Handle pointer types
-	if nodeValue.Kind() == reflect.Ptr {
+	if nodeValue.Kind() == reflect.Pointer {
 		nodeValue = nodeValue.Elem()
 	}
 
@@ -39,11 +40,9 @@ func convertNodeToMap(nodeInterface interface{}) (map[string]interface{}, error)
 		// Call Props() or Properties()
 		results := propsMethod.Call(nil)
 		if len(results) > 0 {
-			if props, ok := results[0].Interface().(map[string]interface{}); ok {
+			if props, ok := results[0].Interface().(map[string]any); ok {
 				// Copy all properties to result
-				for k, v := range props {
-					result[k] = v
-				}
+				maps.Copy(result, props)
 			}
 		}
 	} else {

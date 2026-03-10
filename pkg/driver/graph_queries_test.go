@@ -244,7 +244,7 @@ func TestGetNodesQueryEscaping(t *testing.T) {
 
 func TestBuildParameterizedQuery(t *testing.T) {
 	query := "MATCH (n) WHERE n.uuid = $id RETURN n"
-	params := map[string]interface{}{
+	params := map[string]any{
 		"id":        "test-id",
 		"database_": "neo4j", // Should be filtered out
 		"routing_":  "write", // Should be filtered out
@@ -260,7 +260,7 @@ func TestBuildParameterizedQuery(t *testing.T) {
 	}
 
 	// Should only contain valid parameters
-	expectedParams := map[string]interface{}{
+	expectedParams := map[string]any{
 		"id":    "test-id",
 		"valid": "value",
 	}
@@ -424,7 +424,7 @@ func TestEntityEdgeIntegration(t *testing.T) {
 			MATCH (n {group_id: $group_id})
 			DETACH DELETE n
 		`
-		_, _, _, _ = memgraphDriver.ExecuteQuery(ctx, cleanupQuery, map[string]interface{}{"group_id": groupID})
+		_, _, _, _ = memgraphDriver.ExecuteQuery(ctx, cleanupQuery, map[string]any{"group_id": groupID})
 
 		// Create indices
 		err = memgraphDriver.CreateIndices(ctx)
@@ -489,7 +489,7 @@ func TestEntityEdgeIntegration(t *testing.T) {
 		}
 
 		// Clean up after test
-		_, _, _, _ = memgraphDriver.ExecuteQuery(ctx, cleanupQuery, map[string]interface{}{"group_id": groupID})
+		_, _, _, _ = memgraphDriver.ExecuteQuery(ctx, cleanupQuery, map[string]any{"group_id": groupID})
 
 		t.Logf("✓ Memgraph: Successfully created, upserted, and retrieved 2 nodes and 1 edge")
 	})

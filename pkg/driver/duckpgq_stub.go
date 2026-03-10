@@ -21,7 +21,7 @@ func NewDuckPGQDriver(uri string, embeddingDim int) (*DuckPGQDriver, error) {
 	return nil, ErrDuckPGQCGORequired
 }
 
-func (d *DuckPGQDriver) ExecuteQuery(ctx context.Context, query string, kwargs map[string]interface{}) (interface{}, interface{}, interface{}, error) {
+func (d *DuckPGQDriver) ExecuteQuery(ctx context.Context, query string, kwargs map[string]any) (any, any, any, error) {
 	return nil, nil, nil, ErrDuckPGQCGORequired
 }
 
@@ -29,7 +29,7 @@ func (d *DuckPGQDriver) Session(database *string) GraphDriverSession { return ni
 func (d *DuckPGQDriver) Close() error                                { return nil }
 func (d *DuckPGQDriver) DeleteAllIndexes(database string)            {}
 func (d *DuckPGQDriver) Provider() GraphProvider                     { return GraphProviderDuckPGQ }
-func (d *DuckPGQDriver) GetAossClient() interface{}                  { return nil }
+func (d *DuckPGQDriver) GetAossClient() any                          { return nil }
 
 func (d *DuckPGQDriver) GetNode(ctx context.Context, nodeID, groupID string) (*types.Node, error) {
 	return nil, ErrDuckPGQCGORequired

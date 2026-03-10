@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -124,16 +125,16 @@ const LadybugSchemaQueries = `
 
 // writeOperation represents a queued write operation
 type writeOperation struct {
-	params   map[string]interface{}
+	params   map[string]any
 	resultCh chan writeResult
 	query    string
 }
 
 // writeResult holds the result of a write operation
 type writeResult struct {
-	result interface{}
-	cols   interface{}
-	meta   interface{}
+	result any
+	cols   any
+	meta   any
 	err    error
 }
 
@@ -468,9 +469,12 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 
 	// Load FTS extension for this connection
 	// Extensions must be loaded for each session (connection)
-	_, err = client.Query("LOAD EXTENSION FTS;")
+	ftsResult, err := client.Query("LOAD EXTENSION FTS;")
 	if err != nil && !strings.Contains(err.Error(), "already loaded") {
 		log.Printf("Warning: Failed to load FTS extension on main connection: %v", err)
+	}
+	if ftsResult != nil {
+		ftsResult.Close()
 	}
 
 	// Set up a finalizer to clean up temp directories if Close() is never called.
@@ -495,7 +499,7 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 // Returns (results, summary, keys) tuple like Python, though summary and keys are unused in Ladybug.
 // Write operations are automatically queued and executed sequentially for thread safety.
 // Read operations execute directly with mutex protection for better performance.
-func (k *LadybugDriver) ExecuteQuery(ctx context.Context, cypherQuery string, kwargs map[string]interface{}) (interface{}, interface{}, interface{}, error) {
+func (k *LadybugDriver) ExecuteQuery(ctx context.Context, cypherQuery string, kwargs map[string]any) (any, any, any, error) {
 	// Check if driver is closed
 	k.closeMu.RLock()
 	if k.closed {
@@ -570,16 +574,14 @@ func (k *LadybugDriver) writeWorker() {
 }
 
 // executeQueryInternal performs the actual query execution with mutex protection
-func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[string]interface{}) (interface{}, interface{}, interface{}, error) {
+func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[string]any) (any, any, any, error) {
 	// Lock to prevent concurrent database access (ladybug C++ library is not thread-safe)
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
 	// Filter parameters exactly like Python implementation
 	params := make(map[string]any) // Use 'any' instead of 'interface{}' for go-ladybug compatibility
-	for key, value := range kwargs {
-		params[key] = value
-	}
+	maps.Copy(params, kwargs)
 
 	// ladybug does not support these parameters (matching Python comment)
 	delete(params, "database_")
@@ -594,9 +596,9 @@ func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[stri
 		preparedStatement, err := k.client.Prepare(cypherQuery)
 		if err != nil {
 			// Log error with truncated params for debugging (matching Python behavior)
-			truncatedParams := make(map[string]interface{})
+			truncatedParams := make(map[string]any)
 			for key, value := range params {
-				if arr, ok := value.([]interface{}); ok && len(arr) > 5 {
+				if arr, ok := value.([]any); ok && len(arr) > 5 {
 					truncatedParams[key] = arr[:5]
 				} else {
 					truncatedParams[key] = value
@@ -609,9 +611,9 @@ func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[stri
 		results, err = k.client.Execute(preparedStatement, params)
 		if err != nil {
 			// Log error with truncated params for debugging (matching Python behavior)
-			truncatedParams := make(map[string]interface{})
+			truncatedParams := make(map[string]any)
 			for key, value := range params {
-				if arr, ok := value.([]interface{}); ok && len(arr) > 5 {
+				if arr, ok := value.([]any); ok && len(arr) > 5 {
 					truncatedParams[key] = arr[:5]
 				} else {
 					truncatedParams[key] = value
@@ -635,11 +637,11 @@ func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[stri
 	columnNames := results.GetColumnNames()
 
 	if !results.HasNext() {
-		return []map[string]interface{}{}, columnNames, nil, nil
+		return []map[string]any{}, columnNames, nil, nil
 	}
 
 	// Convert results to list of dictionaries like Python
-	var dictResults []map[string]interface{}
+	var dictResults []map[string]any
 	for results.HasNext() {
 		row, err := results.Next()
 		if err != nil {
@@ -652,7 +654,7 @@ func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[stri
 			continue
 		}
 
-		rowDict := make(map[string]interface{})
+		rowDict := make(map[string]any)
 		for i, value := range values {
 			if i < len(columnNames) {
 				rowDict[columnNames[i]] = value
@@ -720,24 +722,27 @@ func (k *LadybugDriver) setupSchema() {
 	defer conn.Close()
 
 	// Install FTS extension (one-time operation, will be no-op if already installed)
-	_, err = conn.Query("INSTALL FTS;")
-	if err != nil && !strings.Contains(err.Error(), "already installed") {
+	if result, err := conn.Query("INSTALL FTS;"); err != nil && !strings.Contains(err.Error(), "already installed") {
 		log.Printf("FTS extension install note: %v", err)
+	} else if result != nil {
+		result.Close()
 	}
 
 	// Load FTS extension for this temporary setup connection
 	// Note: Each connection needs to load extensions separately
 	ftsLoaded := true
-	_, err = conn.Query("LOAD EXTENSION FTS;")
-	if err != nil && !strings.Contains(err.Error(), "already loaded") {
+	if result, err := conn.Query("LOAD EXTENSION FTS;"); err != nil && !strings.Contains(err.Error(), "already loaded") {
 		log.Printf("Failed to load FTS extension for setup: %v", err)
 		ftsLoaded = false
+	} else if result != nil {
+		result.Close()
 	}
 
 	// Create schema tables
-	_, err = conn.Query(LadybugSchemaQueries)
-	if err != nil {
+	if result, err := conn.Query(LadybugSchemaQueries); err != nil {
 		log.Printf("Failed to create schema: %v", err)
+	} else if result != nil {
+		result.Close()
 	}
 
 	// Create fulltext indexes for BM25 search (matching Python implementation)
@@ -754,12 +759,14 @@ func (k *LadybugDriver) setupSchema() {
 	}
 
 	for _, query := range fulltextIndexQueries {
-		_, err = conn.Query(query)
+		result, err := conn.Query(query)
 		if err != nil {
 			// Log only if verbose - indexes may already exist or table may not have data yet
 			if k.verbose {
 				log.Printf("Fulltext index creation note: %v", err)
 			}
+		} else if result != nil {
+			result.Close()
 		}
 	}
 }
@@ -770,7 +777,7 @@ func (k *LadybugDriver) Provider() GraphProvider {
 }
 
 // GetAossClient returns nil for ladybug (matching Python implementation)
-func (k *LadybugDriver) GetAossClient() interface{} {
+func (k *LadybugDriver) GetAossClient() any {
 	return nil // aoss_client: None = None
 }
 
@@ -788,7 +795,7 @@ func (k *LadybugDriver) GetNode(ctx context.Context, nodeID, groupID string) (*t
 			RETURN n.*
 		`, table)
 
-		params := map[string]interface{}{
+		params := map[string]any{
 			"uuid":     nodeID,
 			"group_id": groupID,
 		}
@@ -798,7 +805,7 @@ func (k *LadybugDriver) GetNode(ctx context.Context, nodeID, groupID string) (*t
 			continue
 		}
 
-		if resultList, ok := result.([]map[string]interface{}); ok && len(resultList) > 0 {
+		if resultList, ok := result.([]map[string]any); ok && len(resultList) > 0 {
 			return k.mapToNode(resultList[0], table)
 		}
 	}
@@ -821,7 +828,7 @@ func (k *LadybugDriver) NodeExists(ctx context.Context, node *types.Node) bool {
 		LIMIT 1
 	`, tableName)
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"uuid":     node.Uuid,
 		"group_id": node.GroupID,
 	}
@@ -831,7 +838,7 @@ func (k *LadybugDriver) NodeExists(ctx context.Context, node *types.Node) bool {
 		return false
 	}
 
-	if resultList, ok := result.([]map[string]interface{}); ok && len(resultList) > 0 {
+	if resultList, ok := result.([]map[string]any); ok && len(resultList) > 0 {
 		return true
 	}
 
@@ -883,7 +890,7 @@ func (k *LadybugDriver) DeleteNode(ctx context.Context, nodeID, groupID string) 
 	// Delete from all possible tables (validated against allowedNodeLabels)
 	tables := []string{"Entity", "Episodic", "Community", "RelatesToNode_", "Rule"}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"uuid":     nodeID,
 		"group_id": groupID,
 	}
@@ -936,7 +943,7 @@ func (k *LadybugDriver) GetNodes(ctx context.Context, nodeIDs []string, groupID 
 			RETURN n.*
 		`, table)
 
-		params := map[string]interface{}{
+		params := map[string]any{
 			"uuids":    nodeIDs,
 			"group_id": groupID,
 		}
@@ -946,7 +953,7 @@ func (k *LadybugDriver) GetNodes(ctx context.Context, nodeIDs []string, groupID 
 			continue
 		}
 
-		if resultList, ok := result.([]map[string]interface{}); ok {
+		if resultList, ok := result.([]map[string]any); ok {
 			for _, record := range resultList {
 				node, err := k.mapToNode(record, table)
 				if err == nil {
@@ -968,7 +975,7 @@ func (k *LadybugDriver) GetEdge(ctx context.Context, edgeID, groupID string) (*t
 		RETURN rel.uuid as uuid, rel.name as name, rel.fact as fact, rel.group_id as group_id, a.uuid AS source_id, b.uuid AS target_id
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"uuid":     edgeID,
 		"group_id": groupID,
 	}
@@ -978,7 +985,7 @@ func (k *LadybugDriver) GetEdge(ctx context.Context, edgeID, groupID string) (*t
 		return nil, fmt.Errorf("failed to query edge: %w", err)
 	}
 
-	if resultList, ok := result.([]map[string]interface{}); ok && len(resultList) > 0 {
+	if resultList, ok := result.([]map[string]any); ok && len(resultList) > 0 {
 		return k.mapToEdge(resultList[0])
 	}
 
@@ -1019,7 +1026,7 @@ func (k *LadybugDriver) EdgeExists(ctx context.Context, edge *types.Edge) bool {
 		LIMIT 1
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"uuid":     edge.Uuid,
 		"group_id": edge.GroupID,
 	}
@@ -1029,7 +1036,7 @@ func (k *LadybugDriver) EdgeExists(ctx context.Context, edge *types.Edge) bool {
 		return false
 	}
 
-	if resultList, ok := result.([]map[string]interface{}); ok && len(resultList) > 0 {
+	if resultList, ok := result.([]map[string]any); ok && len(resultList) > 0 {
 		return true
 	}
 
@@ -1048,7 +1055,7 @@ func (k *LadybugDriver) executeEdgeCreateQuery(ctx context.Context, edge *types.
 	var factEmbeddingValue string
 	var episodesValue string
 
-	params := make(map[string]interface{})
+	params := make(map[string]any)
 
 	// Handle fact_embedding
 	if len(edge.FactEmbedding) > 0 {
@@ -1125,7 +1132,7 @@ func (k *LadybugDriver) executeEdgeUpdateQuery(ctx context.Context, edge *types.
 	var factEmbeddingClause string
 	var episodesClause string
 
-	params := make(map[string]interface{})
+	params := make(map[string]any)
 
 	// Handle fact_embedding
 	if len(edge.FactEmbedding) > 0 {
@@ -1194,7 +1201,7 @@ func (k *LadybugDriver) UpsertEpisodicEdge(ctx context.Context, episodeUUID, ent
 		RETURN e
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"episode_uuid": episodeUUID,
 		"entity_uuid":  entityUUID,
 		"group_id":     groupID,
@@ -1222,7 +1229,7 @@ func (k *LadybugDriver) UpsertCommunityEdge(ctx context.Context, communityUUID, 
 		RETURN e
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"community_uuid": communityUUID,
 		"node_uuid":      nodeUUID,
 		"uuid":           uuid,
@@ -1260,7 +1267,7 @@ func (k *LadybugDriver) DeleteEdge(ctx context.Context, edgeID, groupID string) 
 		DELETE rel
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"uuid":     edgeID,
 		"group_id": groupID,
 	}
@@ -1286,7 +1293,7 @@ func (k *LadybugDriver) GetEdges(ctx context.Context, edgeIDs []string, groupID 
 		RETURN rel.uuid as uuid, rel.name as name, rel.fact as fact, rel.group_id as group_id, a.uuid AS source_id, b.uuid AS target_id
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"uuids":    edgeIDs,
 		"group_id": groupID,
 	}
@@ -1299,7 +1306,7 @@ func (k *LadybugDriver) GetEdges(ctx context.Context, edgeIDs []string, groupID 
 	// Pre-allocate result slice for performance
 	edges := make([]*types.Edge, 0, len(edgeIDs))
 
-	if resultList, ok := result.([]map[string]interface{}); ok {
+	if resultList, ok := result.([]map[string]any); ok {
 		for _, record := range resultList {
 			edge, err := k.mapToEdge(record)
 			if err == nil {
@@ -1331,7 +1338,7 @@ func (k *LadybugDriver) GetNeighbors(ctx context.Context, nodeID, groupID string
 		RETURN DISTINCT neighbor.*
 	`, maxDistance)
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"uuid":     nodeID,
 		"group_id": groupID,
 	}
@@ -1342,7 +1349,7 @@ func (k *LadybugDriver) GetNeighbors(ctx context.Context, nodeID, groupID string
 	}
 
 	var neighbors []*types.Node
-	if resultList, ok := result.([]map[string]interface{}); ok {
+	if resultList, ok := result.([]map[string]any); ok {
 		for _, row := range resultList {
 			node, err := k.mapToNode(row, "Entity")
 			if err == nil {
@@ -1396,7 +1403,7 @@ func (k *LadybugDriver) SearchNodesByEmbedding(ctx context.Context, embedding []
 		LIMIT $limit
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"group_id":      groupID,
 		"search_vector": embeddingF64,
 		"limit":         int64(limit),
@@ -1407,7 +1414,7 @@ func (k *LadybugDriver) SearchNodesByEmbedding(ctx context.Context, embedding []
 		return nil, fmt.Errorf("failed to execute node embedding search: %w", err)
 	}
 
-	resultList, ok := result.([]map[string]interface{})
+	resultList, ok := result.([]map[string]any)
 	if !ok || len(resultList) == 0 {
 		return []*types.Node{}, nil
 	}
@@ -1428,7 +1435,7 @@ func (k *LadybugDriver) SearchNodesByEmbedding(ctx context.Context, embedding []
 
 		// Handle labels array
 		var labels []string
-		if labelsVal, ok := row["labels"].([]interface{}); ok {
+		if labelsVal, ok := row["labels"].([]any); ok {
 			labels = make([]string, len(labelsVal))
 			for i, label := range labelsVal {
 				if labelStr, ok := label.(string); ok {
@@ -1439,7 +1446,7 @@ func (k *LadybugDriver) SearchNodesByEmbedding(ctx context.Context, embedding []
 
 		// Handle name_embedding
 		var nameEmbedding []float32
-		if embVal, ok := row["name_embedding"].([]interface{}); ok {
+		if embVal, ok := row["name_embedding"].([]any); ok {
 			nameEmbedding = make([]float32, len(embVal))
 			for i, v := range embVal {
 				if f, ok := v.(float64); ok {
@@ -1505,7 +1512,7 @@ func (k *LadybugDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []
 		LIMIT $limit
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"group_id":      groupID,
 		"search_vector": embeddingF64,
 		"limit":         int64(limit),
@@ -1516,7 +1523,7 @@ func (k *LadybugDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []
 		return nil, fmt.Errorf("failed to execute edge embedding search: %w", err)
 	}
 
-	resultList, ok := result.([]map[string]interface{})
+	resultList, ok := result.([]map[string]any)
 	if !ok || len(resultList) == 0 {
 		return []*types.Edge{}, nil
 	}
@@ -1548,7 +1555,7 @@ func (k *LadybugDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []
 
 		// Handle episodes array
 		var episodes []string
-		if episodesVal, ok := row["episodes"].([]interface{}); ok {
+		if episodesVal, ok := row["episodes"].([]any); ok {
 			episodes = make([]string, len(episodesVal))
 			for i, ep := range episodesVal {
 				if epStr, ok := ep.(string); ok {
@@ -1559,7 +1566,7 @@ func (k *LadybugDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []
 
 		// Handle fact_embedding
 		var factEmbedding []float32
-		if embVal, ok := row["fact_embedding"].([]interface{}); ok {
+		if embVal, ok := row["fact_embedding"].([]any); ok {
 			factEmbedding = make([]float32, len(embVal))
 			for i, v := range embVal {
 				if f, ok := v.(float64); ok {
@@ -1609,7 +1616,7 @@ func (k *LadybugDriver) SearchNodes(ctx context.Context, query, groupID string, 
 	// For ladybug: CALL QUERY_FTS_INDEX('Entity', 'node_name_and_summary', query, TOP := limit)
 
 	var searchQuery string
-	params := map[string]interface{}{
+	params := map[string]any{
 		"query":    query,
 		"group_id": groupID,
 		"limit":    limit,
@@ -1641,7 +1648,7 @@ func (k *LadybugDriver) SearchNodes(ctx context.Context, query, groupID string, 
 	}
 
 	var nodes []*types.Node
-	if resultList, ok := result.([]map[string]interface{}); ok {
+	if resultList, ok := result.([]map[string]any); ok {
 		for _, row := range resultList {
 			node, err := k.mapToNode(row, "Entity")
 			if err == nil {
@@ -1689,7 +1696,7 @@ func (k *LadybugDriver) SearchEdges(ctx context.Context, query, groupID string, 
 		ORDER BY score DESC
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"query":    query,
 		"group_id": groupID,
 		"limit":    int64(limit),
@@ -1701,7 +1708,7 @@ func (k *LadybugDriver) SearchEdges(ctx context.Context, query, groupID string, 
 	}
 
 	var edges []*types.Edge
-	if resultList, ok := result.([]map[string]interface{}); ok {
+	if resultList, ok := result.([]map[string]any); ok {
 		for _, row := range resultList {
 			edge, err := k.mapToEdge(row)
 			if err == nil {
@@ -1994,7 +2001,7 @@ func (k *LadybugDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 					fact += " UNLESS " + r.Exception
 				}
 				attrs := "{}"
-				if data, err := json.Marshal(map[string]interface{}{
+				if data, err := json.Marshal(map[string]any{
 					"antecedent":         r.Antecedent,
 					"consequent":         r.Consequent,
 					"exception":          r.Exception,
@@ -2377,7 +2384,7 @@ func (k *LadybugDriver) BulkLoadFromParquetWithFilter(ctx context.Context, input
 				fact += " UNLESS " + r.Exception
 			}
 			attrs := "{}"
-			if data, err := json.Marshal(map[string]interface{}{
+			if data, err := json.Marshal(map[string]any{
 				"antecedent":         r.Antecedent,
 				"consequent":         r.Consequent,
 				"exception":          r.Exception,
@@ -2501,7 +2508,7 @@ type factstoreRule struct {
 }
 
 func buildTripleAttributes(t factstoreTriple) string {
-	attrs := make(map[string]interface{})
+	attrs := make(map[string]any)
 	if t.Condition != "" {
 		attrs["condition"] = t.Condition
 	}
@@ -2628,7 +2635,7 @@ func (k *LadybugDriver) GetNodesInTimeRange(ctx context.Context, start, end time
 		       n.name_embedding AS name_embedding
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"group_id": groupID,
 		"start":    start.Format(time.RFC3339),
 		"end":      end.Format(time.RFC3339),
@@ -2639,7 +2646,7 @@ func (k *LadybugDriver) GetNodesInTimeRange(ctx context.Context, start, end time
 		return nil, fmt.Errorf("failed to execute GetNodesInTimeRange query: %w", err)
 	}
 
-	rows, ok := result.([]map[string]interface{})
+	rows, ok := result.([]map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected result type: %T", result)
 	}
@@ -2665,7 +2672,7 @@ func (k *LadybugDriver) GetNodesInTimeRange(ctx context.Context, start, end time
 				node.CreatedAt = t
 			}
 		}
-		if embedding, ok := row["name_embedding"].([]interface{}); ok {
+		if embedding, ok := row["name_embedding"].([]any); ok {
 			node.NameEmbedding = make([]float32, len(embedding))
 			for i, v := range embedding {
 				if f, ok := v.(float64); ok {
@@ -2699,7 +2706,7 @@ func (k *LadybugDriver) GetEdgesInTimeRange(ctx context.Context, start, end time
 		       m.uuid AS target_node_id
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"group_id": groupID,
 		"start":    start.Format(time.RFC3339),
 		"end":      end.Format(time.RFC3339),
@@ -2710,7 +2717,7 @@ func (k *LadybugDriver) GetEdgesInTimeRange(ctx context.Context, start, end time
 		return nil, fmt.Errorf("failed to execute GetEdgesInTimeRange query: %w", err)
 	}
 
-	rows, ok := result.([]map[string]interface{})
+	rows, ok := result.([]map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected result type: %T", result)
 	}
@@ -2743,7 +2750,7 @@ func (k *LadybugDriver) GetEdgesInTimeRange(ctx context.Context, start, end time
 				edge.InvalidAt = &t
 			}
 		}
-		if episodes, ok := row["episodes"].([]interface{}); ok {
+		if episodes, ok := row["episodes"].([]any); ok {
 			edge.Episodes = make([]string, len(episodes))
 			for i, ep := range episodes {
 				if s, ok := ep.(string); ok {
@@ -2760,7 +2767,7 @@ func (k *LadybugDriver) GetEdgesInTimeRange(ctx context.Context, start, end time
 		if targetNodeID, ok := row["target_node_id"].(string); ok {
 			edge.TargetNodeID = targetNodeID
 		}
-		if embedding, ok := row["fact_embedding"].([]interface{}); ok {
+		if embedding, ok := row["fact_embedding"].([]any); ok {
 			edge.FactEmbedding = make([]float32, len(embedding))
 			for i, v := range embedding {
 				if f, ok := v.(float64); ok {
@@ -2789,7 +2796,7 @@ func (k *LadybugDriver) RetrieveEpisodes(
 	}
 
 	// Build query parameters
-	queryParams := make(map[string]interface{})
+	queryParams := make(map[string]any)
 	queryParams["reference_time"] = referenceTime
 	queryParams["num_episodes"] = limit
 
@@ -2833,7 +2840,7 @@ func (k *LadybugDriver) RetrieveEpisodes(
 	}
 
 	// Parse results
-	rows, ok := result.([]map[string]interface{})
+	rows, ok := result.([]map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected result type: %T", result)
 	}
@@ -2863,7 +2870,7 @@ func (k *LadybugDriver) RetrieveEpisodes(
 		if validAt, ok := row["valid_at"].(time.Time); ok {
 			node.ValidFrom = validAt
 		}
-		if entityEdges, ok := row["entity_edges"].([]interface{}); ok {
+		if entityEdges, ok := row["entity_edges"].([]any); ok {
 			node.EntityEdges = make([]string, len(entityEdges))
 			for i, edge := range entityEdges {
 				if s, ok := edge.(string); ok {
@@ -2926,7 +2933,7 @@ func (k *LadybugDriver) GetExistingCommunity(ctx context.Context, entityUUID str
 		LIMIT 1
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"entity_uuid": entityUUID,
 	}
 
@@ -2958,7 +2965,7 @@ func (k *LadybugDriver) FindModalCommunity(ctx context.Context, entityUUID strin
 		RETURN c.uuid AS uuid, c.name AS name, c.summary AS summary, c.created_at AS created_at
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"entity_uuid": entityUUID,
 	}
 
@@ -2981,10 +2988,10 @@ func (k *LadybugDriver) FindModalCommunity(ctx context.Context, entityUUID strin
 }
 
 // parseCommunityNodesFromRecords parses community nodes from ladybug query records
-func (k *LadybugDriver) parseCommunityNodesFromRecords(result interface{}) ([]*types.Node, error) {
+func (k *LadybugDriver) parseCommunityNodesFromRecords(result any) ([]*types.Node, error) {
 	var nodes []*types.Node
 
-	recordSlice, ok := result.([]map[string]interface{})
+	recordSlice, ok := result.([]map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected records type: %T", result)
 	}
@@ -2992,7 +2999,7 @@ func (k *LadybugDriver) parseCommunityNodesFromRecords(result interface{}) ([]*t
 	for _, record := range recordSlice {
 		node := &types.Node{
 			Type:     types.CommunityNodeType,
-			Metadata: make(map[string]interface{}),
+			Metadata: make(map[string]any),
 		}
 
 		if uuid, ok := record["uuid"].(string); ok {
@@ -3074,7 +3081,7 @@ func (k *LadybugDriver) GetStats(ctx context.Context, groupID string) (*GraphSta
 			continue
 		}
 
-		if resultList, ok := result.([]map[string]interface{}); ok && len(resultList) > 0 {
+		if resultList, ok := result.([]map[string]any); ok && len(resultList) > 0 {
 			if count, ok := resultList[0]["count"].(int64); ok {
 				stats.NodesByType[label] = count
 				stats.NodeCount += count
@@ -3090,7 +3097,7 @@ func (k *LadybugDriver) GetStats(ctx context.Context, groupID string) (*GraphSta
 			continue
 		}
 
-		if resultList, ok := result.([]map[string]interface{}); ok && len(resultList) > 0 {
+		if resultList, ok := result.([]map[string]any); ok && len(resultList) > 0 {
 			if count, ok := resultList[0]["count"].(int64); ok {
 				stats.EdgesByType[label] = count
 				stats.EdgeCount += count
@@ -3123,7 +3130,7 @@ func (k *LadybugDriver) getTableNameForNodeType(nodeType types.NodeType) string 
 	}
 }
 
-func (k *LadybugDriver) mapToNode(data map[string]interface{}, tableName string) (*types.Node, error) {
+func (k *LadybugDriver) mapToNode(data map[string]any, tableName string) (*types.Node, error) {
 	node := &types.Node{}
 
 	if id, ok := data["node.uuid"]; ok {
@@ -3157,14 +3164,14 @@ func (k *LadybugDriver) mapToNode(data map[string]interface{}, tableName string)
 	// Parse metadata field for Episodic nodes
 	if metadata, ok := data["node.metadata"]; ok && metadata != nil {
 		if metadataStr, ok := metadata.(string); ok && metadataStr != "" {
-			var metadataMap map[string]interface{}
+			var metadataMap map[string]any
 			if err := json.Unmarshal([]byte(metadataStr), &metadataMap); err == nil {
 				node.Metadata = metadataMap
 			}
 		}
 	} else if metadata, ok := data["n.metadata"]; ok && metadata != nil {
 		if metadataStr, ok := metadata.(string); ok && metadataStr != "" {
-			var metadataMap map[string]interface{}
+			var metadataMap map[string]any
 			if err := json.Unmarshal([]byte(metadataStr), &metadataMap); err == nil {
 				node.Metadata = metadataMap
 			}
@@ -3177,11 +3184,11 @@ func (k *LadybugDriver) mapToNode(data map[string]interface{}, tableName string)
 		node.NameEmbedding = convertToFloat32Slice(embedding)
 	}
 
-	if labels, ok := data["node.labels"].([]interface{}); ok && len(labels) > 0 {
+	if labels, ok := data["node.labels"].([]any); ok && len(labels) > 0 {
 		if label, ok := labels[0].(string); ok {
 			node.EntityType = label
 		}
-	} else if labels, ok := data["n.labels"].([]interface{}); ok && len(labels) > 0 {
+	} else if labels, ok := data["n.labels"].([]any); ok && len(labels) > 0 {
 		if label, ok := labels[0].(string); ok {
 			node.EntityType = label
 		}
@@ -3224,7 +3231,7 @@ func (k *LadybugDriver) mapToNode(data map[string]interface{}, tableName string)
 	return node, nil
 }
 
-func (k *LadybugDriver) mapToEdge(data map[string]interface{}) (*types.Edge, error) {
+func (k *LadybugDriver) mapToEdge(data map[string]any) (*types.Edge, error) {
 	edge := &types.Edge{}
 
 	if id, ok := data["uuid"]; ok {
@@ -3283,7 +3290,7 @@ func (k *LadybugDriver) executeNodeCreateQuery(ctx context.Context, node *types.
 	}
 
 	var query string
-	params := make(map[string]interface{})
+	params := make(map[string]any)
 
 	switch tableName {
 	case "Episodic":
@@ -3425,7 +3432,7 @@ func (k *LadybugDriver) executeNodeUpdateQuery(ctx context.Context, node *types.
 	}
 
 	var query string
-	params := make(map[string]interface{})
+	params := make(map[string]any)
 	setClauses := []string{}
 
 	params["uuid"] = node.Uuid
@@ -3542,11 +3549,11 @@ func (k *LadybugDriver) executeNodeUpdateQuery(ctx context.Context, node *types.
 	return err
 }
 
-func convertToFloat32Slice(data interface{}) []float32 {
+func convertToFloat32Slice(data any) []float32 {
 	if data == nil {
 		return nil
 	}
-	if arr, ok := data.([]interface{}); ok {
+	if arr, ok := data.([]any); ok {
 		floatSlice := make([]float32, len(arr))
 		for i, v := range arr {
 			if f, ok := v.(float64); ok {
@@ -3586,21 +3593,21 @@ func (s *LadybugDriverSession) Close() error {
 }
 
 // ExecuteWrite executes a write function exactly like Python implementation
-func (s *LadybugDriverSession) ExecuteWrite(ctx context.Context, fn func(context.Context, GraphDriverSession, ...interface{}) (interface{}, error), args ...interface{}) (interface{}, error) {
+func (s *LadybugDriverSession) ExecuteWrite(ctx context.Context, fn func(context.Context, GraphDriverSession, ...any) (any, error), args ...any) (any, error) {
 	// Directly await the provided function with `self` as the transaction/session (matching Python comment)
 	return fn(ctx, s, args...)
 }
 
 // Run executes a query or list of queries exactly like Python implementation
-func (s *LadybugDriverSession) Run(ctx context.Context, query interface{}, kwargs map[string]interface{}) error {
-	if queryList, ok := query.([][]interface{}); ok {
+func (s *LadybugDriverSession) Run(ctx context.Context, query any, kwargs map[string]any) error {
+	if queryList, ok := query.([][]any); ok {
 		// Handle list of [cypher, params] pairs
 		for _, queryPair := range queryList {
 			if len(queryPair) >= 2 {
 				cypher := fmt.Sprintf("%v", queryPair[0])
-				params, ok := queryPair[1].(map[string]interface{})
+				params, ok := queryPair[1].(map[string]any)
 				if !ok {
-					params = make(map[string]interface{})
+					params = make(map[string]any)
 				}
 				_, _, _, err := s.driver.ExecuteQuery(ctx, cypher, params)
 				if err != nil {
@@ -3612,7 +3619,7 @@ func (s *LadybugDriverSession) Run(ctx context.Context, query interface{}, kwarg
 		// Handle single query string
 		cypherQuery := fmt.Sprintf("%v", query)
 		if kwargs == nil {
-			kwargs = make(map[string]interface{})
+			kwargs = make(map[string]any)
 		}
 		_, _, _, err := s.driver.ExecuteQuery(ctx, cypherQuery, kwargs)
 		if err != nil {
@@ -3628,7 +3635,7 @@ func (s *LadybugDriverSession) Enter(ctx context.Context) (GraphDriverSession, e
 }
 
 // Exit implements context manager exit (for async with in Python)
-func (s *LadybugDriverSession) Exit(ctx context.Context, excType, excVal, excTb interface{}) error {
+func (s *LadybugDriverSession) Exit(ctx context.Context, excType, excVal, excTb any) error {
 	// No cleanup needed for ladybug, but method must exist (matching Python comment)
 	return nil
 }
@@ -3648,7 +3655,7 @@ func (k *LadybugDriver) GetBetweenNodes(ctx context.Context, sourceNodeID, targe
 		       a.uuid AS source_id, b.uuid AS target_id
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"source_uuid": sourceNodeID,
 		"target_uuid": targetNodeID,
 	}
@@ -3684,7 +3691,7 @@ func (k *LadybugDriver) GetNodeNeighbors(ctx context.Context, nodeUUID, groupID 
 		RETURN uuid, count
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"uuid":     nodeUUID,
 		"group_id": groupID,
 	}
@@ -3695,7 +3702,7 @@ func (k *LadybugDriver) GetNodeNeighbors(ctx context.Context, nodeUUID, groupID 
 	}
 
 	var neighbors []types.Neighbor
-	recordSlice, ok := records.([]map[string]interface{})
+	recordSlice, ok := records.([]map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected records type: %T", records)
 	}
@@ -3712,13 +3719,13 @@ func (k *LadybugDriver) GetNodeNeighbors(ctx context.Context, nodeUUID, groupID 
 	return neighbors, nil
 }
 
-func (k *LadybugDriver) ParseNodesFromRecords(records interface{}) ([]*types.Node, error) {
+func (k *LadybugDriver) ParseNodesFromRecords(records any) ([]*types.Node, error) {
 	var nodes []*types.Node
 	switch v := records.(type) {
-	case []map[string]interface{}:
+	case []map[string]any:
 		// Result is a list of records (ladybug format)
 		for _, record := range v {
-			if nodeData, ok := record["e"].(map[string]interface{}); ok {
+			if nodeData, ok := record["e"].(map[string]any); ok {
 				node, err := types.ParseNodeFromMap(nodeData)
 				if err != nil {
 					continue // Skip malformed nodes
@@ -3726,11 +3733,11 @@ func (k *LadybugDriver) ParseNodesFromRecords(records interface{}) ([]*types.Nod
 				nodes = append(nodes, node)
 			}
 		}
-	case []interface{}:
+	case []any:
 		// Result is a list of interfaces
 		for _, item := range v {
-			if record, ok := item.(map[string]interface{}); ok {
-				if nodeData, ok := record["e"].(map[string]interface{}); ok {
+			if record, ok := item.(map[string]any); ok {
+				if nodeData, ok := record["e"].(map[string]any); ok {
 					node, err := types.ParseNodeFromMap(nodeData)
 					if err != nil {
 						continue // Skip malformed nodes
@@ -3751,7 +3758,7 @@ func (k *LadybugDriver) GetEntityNodesByGroup(ctx context.Context, groupID strin
 		MATCH (n:Entity {group_id: $group_id})
 		RETURN n.uuid AS uuid, n.name AS name, n.summary AS summary, n.created_at AS created_at
 	`
-	params := map[string]interface{}{
+	params := map[string]any{
 		"group_id": groupID,
 	}
 
@@ -3761,7 +3768,7 @@ func (k *LadybugDriver) GetEntityNodesByGroup(ctx context.Context, groupID strin
 	}
 
 	var nodes []*types.Node
-	recordSlice, ok := records.([]map[string]interface{})
+	recordSlice, ok := records.([]map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected records type: %T", records)
 	}
@@ -3801,7 +3808,7 @@ func (k *LadybugDriver) GetAllGroupIDs(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("failed to execute group IDs query: %w", err)
 	}
 
-	recordSlice, ok := records.([]map[string]interface{})
+	recordSlice, ok := records.([]map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected records type: %T", records)
 	}
@@ -3812,7 +3819,7 @@ func (k *LadybugDriver) GetAllGroupIDs(ctx context.Context) ([]string, error) {
 
 	// Extract group IDs from the result
 	if groupIDsInterface, ok := recordSlice[0]["group_ids"]; ok {
-		if groupIDs, ok := groupIDsInterface.([]interface{}); ok {
+		if groupIDs, ok := groupIDsInterface.([]any); ok {
 			var result []string
 			for _, gid := range groupIDs {
 				if gidStr, ok := gid.(string); ok {

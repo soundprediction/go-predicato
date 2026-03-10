@@ -40,7 +40,7 @@ func BenchmarkGetNodesBatch(b *testing.B) {
 	uuids := make([]string, numNodes)
 	now := time.Now()
 
-	for i := 0; i < numNodes; i++ {
+	for i := range numNodes {
 		uuid := fmt.Sprintf("bench-node-%d", i)
 		uuids[i] = uuid
 		node := &types.Node{
@@ -132,7 +132,7 @@ func BenchmarkGetEdgesBatch(b *testing.B) {
 	now := time.Now()
 
 	// Create source and target nodes
-	for i := 0; i < numEdges*2; i++ {
+	for i := range numEdges * 2 {
 		node := &types.Node{
 			Uuid:       fmt.Sprintf("bench-edge-node-%d", i),
 			Name:       fmt.Sprintf("Edge Node %d", i),
@@ -149,7 +149,7 @@ func BenchmarkGetEdgesBatch(b *testing.B) {
 
 	// Create test edges
 	edgeUUIDs := make([]string, numEdges)
-	for i := 0; i < numEdges; i++ {
+	for i := range numEdges {
 		uuid := fmt.Sprintf("bench-edge-%d", i)
 		edgeUUIDs[i] = uuid
 		edge := &types.Edge{

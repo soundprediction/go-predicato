@@ -27,12 +27,12 @@ const (
 type GraphDriverSession interface {
 	// Session management
 	Enter(ctx context.Context) (GraphDriverSession, error)
-	Exit(ctx context.Context, excType, excVal, excTb interface{}) error
+	Exit(ctx context.Context, excType, excVal, excTb any) error
 	Close() error
 
 	// Query execution
-	Run(ctx context.Context, query interface{}, kwargs map[string]interface{}) error
-	ExecuteWrite(ctx context.Context, fn func(context.Context, GraphDriverSession, ...interface{}) (interface{}, error), args ...interface{}) (interface{}, error)
+	Run(ctx context.Context, query any, kwargs map[string]any) error
+	ExecuteWrite(ctx context.Context, fn func(context.Context, GraphDriverSession, ...any) (any, error), args ...any) (any, error)
 
 	// Provider info
 	Provider() GraphProvider
@@ -41,12 +41,12 @@ type GraphDriverSession interface {
 // GraphDriver defines the interface for graph database operations (matching Python GraphDriver)
 type GraphDriver interface {
 	// Core methods matching Python interface
-	ExecuteQuery(ctx context.Context, cypherQuery string, kwargs map[string]interface{}) (interface{}, interface{}, interface{}, error)
+	ExecuteQuery(ctx context.Context, cypherQuery string, kwargs map[string]any) (any, any, any, error)
 	Session(database *string) GraphDriverSession
 	Close() error
 	DeleteAllIndexes(database string)
 	Provider() GraphProvider
-	GetAossClient() interface{}
+	GetAossClient() any
 
 	// Database-specific extensions (these can remain for compatibility)
 	// Node operations
@@ -119,7 +119,7 @@ type GraphStats struct {
 
 // QueryOptions holds options for database queries.
 type QueryOptions struct {
-	Filters   map[string]interface{}
+	Filters   map[string]any
 	SortBy    string
 	SortOrder string
 	Limit     int
@@ -191,7 +191,7 @@ type FilteredParquetImporter interface {
 }
 
 // convertRecordToEdge converts a database record to an Edge object
-func convertRecordToEdge(record map[string]interface{}) (*types.Edge, error) {
+func convertRecordToEdge(record map[string]any) (*types.Edge, error) {
 	edge := &types.Edge{}
 
 	// Extract basic fields
@@ -239,7 +239,7 @@ func convertRecordToEdge(record map[string]interface{}) (*types.Edge, error) {
 	edge.Type = types.EntityEdgeType
 
 	// Extract source IDs if present
-	if sourceIDs, ok := record["source_ids"].([]interface{}); ok {
+	if sourceIDs, ok := record["source_ids"].([]any); ok {
 		strSourceIDs := make([]string, len(sourceIDs))
 		for i, id := range sourceIDs {
 			if strID, ok := id.(string); ok {

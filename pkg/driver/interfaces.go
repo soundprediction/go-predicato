@@ -39,7 +39,7 @@ import (
 type GraphCore interface {
 	// ExecuteQuery executes a Cypher query with parameters.
 	// Returns (results, summary, keys, error) matching the Python interface.
-	ExecuteQuery(ctx context.Context, cypherQuery string, kwargs map[string]interface{}) (interface{}, interface{}, interface{}, error)
+	ExecuteQuery(ctx context.Context, cypherQuery string, kwargs map[string]any) (any, any, any, error)
 
 	// Session returns a database session for transaction management.
 	Session(database *string) GraphDriverSession
@@ -54,7 +54,7 @@ type GraphCore interface {
 	Provider() GraphProvider
 
 	// GetAossClient returns the AOSS client if available, nil otherwise.
-	GetAossClient() interface{}
+	GetAossClient() any
 }
 
 // NodeStore provides operations for managing nodes in the graph.
