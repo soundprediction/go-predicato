@@ -1204,7 +1204,7 @@ func (n *Neo4jDriver) GetExistingCommunity(ctx context.Context, entityUUID strin
 		LIMIT 1
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"entity_uuid": entityUUID,
 	}
 
@@ -1235,7 +1235,7 @@ func (n *Neo4jDriver) FindModalCommunity(ctx context.Context, entityUUID string)
 		RETURN c
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"entity_uuid": entityUUID,
 	}
 
@@ -1258,7 +1258,7 @@ func (n *Neo4jDriver) FindModalCommunity(ctx context.Context, entityUUID string)
 }
 
 // parseCommunityNodesFromRecords parses community nodes from Neo4j records
-func (n *Neo4jDriver) parseCommunityNodesFromRecords(result interface{}) ([]*types.Node, error) {
+func (n *Neo4jDriver) parseCommunityNodesFromRecords(result any) ([]*types.Node, error) {
 	var nodes []*types.Node
 
 	value := reflect.ValueOf(result)
@@ -1289,7 +1289,7 @@ func (n *Neo4jDriver) parseCommunityNodesFromRecords(result interface{}) ([]*typ
 
 		// Use reflection to get node properties
 		nodeValue := reflect.ValueOf(nodeInterface)
-		if nodeValue.Kind() == reflect.Ptr {
+		if nodeValue.Kind() == reflect.Pointer {
 			nodeValue = nodeValue.Elem()
 		}
 
@@ -1302,7 +1302,7 @@ func (n *Neo4jDriver) parseCommunityNodesFromRecords(result interface{}) ([]*typ
 		if propsMethod.IsValid() {
 			propsResults := propsMethod.Call(nil)
 			if len(propsResults) > 0 {
-				if props, ok := propsResults[0].Interface().(map[string]interface{}); ok {
+				if props, ok := propsResults[0].Interface().(map[string]any); ok {
 					if uuid, ok := props["uuid"].(string); ok {
 						node.Uuid = uuid
 					}
@@ -1423,7 +1423,7 @@ func (n *Neo4jDriver) GetStats(ctx context.Context, groupID string) (*GraphStats
 			return nil, err
 		}
 
-		return map[string]interface{}{
+		return map[string]any{
 			"nodes":       nodeRecords,
 			"edges":       edgeRecords,
 			"total_nodes": totalNodeRecord,
@@ -1718,7 +1718,7 @@ func (n *Neo4jDriver) SearchEdgesByVector(ctx context.Context, vector []float32,
 }
 
 // ExecuteQuery executes a Cypher query and returns records, summary, and keys (matching Python interface).
-func (n *Neo4jDriver) ExecuteQuery(ctx context.Context, cypherQuery string, kwargs map[string]interface{}) (interface{}, interface{}, interface{}, error) {
+func (n *Neo4jDriver) ExecuteQuery(ctx context.Context, cypherQuery string, kwargs map[string]any) (any, any, any, error) {
 	session := n.client.NewSession(ctx, neo4j.SessionConfig{DatabaseName: n.database})
 	defer session.Close(ctx)
 
@@ -1789,7 +1789,7 @@ func (n *Neo4jDriver) Provider() GraphProvider {
 }
 
 // GetAossClient returns nil for Neo4j (Amazon OpenSearch not applicable).
-func (n *Neo4jDriver) GetAossClient() interface{} {
+func (n *Neo4jDriver) GetAossClient() any {
 	return nil
 }
 
@@ -1817,7 +1817,7 @@ func (s *Neo4jDriverSession) Enter(ctx context.Context) (GraphDriverSession, err
 }
 
 // Exit implements the context manager pattern.
-func (s *Neo4jDriverSession) Exit(ctx context.Context, excType, excVal, excTb interface{}) error {
+func (s *Neo4jDriverSession) Exit(ctx context.Context, excType, excVal, excTb any) error {
 	if s.session != nil {
 		return s.session.Close(ctx)
 	}
@@ -1833,7 +1833,7 @@ func (s *Neo4jDriverSession) Close() error {
 }
 
 // Run executes a query in this session.
-func (s *Neo4jDriverSession) Run(ctx context.Context, query interface{}, kwargs map[string]interface{}) error {
+func (s *Neo4jDriverSession) Run(ctx context.Context, query any, kwargs map[string]any) error {
 	if s.session == nil {
 		return fmt.Errorf("session not entered")
 	}
@@ -1848,12 +1848,12 @@ func (s *Neo4jDriverSession) Run(ctx context.Context, query interface{}, kwargs 
 }
 
 // ExecuteWrite executes a write transaction.
-func (s *Neo4jDriverSession) ExecuteWrite(ctx context.Context, fn func(context.Context, GraphDriverSession, ...interface{}) (interface{}, error), args ...interface{}) (interface{}, error) {
+func (s *Neo4jDriverSession) ExecuteWrite(ctx context.Context, fn func(context.Context, GraphDriverSession, ...any) (any, error), args ...any) (any, error) {
 	if s.session == nil {
 		return nil, fmt.Errorf("session not entered")
 	}
 
-	return s.session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+	return s.session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		return fn(ctx, s, args...)
 	})
 }
@@ -1962,7 +1962,7 @@ func (n *Neo4jDriver) nodeFromDBNode(node dbtype.Node) *types.Node {
 
 	// Metadata
 	if metadataJSON, ok := props["metadata"].(string); ok {
-		var metadata map[string]interface{}
+		var metadata map[string]any
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err == nil {
 			result.Metadata = metadata
 		}
@@ -2151,7 +2151,7 @@ func (n *Neo4jDriver) edgeFromDBRelation(relation dbtype.Relationship, sourceID,
 
 	// Metadata
 	if metadataJSON, ok := props["metadata"].(string); ok {
-		var metadata map[string]interface{}
+		var metadata map[string]any
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err == nil {
 			result.Metadata = metadata
 		}
@@ -2242,7 +2242,7 @@ func (n *Neo4jDriver) cosineSimilarity(a, b []float32) float32 {
 	}
 
 	var dotProduct, normA, normB float32
-	for i := 0; i < len(a); i++ {
+	for i := range a {
 		dotProduct += a[i] * b[i]
 		normA += a[i] * a[i]
 		normB += b[i] * b[i]
@@ -2270,7 +2270,7 @@ func (k *Neo4jDriver) GetBetweenNodes(ctx context.Context, sourceNodeID, targetN
 		       a.uuid AS source_id, b.uuid AS target_id
 	`
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"source_uuid": sourceNodeID,
 		"target_uuid": targetNodeID,
 	}
@@ -2320,7 +2320,7 @@ func (n *Neo4jDriver) GetNodeNeighbors(ctx context.Context, nodeUUID, groupID st
 }
 
 // parseNeighborsFromRecords parses Neo4j records into neighbors
-func (n *Neo4jDriver) parseNeighborsFromRecords(result interface{}) ([]types.Neighbor, error) {
+func (n *Neo4jDriver) parseNeighborsFromRecords(result any) ([]types.Neighbor, error) {
 	var neighbors []types.Neighbor
 
 	value := reflect.ValueOf(result)
@@ -2384,7 +2384,7 @@ func (n *Neo4jDriver) parseNeighborsFromRecords(result interface{}) ([]types.Nei
 
 // parseNeo4jRecords parses Neo4j driver records into nodes.
 // This handles the []*db.Record type returned by Neo4j's ExecuteQuery.
-func (n *Neo4jDriver) ParseNodesFromRecords(result interface{}) ([]*types.Node, error) {
+func (n *Neo4jDriver) ParseNodesFromRecords(result any) ([]*types.Node, error) {
 	var episodes []*types.Node
 
 	// Use reflection to handle Neo4j driver records
@@ -2496,7 +2496,7 @@ func (n *Neo4jDriver) GetAllGroupIDs(ctx context.Context) ([]string, error) {
 }
 
 // parseGroupIDsFromRecords parses group IDs from Neo4j records
-func (n *Neo4jDriver) parseGroupIDsFromRecords(result interface{}) ([]string, error) {
+func (n *Neo4jDriver) parseGroupIDsFromRecords(result any) ([]string, error) {
 	value := reflect.ValueOf(result)
 	if value.Kind() != reflect.Slice {
 		return nil, fmt.Errorf("expected slice, got %T", result)
@@ -2523,7 +2523,7 @@ func (n *Neo4jDriver) parseGroupIDsFromRecords(result interface{}) ([]string, er
 
 	// Handle different types
 	switch gids := groupIDsInterface.(type) {
-	case []interface{}:
+	case []any:
 		var groupIDs []string
 		for _, gid := range gids {
 			if gidStr, ok := gid.(string); ok {

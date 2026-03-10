@@ -168,9 +168,9 @@ func TestAsDBNode(t *testing.T) {
 	t.Parallel()
 
 	validNode := dbtype.Node{
-		Id:     123,
-		Labels: []string{"Entity"},
-		Props:  map[string]any{"uuid": "test-uuid"},
+		ElementId: "123",
+		Labels:    []string{"Entity"},
+		Props:     map[string]any{"uuid": "test-uuid"},
 	}
 
 	tests := []struct {
@@ -191,8 +191,8 @@ func TestAsDBNode(t *testing.T) {
 			if ok != tt.wantOK {
 				t.Errorf("AsDBNode() ok = %v, want %v", ok, tt.wantOK)
 			}
-			if tt.wantOK && got.Id != validNode.Id {
-				t.Errorf("AsDBNode() Id = %d, want %d", got.Id, validNode.Id)
+			if tt.wantOK && got.ElementId != validNode.ElementId {
+				t.Errorf("AsDBNode() ElementId = %s, want %s", got.ElementId, validNode.ElementId)
 			}
 		})
 	}
@@ -202,11 +202,11 @@ func TestAsDBRelationship(t *testing.T) {
 	t.Parallel()
 
 	validRel := dbtype.Relationship{
-		Id:      456,
-		StartId: 1,
-		EndId:   2,
-		Type:    "RELATES_TO",
-		Props:   map[string]any{"uuid": "test-rel-uuid"},
+		ElementId:      "456",
+		StartElementId: "1",
+		EndElementId:   "2",
+		Type:           "RELATES_TO",
+		Props:          map[string]any{"uuid": "test-rel-uuid"},
 	}
 
 	tests := []struct {
@@ -227,8 +227,8 @@ func TestAsDBRelationship(t *testing.T) {
 			if ok != tt.wantOK {
 				t.Errorf("AsDBRelationship() ok = %v, want %v", ok, tt.wantOK)
 			}
-			if tt.wantOK && got.Id != validRel.Id {
-				t.Errorf("AsDBRelationship() Id = %d, want %d", got.Id, validRel.Id)
+			if tt.wantOK && got.ElementId != validRel.ElementId {
+				t.Errorf("AsDBRelationship() ElementId = %s, want %s", got.ElementId, validRel.ElementId)
 			}
 		})
 	}

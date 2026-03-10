@@ -10,7 +10,7 @@ require (
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/LadybugDB/go-ladybug v0.13.2-0.20260107160556-dff3b908ba39
+	github.com/LadybugDB/go-ladybug v0.13.2-0.20260302191600-5506d9fc63a5
 	github.com/cozodb/cozo-lib-go v0.7.5
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/firebase/genkit/go v1.4.0

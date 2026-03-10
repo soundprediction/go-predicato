@@ -21,7 +21,7 @@ func NewCozoDriver(uri string, embeddingDim int) (*CozoDriver, error) {
 	return nil, ErrCozoCGORequired
 }
 
-func (d *CozoDriver) ExecuteQuery(ctx context.Context, query string, kwargs map[string]interface{}) (interface{}, interface{}, interface{}, error) {
+func (d *CozoDriver) ExecuteQuery(ctx context.Context, query string, kwargs map[string]any) (any, any, any, error) {
 	return nil, nil, nil, ErrCozoCGORequired
 }
 
@@ -29,7 +29,7 @@ func (d *CozoDriver) Session(database *string) GraphDriverSession { return nil }
 func (d *CozoDriver) Close() error                                { return nil }
 func (d *CozoDriver) DeleteAllIndexes(database string)            {}
 func (d *CozoDriver) Provider() GraphProvider                     { return GraphProviderCozo }
-func (d *CozoDriver) GetAossClient() interface{}                  { return nil }
+func (d *CozoDriver) GetAossClient() any                          { return nil }
 
 func (d *CozoDriver) GetNode(ctx context.Context, nodeID, groupID string) (*types.Node, error) {
 	return nil, ErrCozoCGORequired

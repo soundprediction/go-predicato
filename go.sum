@@ -1,7 +1,7 @@
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
-github.com/LadybugDB/go-ladybug v0.13.2-0.20260107160556-dff3b908ba39 h1:W9XV4/qe6GkVoZ7EVZCoOfA3opyZNxu62yEd2BXBI/Q=
-github.com/LadybugDB/go-ladybug v0.13.2-0.20260107160556-dff3b908ba39/go.mod h1:ddOn3V5BN15P7nQT7ndCTNj06lIUcgbPIm8Wenznv+s=
+github.com/LadybugDB/go-ladybug v0.13.2-0.20260302191600-5506d9fc63a5 h1:IEDQ8ll5xSrJWTbMYVC+2Eej9pXbPIayieVKbtY8QNs=
+github.com/LadybugDB/go-ladybug v0.13.2-0.20260302191600-5506d9fc63a5/go.mod h1:izRE5CnUsWLsS83ftlvZkrq603ln0jmpg63BYXaLSKg=
 github.com/alecthomas/assert/v2 v2.10.0 h1:jjRCHsj6hBJhkmhznrCzoNpbA3zqy0fYiUcYZP/GkPY=
 github.com/alecthomas/assert/v2 v2.10.0/go.mod h1:Bze95FyfUr7x34QZrjL+XP+0qgp/zg8yS+TtBj1WA3k=
 github.com/alecthomas/repr v0.4.0 h1:GhI2A8MACjfegCPVq9f1FLvIBS+DrQ2KQBFZP1iFzXc=
