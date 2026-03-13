@@ -86,12 +86,12 @@ func NewDuckPGQDriver(uri string, embeddingDim int) (*DuckPGQDriver, error) {
 	return d, nil
 }
 
-// detectFTS checks if FTS indices exist on the entities and edges tables.
+// detectFTS checks if FTS indices exist on the entities table.
 func (d *DuckPGQDriver) detectFTS() bool {
-	// fts_main_entities schema is created by PRAGMA create_fts_index
-	var n int
-	err := d.db.QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_name = 'fts_main_entities'`).Scan(&n)
-	return err == nil && n > 0
+	// Try a no-op BM25 match; if the index doesn't exist, DuckDB returns an error.
+	var score sql.NullFloat64
+	err := d.db.QueryRow(`SELECT fts_main_entities.match_bm25(uuid, 'test') AS score FROM entities LIMIT 1`).Scan(&score)
+	return err == nil
 }
 
 // EnsureFTSIndex creates FTS indices if they don't already exist.
