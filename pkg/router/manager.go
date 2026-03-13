@@ -11,6 +11,7 @@ import (
 	"time"
 
 	predicato "github.com/soundprediction/predicato"
+	"github.com/soundprediction/predicato/pkg/crossencoder"
 	"github.com/soundprediction/predicato/pkg/driver"
 	"github.com/soundprediction/predicato/pkg/embedder"
 	"github.com/soundprediction/predicato/pkg/nlp"
@@ -29,6 +30,9 @@ type Manager struct {
 	// sharedNLPClient is the NLP client shared across all predicato clients.
 	// Can be nil for search-only use cases.
 	sharedNLPClient nlp.Client
+
+	// crossEncoder is set on every new client for reranking support.
+	crossEncoder crossencoder.Client
 
 	// LRU tracking: ordered list of client names, most recently used at the end.
 	lruOrder       []string
@@ -224,7 +228,22 @@ func (pm *Manager) initializeClient(cfg *ClientConfig) (*predicato.Client, error
 		return nil, fmt.Errorf("failed to create predicato client: %w", err)
 	}
 
+	if pm.crossEncoder != nil {
+		client.SetCrossEncoder(pm.crossEncoder)
+	}
+
 	return client, nil
+}
+
+// SetCrossEncoder sets the cross-encoder reranker to be applied to all clients.
+func (pm *Manager) SetCrossEncoder(ce crossencoder.Client) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.crossEncoder = ce
+	// Apply to already-initialized clients
+	for _, client := range pm.clients {
+		client.SetCrossEncoder(ce)
+	}
 }
 
 // GetDefaultClient returns the default predicato client.

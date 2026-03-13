@@ -184,7 +184,15 @@ func (r *Router) SearchWithClients(
 		limit = searchConfig.Limit
 	}
 
-	merged := r.merger.Merge(results, limit)
+	var preferredPredicates []string
+	if searchConfig != nil && len(searchConfig.PreferredPredicates) > 0 {
+		preferredPredicates = searchConfig.PreferredPredicates
+	} else {
+		// Auto-detect predicates from query intent
+		preferredPredicates = InferPredicatesFromQuery(query)
+	}
+
+	merged := r.merger.Merge(results, limit, preferredPredicates)
 	merged.Errors = errors
 
 	r.logger.Info("Search completed",

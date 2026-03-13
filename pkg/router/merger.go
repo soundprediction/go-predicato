@@ -4,6 +4,7 @@ package router
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/soundprediction/predicato/pkg/types"
 )
@@ -54,7 +55,8 @@ func NewResultMerger(strategy string) *ResultMerger {
 }
 
 // Merge combines results from multiple clients according to the configured strategy.
-func (rm *ResultMerger) Merge(results map[string]*types.SearchResults, limit int) *MergedSearchResults {
+// preferredPredicates optionally boosts edges with matching names to the top.
+func (rm *ResultMerger) Merge(results map[string]*types.SearchResults, limit int, preferredPredicates []string) *MergedSearchResults {
 	merged := &MergedSearchResults{
 		Sources:       make(map[string][]string),
 		ClientResults: results,
@@ -67,14 +69,30 @@ func (rm *ResultMerger) Merge(results map[string]*types.SearchResults, limit int
 
 	switch rm.strategy {
 	case "rrf":
-		return rm.mergeRRF(results, limit)
+		merged = rm.mergeRRF(results, limit)
 	case "simple_concat":
-		return rm.mergeSimpleConcat(results, limit)
+		merged = rm.mergeSimpleConcat(results, limit)
 	case "max_score":
-		return rm.mergeMaxScore(results, limit)
+		merged = rm.mergeMaxScore(results, limit)
 	default:
-		return rm.mergeRRF(results, limit)
+		merged = rm.mergeRRF(results, limit)
 	}
+
+	// Deduplicate nodes by normalized name (collapses "Renal failure" / "RENAL FAILURE" etc.)
+	merged.Nodes, merged.Sources = deduplicateNodesByName(merged.Nodes, merged.Sources)
+	if limit > 0 && len(merged.Nodes) > limit {
+		merged.Nodes = merged.Nodes[:limit]
+	}
+
+	// Filter low-value edges: tautological, overly generic, duplicate facts
+	merged.Edges = filterLowValueEdges(merged.Edges)
+
+	// Sort edges: preferred predicates first, then original order
+	if len(preferredPredicates) > 0 {
+		merged.Edges = boostPreferredEdges(merged.Edges, preferredPredicates)
+	}
+
+	return merged
 }
 
 func (rm *ResultMerger) mergeRRF(results map[string]*types.SearchResults, limit int) *MergedSearchResults {
@@ -256,6 +274,87 @@ func (rm *ResultMerger) mergeMaxScore(results map[string]*types.SearchResults, l
 	merged.Edges = deduplicateEdges(merged.Edges)
 
 	return merged
+}
+
+// deduplicateNodesByName merges nodes that have different UUIDs but the same
+// normalized name (case-insensitive, trimmed). The first occurrence (highest
+// ranked) is kept; subsequent duplicates have their sources merged in.
+func deduplicateNodesByName(nodes []*types.Node, sources map[string][]string) ([]*types.Node, map[string][]string) {
+	if len(nodes) <= 1 {
+		return nodes, sources
+	}
+
+	type seenEntry struct {
+		index int
+		uuid  string
+	}
+	seen := make(map[string]*seenEntry, len(nodes))
+	result := make([]*types.Node, 0, len(nodes))
+
+	for _, node := range nodes {
+		key := strings.ToLower(strings.TrimSpace(node.Name))
+		if entry, exists := seen[key]; exists {
+			// Merge sources from the duplicate into the kept node
+			for _, src := range sources[node.Uuid] {
+				sources[entry.uuid] = appendUnique(sources[entry.uuid], src)
+			}
+			delete(sources, node.Uuid)
+		} else {
+			seen[key] = &seenEntry{index: len(result), uuid: node.Uuid}
+			result = append(result, node)
+		}
+	}
+
+	return result, sources
+}
+
+// boostPreferredEdges re-sorts edges so that edges with preferred predicate
+// names appear first, preserving relative order within each group.
+func boostPreferredEdges(edges []*types.Edge, preferred []string) []*types.Edge {
+	if len(edges) == 0 || len(preferred) == 0 {
+		return edges
+	}
+
+	// Build a set for O(1) lookup; store index for sub-ordering preferred edges
+	prefIdx := make(map[string]int, len(preferred))
+	for i, p := range preferred {
+		prefIdx[strings.ToUpper(p)] = i
+	}
+
+	type ranked struct {
+		edge     *types.Edge
+		prefRank int // -1 means not preferred
+		origRank int
+	}
+
+	ranked_ := make([]ranked, len(edges))
+	for i, e := range edges {
+		pr := -1
+		if idx, ok := prefIdx[strings.ToUpper(e.Name)]; ok {
+			pr = idx
+		}
+		ranked_[i] = ranked{edge: e, prefRank: pr, origRank: i}
+	}
+
+	sort.SliceStable(ranked_, func(i, j int) bool {
+		pi, pj := ranked_[i].prefRank, ranked_[j].prefRank
+		// Preferred edges before non-preferred
+		if (pi >= 0) != (pj >= 0) {
+			return pi >= 0
+		}
+		// Among preferred, sort by predicate priority
+		if pi >= 0 && pj >= 0 && pi != pj {
+			return pi < pj
+		}
+		// Otherwise preserve original order
+		return ranked_[i].origRank < ranked_[j].origRank
+	})
+
+	result := make([]*types.Edge, len(edges))
+	for i, r := range ranked_ {
+		result[i] = r.edge
+	}
+	return result
 }
 
 func deduplicateEdges(edges []*types.Edge) []*types.Edge {

@@ -86,9 +86,10 @@ func (c *ClientConfig) CreateDriver(ctx context.Context) (driver.GraphDriver, er
 		cfg.DBPath = dbPath
 		cfg.ReadOnly = c.ReadOnly
 		if c.ReadOnly {
-			// Use a smaller buffer pool for read-only topic graphs to allow
-			// many DBs to be open simultaneously (default 1GB is too much × N DBs).
-			cfg.BufferPoolSize = 256 * 1024 * 1024 // 256MB
+			// Use a moderate buffer pool for read-only topic graphs. With LRU
+			// eviction (max 5 open), 512MB × 5 = 2.5GB total is reasonable.
+			// Too small causes OOM on larger graphs (back-spine=1.5GB, substance-use=1GB).
+			cfg.BufferPoolSize = 512 * 1024 * 1024 // 512MB
 		}
 		return driver.NewLadybugDriverWithConfig(cfg)
 	default:

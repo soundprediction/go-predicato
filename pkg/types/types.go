@@ -148,6 +148,9 @@ type SearchConfig struct {
 	EdgeConfig *EdgeSearchConfig
 	// ExcludeEntityTypes filters out nodes with these entity types (e.g. "CLINICAL_STUDY").
 	ExcludeEntityTypes []string
+	// PreferredPredicates lists edge predicate names to boost in result ranking.
+	// Edges with these predicates are sorted before others (e.g. "TREATS", "CAUSES", "SYMPTOM_OF").
+	PreferredPredicates []string
 	// Limit is the maximum number of results to return.
 	Limit int
 	// CenterNodeDistance is the maximum distance from center nodes.

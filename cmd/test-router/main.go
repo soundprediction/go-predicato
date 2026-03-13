@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/soundprediction/predicato/pkg/crossencoder"
 	"github.com/soundprediction/predicato/pkg/embedder"
 	"github.com/soundprediction/predicato/pkg/router"
 	"github.com/soundprediction/predicato/pkg/types"
@@ -34,6 +35,11 @@ func main() {
 	}
 	defer emb.Close()
 	fmt.Printf("Embedder loaded in %v\n", time.Since(t0))
+
+	// Create embedding-based reranker (reuses the embedder — no extra model)
+	fmt.Println("Creating embedding-based reranker...")
+	reranker := crossencoder.NewEmbeddingRerankerClient(emb, crossencoder.EmbeddingConfig{})
+	fmt.Println("Reranker ready (uses shared embedder)")
 
 	// Simulated chat queries — diverse medical topics to test routing
 	queries := []struct {
@@ -113,28 +119,31 @@ func main() {
 		}
 		fmt.Printf("Classifier initialized in %v (embedded %d topic vectors)\n", classifierElapsed, len(configs))
 
-		// Use LRU manager with max 5 open clients (ladybug can only handle ~1 at a time safely)
-		maxOpen := 38 // duckpgq can handle many
+		maxOpen := 38
 		if backend.name == "ladybug" {
 			maxOpen = 5
 		}
 		mgr := router.NewManagerWithOptions(configs, nil, emb, logger, maxOpen)
+		mgr.SetCrossEncoder(reranker)
 
 		rtr := router.NewRouter(mgr, classifier, routerConfig, logger)
 
+		// Fetch more initial results (50), let cross-encoder rerank down to top 10
 		searchConfig := &types.SearchConfig{
 			Limit:              10,
 			CenterNodeDistance: 2,
 			IncludeEdges:       true,
-			Rerank:             false,
+			Rerank:             true,
 			ExcludeEntityTypes: []string{"CLINICAL_STUDY"},
 			NodeConfig: &types.NodeSearchConfig{
 				SearchMethods: []string{"cosine_similarity", "bm25"},
-				Reranker:      "rrf",
+				Reranker:      "cross_encoder",
+				MinScore:      0.0,
 			},
 			EdgeConfig: &types.EdgeSearchConfig{
 				SearchMethods: []string{"bm25"},
-				Reranker:      "rrf",
+				Reranker:      "cross_encoder",
+				MinScore:      0.0,
 			},
 		}
 
@@ -144,6 +153,12 @@ func main() {
 			qNum := i + 1
 			fmt.Printf("--- Query %d: %q\n", qNum, q.query)
 			fmt.Printf("    Expected: %s\n", q.expectTopic)
+
+			// Show inferred predicates
+			inferred := router.InferPredicatesFromQuery(q.query)
+			if len(inferred) > 0 {
+				fmt.Printf("    Preferred predicates: %v\n", inferred)
+			}
 
 			// Route
 			routeStart := time.Now()
