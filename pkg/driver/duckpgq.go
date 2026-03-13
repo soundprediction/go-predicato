@@ -932,9 +932,14 @@ func (d *DuckPGQDriver) SearchNodes(ctx context.Context, query, groupID string, 
 		}
 	}
 
+	var excludeEntityTypes []string
+	if options != nil {
+		excludeEntityTypes = options.ExcludeEntityTypes
+	}
+
 	// Use BM25 FTS when available, fall back to ILIKE
 	if d.hasFTS {
-		typeFilter := ""
+		extraFilter := ""
 		args := []interface{}{query, groupID}
 		if len(nodeTypes) > 0 {
 			placeholders := make([]string, len(nodeTypes))
@@ -942,14 +947,22 @@ func (d *DuckPGQDriver) SearchNodes(ctx context.Context, query, groupID string, 
 				placeholders[i] = "?"
 				args = append(args, nt)
 			}
-			typeFilter = fmt.Sprintf(" AND e.type IN (%s)", strings.Join(placeholders, ","))
+			extraFilter += fmt.Sprintf(" AND e.type IN (%s)", strings.Join(placeholders, ","))
+		}
+		if len(excludeEntityTypes) > 0 {
+			placeholders := make([]string, len(excludeEntityTypes))
+			for i, et := range excludeEntityTypes {
+				placeholders[i] = "?"
+				args = append(args, et)
+			}
+			extraFilter += fmt.Sprintf(" AND e.entity_type NOT IN (%s)", strings.Join(placeholders, ","))
 		}
 		args = append(args, limit)
 		sqlQuery := fmt.Sprintf(`SELECT e.uuid, e.group_id, e.type, e.name, e.content, e.summary, e.entity_type, e.episode_type, e.embedding, e.name_embedding, e.metadata, e.created_at, e.updated_at, e.valid_from, e.valid_to, e.source_ids, e.entity_edges, e.level
 			FROM (SELECT *, fts_main_entities.match_bm25(uuid, ?) AS score FROM entities) e
 			WHERE e.score IS NOT NULL AND e.group_id = ?%s
 			ORDER BY e.score DESC
-			LIMIT ?`, typeFilter)
+			LIMIT ?`, extraFilter)
 		return d.queryNodes(ctx, sqlQuery, args...)
 	}
 
@@ -963,6 +976,14 @@ func (d *DuckPGQDriver) SearchNodes(ctx context.Context, query, groupID string, 
 			args = append(args, nt)
 		}
 		whereClause += fmt.Sprintf(" AND type IN (%s)", strings.Join(placeholders, ","))
+	}
+	if len(excludeEntityTypes) > 0 {
+		placeholders := make([]string, len(excludeEntityTypes))
+		for i, et := range excludeEntityTypes {
+			placeholders[i] = "?"
+			args = append(args, et)
+		}
+		whereClause += fmt.Sprintf(" AND entity_type NOT IN (%s)", strings.Join(placeholders, ","))
 	}
 
 	args = append(args, limit)
