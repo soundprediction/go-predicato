@@ -38,6 +38,10 @@ type ClientConfig struct {
 
 	// Fallback marks this client as fallback (queried when no topic matches).
 	Fallback bool `json:"fallback"`
+
+	// ReadOnly opens the database in read-only mode.
+	// Topic graph databases should be read-only; user-specific DBs should be read-write.
+	ReadOnly bool `json:"read_only"`
 }
 
 // Validate checks if the client config has all required fields.
@@ -72,9 +76,15 @@ func (c *ClientConfig) CreateDriver(ctx context.Context) (driver.GraphDriver, er
 
 	switch GraphDbType(dbType) {
 	case GraphDbTypeDuckPGQ:
+		if c.ReadOnly {
+			dbPath += "?access_mode=READ_ONLY"
+		}
 		return driver.NewDuckPGQDriver(dbPath, embDim)
 	case GraphDbTypeLadybug:
-		return driver.NewLadybugDriver(dbPath, 1)
+		cfg := driver.DefaultLadybugDriverConfig()
+		cfg.DBPath = dbPath
+		cfg.ReadOnly = c.ReadOnly
+		return driver.NewLadybugDriverWithConfig(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported graph database type: %s", dbType)
 	}

@@ -264,6 +264,10 @@ type LadybugDriverConfig struct {
 	// Enable compression (defaults to true)
 	EnableCompression bool
 
+	// ReadOnly opens the database in read-only mode.
+	// Use this for topic graph databases that are only queried, not written to.
+	ReadOnly bool
+
 	// Verbose logging (defaults to false)
 	Verbose bool
 }
@@ -373,7 +377,7 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 		BufferPoolSize:    config.BufferPoolSize,
 		MaxNumThreads:     uint64(config.MaxConcurrentQueries),
 		EnableCompression: config.EnableCompression,
-		ReadOnly:          false,
+		ReadOnly:          config.ReadOnly,
 		MaxDbSize:         config.MaxDbSize,
 	}
 

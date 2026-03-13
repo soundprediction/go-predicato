@@ -189,13 +189,19 @@ func (pm *Manager) GetClientConfigs() []ClientConfig {
 }
 
 // InitializeAllClients eagerly initializes all configured clients.
-func (pm *Manager) InitializeAllClients() error {
+// Errors are logged but do not stop initialization of remaining clients.
+// Returns the number of successfully initialized clients.
+func (pm *Manager) InitializeAllClients() (int, int) {
+	ok, fail := 0, 0
 	for _, cfg := range pm.configs {
 		if _, err := pm.GetClient(cfg.Name); err != nil {
-			return fmt.Errorf("failed to initialize client %q: %w", cfg.Name, err)
+			pm.logger.Warn("Failed to initialize client", "name", cfg.Name, "error", err)
+			fail++
+		} else {
+			ok++
 		}
 	}
-	return nil
+	return ok, fail
 }
 
 // Close closes all initialized clients and their drivers.

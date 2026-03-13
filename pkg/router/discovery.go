@@ -54,17 +54,27 @@ func DiscoverTopicGraphs(dir string) ([]ClientConfig, map[string]string, error) 
 
 		keywords, routingText := parseTopicDescriptor(string(mdContent))
 
+		// Try to read group_id from companion .yaml file
+		groupID := "default"
+		yamlPath := filepath.Join(absDir, slug+".yaml")
+		if yamlContent, err := os.ReadFile(yamlPath); err == nil {
+			if gid := parseYAMLGroupID(string(yamlContent)); gid != "" {
+				groupID = gid
+			}
+		}
+
 		graphDbMap := map[string]any{
 			"type":    string(dbType),
 			"db_path": dbPath,
 		}
 
 		cfg := ClientConfig{
-			Name:    slug,
-			GroupID: "default",
-			Topics:  keywords,
-			GraphDb: graphDbMap,
-			Default: firstClient,
+			Name:     slug,
+			GroupID:  groupID,
+			Topics:   keywords,
+			GraphDb:  graphDbMap,
+			Default:  firstClient,
+			ReadOnly: true,
 		}
 
 		configs = append(configs, cfg)
@@ -165,6 +175,18 @@ func parseTopicDescriptor(content string) (keywords []string, routingText string
 	routingText = strings.Join(parts, " ")
 
 	return keywords, routingText
+}
+
+// parseYAMLGroupID extracts group_id from a simple YAML file without a full YAML parser.
+func parseYAMLGroupID(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "group_id:") {
+			val := strings.TrimPrefix(line, "group_id:")
+			return strings.TrimSpace(val)
+		}
+	}
+	return ""
 }
 
 // parseKeywords extracts keywords from a raw string.
