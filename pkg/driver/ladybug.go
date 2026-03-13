@@ -3255,7 +3255,15 @@ func (k *LadybugDriver) mapToEdge(data map[string]any) (*types.Edge, error) {
 		edge.SourceID = fmt.Sprintf("%v", sourceID)
 		edge.SourceNodeID = fmt.Sprintf("%v", sourceID)
 	}
+	if sourceID, ok := data["source_node_uuid"]; ok {
+		edge.SourceID = fmt.Sprintf("%v", sourceID)
+		edge.SourceNodeID = fmt.Sprintf("%v", sourceID)
+	}
 	if targetID, ok := data["target_id"]; ok {
+		edge.TargetID = fmt.Sprintf("%v", targetID)
+		edge.TargetNodeID = fmt.Sprintf("%v", targetID)
+	}
+	if targetID, ok := data["target_node_uuid"]; ok {
 		edge.TargetID = fmt.Sprintf("%v", targetID)
 		edge.TargetNodeID = fmt.Sprintf("%v", targetID)
 	}
