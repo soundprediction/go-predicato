@@ -23,6 +23,7 @@ type DuckPGQDriver struct {
 	db           *sql.DB
 	embeddingDim int
 	hasFTS       bool // true if FTS indices are available
+	readOnly     bool // true if opened in read-only mode
 }
 
 // DuckPGQDriverSession is a minimal session implementation.
@@ -48,9 +49,24 @@ func (s *DuckPGQDriverSession) ExecuteWrite(ctx context.Context, fn func(context
 }
 func (s *DuckPGQDriverSession) Provider() GraphProvider { return GraphProviderDuckPGQ }
 
+// DuckPGQDriverConfig holds configuration for creating a DuckPGQ driver.
+type DuckPGQDriverConfig struct {
+	URI          string
+	EmbeddingDim int
+	ReadOnly     bool
+}
+
 // NewDuckPGQDriver creates a new DuckDB+DuckPGQ-backed GraphDriver.
 func NewDuckPGQDriver(uri string, embeddingDim int) (*DuckPGQDriver, error) {
-	dsn := uri
+	return NewDuckPGQDriverWithConfig(DuckPGQDriverConfig{
+		URI:          uri,
+		EmbeddingDim: embeddingDim,
+	})
+}
+
+// NewDuckPGQDriverWithConfig creates a new DuckDB+DuckPGQ-backed GraphDriver with full configuration.
+func NewDuckPGQDriverWithConfig(config DuckPGQDriverConfig) (*DuckPGQDriver, error) {
+	dsn := config.URI
 	if dsn == ":memory:" {
 		dsn = ""
 	}
@@ -74,10 +90,12 @@ func NewDuckPGQDriver(uri string, embeddingDim int) (*DuckPGQDriver, error) {
 		_, _ = db.Exec(fmt.Sprintf("LOAD %s", ext.name))
 	}
 
-	d := &DuckPGQDriver{db: db, embeddingDim: embeddingDim}
-	if err := d.initSchema(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to init schema: %w", err)
+	d := &DuckPGQDriver{db: db, embeddingDim: config.EmbeddingDim, readOnly: config.ReadOnly}
+	if !config.ReadOnly {
+		if err := d.initSchema(); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to init schema: %w", err)
+		}
 	}
 
 	// Probe whether FTS indices exist
@@ -1047,7 +1065,7 @@ func (d *DuckPGQDriver) SearchEdges(ctx context.Context, query, groupID string, 
 }
 
 func (d *DuckPGQDriver) SearchNodesByEmbedding(ctx context.Context, embedding []float32, groupID string, limit int) ([]*types.Node, error) {
-	return d.searchNodesByVec(ctx, embedding, groupID, limit)
+	return d.searchNodesByVec(ctx, embedding, groupID, limit, nil)
 }
 
 func (d *DuckPGQDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []float32, groupID string, limit int) ([]*types.Edge, error) {
@@ -1056,10 +1074,14 @@ func (d *DuckPGQDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []
 
 func (d *DuckPGQDriver) SearchNodesByVector(ctx context.Context, vector []float32, groupID string, options *VectorSearchOptions) ([]*types.Node, error) {
 	limit := 10
-	if options != nil && options.Limit > 0 {
-		limit = options.Limit
+	var excludeEntityTypes []string
+	if options != nil {
+		if options.Limit > 0 {
+			limit = options.Limit
+		}
+		excludeEntityTypes = options.ExcludeEntityTypes
 	}
-	return d.searchNodesByVec(ctx, vector, groupID, limit)
+	return d.searchNodesByVec(ctx, vector, groupID, limit, excludeEntityTypes)
 }
 
 func (d *DuckPGQDriver) SearchEdgesByVector(ctx context.Context, vector []float32, groupID string, options *VectorSearchOptions) ([]*types.Edge, error) {
@@ -1070,17 +1092,30 @@ func (d *DuckPGQDriver) SearchEdgesByVector(ctx context.Context, vector []float3
 	return d.searchEdgesByVec(ctx, vector, groupID, limit)
 }
 
-func (d *DuckPGQDriver) searchNodesByVec(ctx context.Context, vector []float32, groupID string, limit int) ([]*types.Node, error) {
+func (d *DuckPGQDriver) searchNodesByVec(ctx context.Context, vector []float32, groupID string, limit int, excludeEntityTypes []string) ([]*types.Node, error) {
 	// SQL-based cosine similarity using native FLOAT[N] columns and vss extension.
 	floatCast := fmt.Sprintf("?::FLOAT[%d]", d.embeddingDim)
+	extraFilter := ""
+	// Args order must match ? order in SQL: group_id, then exclude types, then vector (in ORDER BY), then limit
+	var args []interface{}
+	args = append(args, groupID)
+	if len(excludeEntityTypes) > 0 {
+		placeholders := make([]string, len(excludeEntityTypes))
+		for i, et := range excludeEntityTypes {
+			placeholders[i] = "?"
+			args = append(args, et)
+		}
+		extraFilter = fmt.Sprintf(" AND entity_type NOT IN (%s)", strings.Join(placeholders, ","))
+	}
+	args = append(args, float32SliceToString(vector), limit)
 	sqlQuery := fmt.Sprintf(`SELECT uuid, group_id, type, name, content, summary, entity_type, episode_type,
 		embedding, name_embedding, metadata, created_at, updated_at, valid_from, valid_to,
 		source_ids, entity_edges, level
 		FROM entities
-		WHERE group_id = ? AND embedding IS NOT NULL
+		WHERE group_id = ? AND embedding IS NOT NULL%s
 		ORDER BY array_cosine_similarity(embedding, %s) DESC
-		LIMIT ?`, floatCast)
-	nodes, err := d.queryNodes(ctx, sqlQuery, groupID, float32SliceToString(vector), limit)
+		LIMIT ?`, extraFilter, floatCast)
+	nodes, err := d.queryNodes(ctx, sqlQuery, args...)
 	if err == nil && len(nodes) > 0 {
 		return nodes, nil
 	}
@@ -1540,6 +1575,9 @@ func (d *DuckPGQDriver) RemoveCommunities(ctx context.Context) error {
 // --- Admin Operations ---
 
 func (d *DuckPGQDriver) CreateIndices(ctx context.Context) error {
+	if d.readOnly {
+		return nil
+	}
 	// B-Tree indices for common lookups
 	btreeIndices := []string{
 		`CREATE INDEX IF NOT EXISTS idx_entities_group ON entities(group_id)`,

@@ -76,14 +76,20 @@ func (c *ClientConfig) CreateDriver(ctx context.Context) (driver.GraphDriver, er
 
 	switch GraphDbType(dbType) {
 	case GraphDbTypeDuckPGQ:
-		if c.ReadOnly {
-			dbPath += "?access_mode=READ_ONLY"
-		}
-		return driver.NewDuckPGQDriver(dbPath, embDim)
+		return driver.NewDuckPGQDriverWithConfig(driver.DuckPGQDriverConfig{
+			URI:          dbPath,
+			EmbeddingDim: embDim,
+			ReadOnly:     c.ReadOnly,
+		})
 	case GraphDbTypeLadybug:
 		cfg := driver.DefaultLadybugDriverConfig()
 		cfg.DBPath = dbPath
 		cfg.ReadOnly = c.ReadOnly
+		if c.ReadOnly {
+			// Use a smaller buffer pool for read-only topic graphs to allow
+			// many DBs to be open simultaneously (default 1GB is too much × N DBs).
+			cfg.BufferPoolSize = 256 * 1024 * 1024 // 256MB
+		}
 		return driver.NewLadybugDriverWithConfig(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported graph database type: %s", dbType)

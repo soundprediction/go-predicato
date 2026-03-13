@@ -17,8 +17,10 @@ import (
 	"github.com/soundprediction/predicato/pkg/types"
 )
 
+const defaultMaxOpenClients = 10
+
 // Manager manages multiple predicato clients for different knowledge domains.
-// It provides lazy initialization, thread-safe access, and unified lifecycle management.
+// It provides lazy initialization, thread-safe access, LRU eviction, and unified lifecycle management.
 type Manager struct {
 	sharedEmbedder embedder.Client
 	clients        map[string]*predicato.Client
@@ -28,11 +30,15 @@ type Manager struct {
 	// Can be nil for search-only use cases.
 	sharedNLPClient nlp.Client
 
+	// LRU tracking: ordered list of client names, most recently used at the end.
+	lruOrder       []string
+	maxOpenClients int
+
 	logger             *slog.Logger
 	defaultClientName  string
 	fallbackClientName string
 	configs            []ClientConfig
-	mu                 sync.RWMutex
+	mu                 sync.Mutex
 }
 
 // NewManager creates a new Manager with the given configuration.
@@ -42,6 +48,19 @@ func NewManager(
 	nlpClient nlp.Client,
 	sharedEmbedder embedder.Client,
 	logger *slog.Logger,
+) *Manager {
+	return NewManagerWithOptions(configs, nlpClient, sharedEmbedder, logger, defaultMaxOpenClients)
+}
+
+// NewManagerWithOptions creates a new Manager with the given configuration and max open clients limit.
+// maxOpenClients controls how many graph databases can be open simultaneously.
+// Set to 0 for unlimited (not recommended for ladybug backends with many DBs).
+func NewManagerWithOptions(
+	configs []ClientConfig,
+	nlpClient nlp.Client,
+	sharedEmbedder embedder.Client,
+	logger *slog.Logger,
+	maxOpenClients int,
 ) *Manager {
 	if logger == nil {
 		logger = slog.Default()
@@ -54,6 +73,7 @@ func NewManager(
 		sharedNLPClient: nlpClient,
 		sharedEmbedder:  sharedEmbedder,
 		logger:          logger,
+		maxOpenClients:  maxOpenClients,
 	}
 
 	for _, cfg := range configs {
@@ -73,6 +93,7 @@ func NewManager(
 		"num_clients", len(configs),
 		"default_client", pm.defaultClientName,
 		"fallback_client", pm.fallbackClientName,
+		"max_open_clients", maxOpenClients,
 	)
 
 	return pm
@@ -80,19 +101,13 @@ func NewManager(
 
 // GetClient returns the predicato client with the given name.
 // If the client hasn't been initialized yet, it will be lazily initialized.
+// If the max open clients limit is reached, the least recently used client is evicted.
 func (pm *Manager) GetClient(name string) (*predicato.Client, error) {
-	pm.mu.RLock()
-	client, exists := pm.clients[name]
-	pm.mu.RUnlock()
-
-	if exists {
-		return client, nil
-	}
-
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	if client, exists = pm.clients[name]; exists {
+	if client, exists := pm.clients[name]; exists {
+		pm.touchLRU(name)
 		return client, nil
 	}
 
@@ -108,15 +123,60 @@ func (pm *Manager) GetClient(name string) (*predicato.Client, error) {
 		return nil, fmt.Errorf("client %q not found in configuration", name)
 	}
 
+	// Evict LRU client if at capacity
+	if pm.maxOpenClients > 0 && len(pm.clients) >= pm.maxOpenClients {
+		pm.evictLRU()
+	}
+
 	client, err := pm.initializeClient(clientConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize client %q: %w", name, err)
 	}
 
 	pm.clients[name] = client
-	pm.logger.Info("Predicato client initialized", "name", name, "group_id", clientConfig.GroupID)
+	pm.lruOrder = append(pm.lruOrder, name)
+	pm.logger.Info("Predicato client initialized", "name", name, "group_id", clientConfig.GroupID,
+		"open_clients", len(pm.clients))
 
 	return client, nil
+}
+
+// touchLRU moves a name to the end of the LRU list (most recently used).
+func (pm *Manager) touchLRU(name string) {
+	for i, n := range pm.lruOrder {
+		if n == name {
+			pm.lruOrder = append(pm.lruOrder[:i], pm.lruOrder[i+1:]...)
+			pm.lruOrder = append(pm.lruOrder, name)
+			return
+		}
+	}
+	pm.lruOrder = append(pm.lruOrder, name)
+}
+
+// evictLRU closes and removes the least recently used client.
+func (pm *Manager) evictLRU() {
+	if len(pm.lruOrder) == 0 {
+		return
+	}
+
+	evictName := pm.lruOrder[0]
+	pm.lruOrder = pm.lruOrder[1:]
+
+	pm.logger.Info("Evicting LRU client", "name", evictName, "open_clients", len(pm.clients))
+
+	ctx := context.Background()
+	if client, ok := pm.clients[evictName]; ok {
+		if err := client.Close(ctx); err != nil {
+			pm.logger.Warn("Error closing evicted client", "name", evictName, "error", err)
+		}
+		delete(pm.clients, evictName)
+	}
+	if d, ok := pm.drivers[evictName]; ok {
+		if err := d.Close(); err != nil {
+			pm.logger.Warn("Error closing evicted driver", "name", evictName, "error", err)
+		}
+		delete(pm.drivers, evictName)
+	}
 }
 
 // initializeClient creates a new predicato client from the given config.
@@ -130,10 +190,12 @@ func (pm *Manager) initializeClient(cfg *ClientConfig) (*predicato.Client, error
 
 	pm.drivers[cfg.Name] = graphDriver
 
-	if err := graphDriver.CreateIndices(ctx); err != nil {
-		_ = graphDriver.Close()
-		delete(pm.drivers, cfg.Name)
-		return nil, fmt.Errorf("failed to create indices: %w", err)
+	if !cfg.ReadOnly {
+		if err := graphDriver.CreateIndices(ctx); err != nil {
+			_ = graphDriver.Close()
+			delete(pm.drivers, cfg.Name)
+			return nil, fmt.Errorf("failed to create indices: %w", err)
+		}
 	}
 
 	groupID := cfg.GroupID
@@ -175,8 +237,8 @@ func (pm *Manager) GetDefaultClient() (*predicato.Client, error) {
 
 // GetAllClients returns all initialized clients.
 func (pm *Manager) GetAllClients() map[string]*predicato.Client {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 
 	result := make(map[string]*predicato.Client, len(pm.clients))
 	maps.Copy(result, pm.clients)
@@ -233,6 +295,7 @@ func (pm *Manager) Close(ctx context.Context) error {
 
 	pm.clients = make(map[string]*predicato.Client)
 	pm.drivers = make(map[string]driver.GraphDriver)
+	pm.lruOrder = nil
 
 	pm.logger.Info("Manager closed")
 	return firstErr
@@ -252,8 +315,8 @@ type ClientStatus struct {
 
 // GetClientStatuses returns the status of all configured clients.
 func (pm *Manager) GetClientStatuses() []ClientStatus {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 
 	statuses := make([]ClientStatus, 0, len(pm.configs))
 	for _, cfg := range pm.configs {

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,27 +15,6 @@ import (
 	"github.com/soundprediction/predicato/pkg/router"
 	"github.com/soundprediction/predicato/pkg/types"
 )
-
-type queryResult struct {
-	query        string
-	expectTopic  string
-	routedTo     []string
-	topMatches   []router.TopicMatch
-	numNodes     int
-	numEdges     int
-	routeTime    time.Duration
-	searchTime   time.Duration
-	topNodes     []nodeInfo
-	errors       map[string]error
-	usedFallback bool
-	usedDefault  bool
-}
-
-type nodeInfo struct {
-	name       string
-	entityType string
-	sources    []string
-}
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -82,8 +62,24 @@ func main() {
 		{"ladybug", "/data/topic-graphs/ladybug"},
 	}
 
-	// Collect all results for comparison
-	allResults := make(map[string][]queryResult)
+	// Open CSV file
+	csvFile, err := os.Create(os.ExpandEnv("$HOME/router-test-results.csv"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create CSV: %v\n", err)
+		os.Exit(1)
+	}
+	defer csvFile.Close()
+	w := csv.NewWriter(csvFile)
+	defer w.Flush()
+
+	// CSV header
+	w.Write([]string{
+		"backend", "query_num", "query", "expected_topic", "routed_to",
+		"route_ms", "search_ms", "num_nodes", "num_edges",
+		"node_name", "node_entity_type", "node_summary",
+		"edge_name", "edge_fact", "edge_source", "edge_target",
+		"errors",
+	})
 
 	for _, backend := range backends {
 		fmt.Printf("\n%s\n", strings.Repeat("=", 80))
@@ -117,13 +113,12 @@ func main() {
 		}
 		fmt.Printf("Classifier initialized in %v (embedded %d topic vectors)\n", classifierElapsed, len(configs))
 
-		mgr := router.NewManager(configs, nil, emb, logger)
-
-		// Eagerly initialize all clients to avoid concurrent DB opens
-		fmt.Print("Initializing all clients...")
-		initStart := time.Now()
-		ok, fail := mgr.InitializeAllClients()
-		fmt.Printf(" done in %v (%d ok, %d fail)\n", time.Since(initStart), ok, fail)
+		// Use LRU manager with max 5 open clients (ladybug can only handle ~1 at a time safely)
+		maxOpen := 38 // duckpgq can handle many
+		if backend.name == "ladybug" {
+			maxOpen = 5
+		}
+		mgr := router.NewManagerWithOptions(configs, nil, emb, logger, maxOpen)
 
 		rtr := router.NewRouter(mgr, classifier, routerConfig, logger)
 
@@ -132,6 +127,7 @@ func main() {
 			CenterNodeDistance: 2,
 			IncludeEdges:       true,
 			Rerank:             false,
+			ExcludeEntityTypes: []string{"CLINICAL_STUDY"},
 			NodeConfig: &types.NodeSearchConfig{
 				SearchMethods: []string{"cosine_similarity", "bm25"},
 				Reranker:      "rrf",
@@ -143,38 +139,35 @@ func main() {
 		}
 
 		ctx := context.Background()
-		var results []queryResult
 
 		for i, q := range queries {
-			qr := queryResult{
-				query:       q.query,
-				expectTopic: q.expectTopic,
-			}
-
-			fmt.Printf("--- Query %d: %q\n", i+1, q.query)
+			qNum := i + 1
+			fmt.Printf("--- Query %d: %q\n", qNum, q.query)
 			fmt.Printf("    Expected: %s\n", q.expectTopic)
 
 			// Route
 			routeStart := time.Now()
 			info, err := rtr.GetRouteInfo(ctx, q.query)
-			qr.routeTime = time.Since(routeStart)
+			routeTime := time.Since(routeStart)
 
 			if err != nil {
 				fmt.Printf("    ROUTE ERROR: %v\n\n", err)
-				results = append(results, qr)
+				w.Write([]string{
+					backend.name, fmt.Sprint(qNum), q.query, q.expectTopic, "",
+					fmt.Sprint(routeTime.Milliseconds()), "", "", "",
+					"", "", "",
+					"", "", "", "",
+					err.Error(),
+				})
 				continue
 			}
 
-			qr.routedTo = info.ClientNames
-			qr.topMatches = info.TopicMatches
-			qr.usedFallback = info.UsedFallback
-			qr.usedDefault = info.UsedDefault
-
+			routedTo := strings.Join(info.ClientNames, ",")
 			topN := 3
 			if len(info.TopicMatches) < topN {
 				topN = len(info.TopicMatches)
 			}
-			fmt.Printf("    Routed to: %v (route: %v)\n", info.ClientNames, qr.routeTime)
+			fmt.Printf("    Routed to: %v (route: %v)\n", info.ClientNames, routeTime)
 			for j := 0; j < topN; j++ {
 				m := info.TopicMatches[j]
 				fmt.Printf("      #%d %s (confidence=%.4f)\n", j+1, m.ClientName, m.Confidence)
@@ -183,22 +176,32 @@ func main() {
 			// Search
 			searchStart := time.Now()
 			merged, err := rtr.SearchWithClients(ctx, q.query, info.ClientNames, searchConfig)
-			qr.searchTime = time.Since(searchStart)
+			searchTime := time.Since(searchStart)
 
 			if err != nil {
 				fmt.Printf("    SEARCH ERROR: %v\n\n", err)
-				results = append(results, qr)
+				w.Write([]string{
+					backend.name, fmt.Sprint(qNum), q.query, q.expectTopic, routedTo,
+					fmt.Sprint(routeTime.Milliseconds()), fmt.Sprint(searchTime.Milliseconds()), "", "",
+					"", "", "",
+					"", "", "", "",
+					err.Error(),
+				})
 				continue
 			}
 
-			qr.numNodes = len(merged.Nodes)
-			qr.numEdges = len(merged.Edges)
-			qr.errors = merged.Errors
-
 			fmt.Printf("    Results: %d nodes, %d edges (search: %v)\n",
-				qr.numNodes, qr.numEdges, qr.searchTime)
+				len(merged.Nodes), len(merged.Edges), searchTime)
 
-			// Top nodes
+			// Collect errors
+			var errStrs []string
+			for clientName, searchErr := range merged.Errors {
+				errStrs = append(errStrs, fmt.Sprintf("%s: %v", clientName, searchErr))
+				fmt.Printf("    ERROR[%s]: %v\n", clientName, searchErr)
+			}
+			errStr := strings.Join(errStrs, "; ")
+
+			// Print top nodes
 			limit := 5
 			if len(merged.Nodes) < limit {
 				limit = len(merged.Nodes)
@@ -215,87 +218,72 @@ func main() {
 				}
 				src := merged.Sources[n.Uuid]
 				fmt.Printf("      %d. [%s] %s (from: %s)\n", j+1, entityType, name, strings.Join(src, ","))
-				qr.topNodes = append(qr.topNodes, nodeInfo{
-					name:       n.Name,
-					entityType: entityType,
-					sources:    src,
+			}
+
+			// Print top edges
+			edgeLimit := 5
+			if len(merged.Edges) < edgeLimit {
+				edgeLimit = len(merged.Edges)
+			}
+			for j := 0; j < edgeLimit; j++ {
+				e := merged.Edges[j]
+				fact := e.Fact
+				if len(fact) > 80 {
+					fact = fact[:80] + "..."
+				}
+				fmt.Printf("      E%d. [%s] %s\n", j+1, e.Name, fact)
+			}
+
+			// Write node rows to CSV
+			for _, n := range merged.Nodes {
+				entityType := n.EntityType
+				if entityType == "" {
+					entityType = string(n.Type)
+				}
+				summary := n.Summary
+				if summary == "" {
+					summary = n.Content
+				}
+				w.Write([]string{
+					backend.name, fmt.Sprint(qNum), q.query, q.expectTopic, routedTo,
+					fmt.Sprint(routeTime.Milliseconds()), fmt.Sprint(searchTime.Milliseconds()),
+					fmt.Sprint(len(merged.Nodes)), fmt.Sprint(len(merged.Edges)),
+					n.Name, entityType, summary,
+					"", "", "", "",
+					errStr,
+				})
+			}
+			// Write edge rows to CSV
+			for _, e := range merged.Edges {
+				w.Write([]string{
+					backend.name, fmt.Sprint(qNum), q.query, q.expectTopic, routedTo,
+					fmt.Sprint(routeTime.Milliseconds()), fmt.Sprint(searchTime.Milliseconds()),
+					fmt.Sprint(len(merged.Nodes)), fmt.Sprint(len(merged.Edges)),
+					"", "", "",
+					e.Name, e.Fact, e.SourceNodeID, e.TargetNodeID,
+					errStr,
 				})
 			}
 
-			for clientName, searchErr := range merged.Errors {
-				fmt.Printf("    ERROR[%s]: %v\n", clientName, searchErr)
+			// If no results at all, write one row for the query
+			if len(merged.Nodes) == 0 && len(merged.Edges) == 0 {
+				w.Write([]string{
+					backend.name, fmt.Sprint(qNum), q.query, q.expectTopic, routedTo,
+					fmt.Sprint(routeTime.Milliseconds()), fmt.Sprint(searchTime.Milliseconds()),
+					"0", "0",
+					"", "", "",
+					"", "", "", "",
+					errStr,
+				})
 			}
 
 			fmt.Println()
-			results = append(results, qr)
 		}
-
-		allResults[backend.name] = results
 
 		if err := rtr.Close(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "Close error: %v\n", err)
 		}
 	}
 
-	// Print comparison summary
-	fmt.Printf("\n%s\n", strings.Repeat("=", 80))
-	fmt.Println("COMPARISON SUMMARY")
-	fmt.Printf("%s\n\n", strings.Repeat("=", 80))
-
-	duckResults := allResults["duckpgq"]
-	lbugResults := allResults["ladybug"]
-
-	if len(duckResults) == 0 || len(lbugResults) == 0 {
-		fmt.Println("(skipped — not all backends completed)")
-		return
-	}
-
-	fmt.Printf("%-4s  %-55s  %-12s  %-12s  %-8s  %-8s  %-10s  %-10s\n",
-		"#", "Query", "Duck Nodes", "Lbug Nodes", "Duck ms", "Lbug ms", "Duck Route", "Lbug Route")
-	fmt.Println(strings.Repeat("-", 140))
-
-	var totalDuckSearch, totalLbugSearch time.Duration
-	var totalDuckNodes, totalLbugNodes int
-
-	for i := range queries {
-		dr := duckResults[i]
-		lr := lbugResults[i]
-
-		dRoute := strings.Join(dr.routedTo, ",")
-		lRoute := strings.Join(lr.routedTo, ",")
-		if len(dRoute) > 10 {
-			dRoute = dRoute[:10]
-		}
-		if len(lRoute) > 10 {
-			lRoute = lRoute[:10]
-		}
-
-		q := dr.query
-		if len(q) > 55 {
-			q = q[:52] + "..."
-		}
-
-		fmt.Printf("%-4d  %-55s  %-12d  %-12d  %-8d  %-8d  %-10s  %-10s\n",
-			i+1, q, dr.numNodes, lr.numNodes,
-			dr.searchTime.Milliseconds(), lr.searchTime.Milliseconds(),
-			dRoute, lRoute)
-
-		totalDuckSearch += dr.searchTime
-		totalLbugSearch += lr.searchTime
-		totalDuckNodes += dr.numNodes
-		totalLbugNodes += lr.numNodes
-	}
-
-	n := len(queries)
-	fmt.Println(strings.Repeat("-", 140))
-	fmt.Printf("%-4s  %-55s  %-12d  %-12d  %-8d  %-8d\n",
-		"AVG", "",
-		totalDuckNodes/n, totalLbugNodes/n,
-		totalDuckSearch.Milliseconds()/int64(n),
-		totalLbugSearch.Milliseconds()/int64(n))
-	fmt.Printf("%-4s  %-55s  %-12d  %-12d  %-8d  %-8d\n",
-		"TOT", "",
-		totalDuckNodes, totalLbugNodes,
-		totalDuckSearch.Milliseconds(),
-		totalLbugSearch.Milliseconds())
+	fmt.Printf("\nCSV written to ~/router-test-results.csv\n")
 }

@@ -146,6 +146,8 @@ type SearchConfig struct {
 	NodeConfig *NodeSearchConfig
 	// EdgeConfig holds configuration for edge search.
 	EdgeConfig *EdgeSearchConfig
+	// ExcludeEntityTypes filters out nodes with these entity types (e.g. "CLINICAL_STUDY").
+	ExcludeEntityTypes []string
 	// Limit is the maximum number of results to return.
 	Limit int
 	// CenterNodeDistance is the maximum distance from center nodes.
