@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/soundprediction/predicato/pkg/community"
+	"github.com/soundprediction/predicato/pkg/crossencoder"
 	"github.com/soundprediction/predicato/pkg/driver"
 	"github.com/soundprediction/predicato/pkg/embedder"
 	"github.com/soundprediction/predicato/pkg/factstore"
@@ -299,6 +300,11 @@ func NewClient(driver driver.GraphDriver, nlProcessor nlp.Client, embedderClient
 		factStore:   factStore,
 		nlpModels:   config.NlpModels,
 	}, nil
+}
+
+// SetCrossEncoder sets the cross-encoder reranker on the searcher.
+func (c *Client) SetCrossEncoder(ce crossencoder.Client) {
+	c.searcher.SetCrossEncoder(ce)
 }
 
 // GetDriver returns the underlying graph driver

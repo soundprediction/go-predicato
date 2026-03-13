@@ -128,21 +128,23 @@ type QueryOptions struct {
 
 // SearchOptions holds options for text-based search operations.
 type SearchOptions struct {
-	TimeRange   *types.TimeRange `json:"time_range,omitempty"`
-	NodeTypes   []types.NodeType `json:"node_types,omitempty"`
-	EdgeTypes   []types.EdgeType `json:"edge_types,omitempty"`
-	Limit       int              `json:"limit"`
-	UseFullText bool             `json:"use_fulltext"`
-	ExactMatch  bool             `json:"exact_match"`
+	TimeRange          *types.TimeRange `json:"time_range,omitempty"`
+	NodeTypes          []types.NodeType `json:"node_types,omitempty"`
+	EdgeTypes          []types.EdgeType `json:"edge_types,omitempty"`
+	ExcludeEntityTypes []string         `json:"exclude_entity_types,omitempty"` // Entity types to exclude (e.g. "CLINICAL_STUDY")
+	Limit              int              `json:"limit"`
+	UseFullText        bool             `json:"use_fulltext"`
+	ExactMatch         bool             `json:"exact_match"`
 }
 
 // VectorSearchOptions holds options for vector similarity search operations.
 type VectorSearchOptions struct {
-	TimeRange *types.TimeRange `json:"time_range,omitempty"`
-	NodeTypes []types.NodeType `json:"node_types,omitempty"`
-	EdgeTypes []types.EdgeType `json:"edge_types,omitempty"`
-	Limit     int              `json:"limit"`
-	MinScore  float64          `json:"min_score"`
+	TimeRange          *types.TimeRange `json:"time_range,omitempty"`
+	NodeTypes          []types.NodeType `json:"node_types,omitempty"`
+	EdgeTypes          []types.EdgeType `json:"edge_types,omitempty"`
+	ExcludeEntityTypes []string         `json:"exclude_entity_types,omitempty"` // Entity types to exclude (e.g. "CLINICAL_STUDY")
+	Limit              int              `json:"limit"`
+	MinScore           float64          `json:"min_score"`
 }
 
 // ParquetTopicFilter restricts graph loading to triples/rules semantically similar

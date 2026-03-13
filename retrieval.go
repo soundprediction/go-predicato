@@ -63,7 +63,9 @@ func (c *Client) Search(ctx context.Context, query string, config *types.SearchC
 	}
 
 	// Create search filters
-	filters := &search.SearchFilters{}
+	filters := &search.SearchFilters{
+		ExcludeEntityTypes: config.ExcludeEntityTypes,
+	}
 
 	// Perform the search
 	result, err := c.searcher.Search(ctx, query, searchConfig, filters, c.config.GroupID)

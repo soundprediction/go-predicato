@@ -264,6 +264,10 @@ type LadybugDriverConfig struct {
 	// Enable compression (defaults to true)
 	EnableCompression bool
 
+	// ReadOnly opens the database in read-only mode.
+	// Use this for topic graph databases that are only queried, not written to.
+	ReadOnly bool
+
 	// Verbose logging (defaults to false)
 	Verbose bool
 }
@@ -373,7 +377,7 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 		BufferPoolSize:    config.BufferPoolSize,
 		MaxNumThreads:     uint64(config.MaxConcurrentQueries),
 		EnableCompression: config.EnableCompression,
-		ReadOnly:          false,
+		ReadOnly:          config.ReadOnly,
 		MaxDbSize:         config.MaxDbSize,
 	}
 
@@ -1642,6 +1646,18 @@ func (k *LadybugDriver) SearchNodes(ctx context.Context, query, groupID string, 
 		`
 	}
 
+	// Over-fetch if we need to filter by entity type
+	excludeTypes := map[string]bool{}
+	if options != nil {
+		for _, et := range options.ExcludeEntityTypes {
+			excludeTypes[et] = true
+		}
+	}
+	if len(excludeTypes) > 0 {
+		// Fetch extra to compensate for filtered results
+		params["limit"] = limit * 3
+	}
+
 	result, _, _, err := k.ExecuteQuery(ctx, searchQuery, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search nodes: %w", err)
@@ -1652,7 +1668,13 @@ func (k *LadybugDriver) SearchNodes(ctx context.Context, query, groupID string, 
 		for _, row := range resultList {
 			node, err := k.mapToNode(row, "Entity")
 			if err == nil {
+				if excludeTypes[node.EntityType] {
+					continue
+				}
 				nodes = append(nodes, node)
+				if len(nodes) >= limit {
+					break
+				}
 			}
 		}
 	}
@@ -1731,19 +1753,36 @@ func (k *LadybugDriver) SearchNodesByVector(ctx context.Context, vector []float3
 		limit = options.Limit
 	}
 
-	// Use the existing SearchNodesByEmbedding method which already handles similarity scoring
-	// The ladybug query already includes the score in the results
-	nodes, err := k.SearchNodesByEmbedding(ctx, vector, groupID, limit)
+	// Over-fetch if we need to filter by entity type
+	excludeTypes := map[string]bool{}
+	if options != nil {
+		for _, et := range options.ExcludeEntityTypes {
+			excludeTypes[et] = true
+		}
+	}
+	fetchLimit := limit
+	if len(excludeTypes) > 0 {
+		fetchLimit = limit * 3
+	}
+
+	nodes, err := k.SearchNodesByEmbedding(ctx, vector, groupID, fetchLimit)
 	if err != nil {
 		return nil, err
 	}
 
-	// Note: MinScore filtering is already handled in SearchNodesByEmbedding via the WHERE score > 0.0 clause
-	// Additional filtering by options.MinScore could be added here if needed in the future.
-	// The score is already computed in SearchNodesByEmbedding, but we need to recompute
-	// for filtering since we don't store it in the Node struct.
-	// For now, we rely on the database-level filtering.
-	_ = options // Acknowledge options for future MinScore filtering
+	if len(excludeTypes) > 0 {
+		filtered := make([]*types.Node, 0, limit)
+		for _, n := range nodes {
+			if excludeTypes[n.EntityType] {
+				continue
+			}
+			filtered = append(filtered, n)
+			if len(filtered) >= limit {
+				break
+			}
+		}
+		return filtered, nil
+	}
 
 	return nodes, nil
 }
@@ -3255,7 +3294,15 @@ func (k *LadybugDriver) mapToEdge(data map[string]any) (*types.Edge, error) {
 		edge.SourceID = fmt.Sprintf("%v", sourceID)
 		edge.SourceNodeID = fmt.Sprintf("%v", sourceID)
 	}
+	if sourceID, ok := data["source_node_uuid"]; ok {
+		edge.SourceID = fmt.Sprintf("%v", sourceID)
+		edge.SourceNodeID = fmt.Sprintf("%v", sourceID)
+	}
 	if targetID, ok := data["target_id"]; ok {
+		edge.TargetID = fmt.Sprintf("%v", targetID)
+		edge.TargetNodeID = fmt.Sprintf("%v", targetID)
+	}
+	if targetID, ok := data["target_node_uuid"]; ok {
 		edge.TargetID = fmt.Sprintf("%v", targetID)
 		edge.TargetNodeID = fmt.Sprintf("%v", targetID)
 	}

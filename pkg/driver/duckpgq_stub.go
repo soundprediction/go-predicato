@@ -13,11 +13,23 @@ import (
 // ErrDuckPGQCGORequired is returned when DuckPGQ operations are called without CGO support
 var ErrDuckPGQCGORequired = errors.New("DuckPGQ driver requires CGO; build with CGO_ENABLED=1")
 
+// DuckPGQDriverConfig holds configuration for creating a DuckPGQ driver.
+type DuckPGQDriverConfig struct {
+	URI          string
+	EmbeddingDim int
+	ReadOnly     bool
+}
+
 // DuckPGQDriver is a stub implementation when CGO is disabled.
 type DuckPGQDriver struct{}
 
 // NewDuckPGQDriver returns an error when CGO is disabled
 func NewDuckPGQDriver(uri string, embeddingDim int) (*DuckPGQDriver, error) {
+	return nil, ErrDuckPGQCGORequired
+}
+
+// NewDuckPGQDriverWithConfig returns an error when CGO is disabled
+func NewDuckPGQDriverWithConfig(config DuckPGQDriverConfig) (*DuckPGQDriver, error) {
 	return nil, ErrDuckPGQCGORequired
 }
 

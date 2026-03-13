@@ -71,11 +71,12 @@ type CommunitySearchConfig struct {
 }
 
 type SearchFilters struct {
-	TimeRange   *types.TimeRange `json:"time_range,omitempty"`
-	GroupIDs    []string         `json:"group_ids,omitempty"`
-	NodeTypes   []types.NodeType `json:"node_types,omitempty"`
-	EdgeTypes   []types.EdgeType `json:"edge_types,omitempty"`
-	EntityTypes []string         `json:"entity_types,omitempty"`
+	TimeRange          *types.TimeRange `json:"time_range,omitempty"`
+	GroupIDs           []string         `json:"group_ids,omitempty"`
+	NodeTypes          []types.NodeType `json:"node_types,omitempty"`
+	EdgeTypes          []types.EdgeType `json:"edge_types,omitempty"`
+	EntityTypes        []string         `json:"entity_types,omitempty"`
+	ExcludeEntityTypes []string         `json:"exclude_entity_types,omitempty"`
 }
 
 type HybridSearchResult struct {
@@ -361,18 +362,20 @@ func (s *Searcher) nodeFulltextSearch(ctx context.Context, query string, filters
 	// This would use the driver's fulltext search capabilities
 	// For now, return a basic implementation
 	return s.driver.SearchNodes(ctx, query, groupID, &driver.SearchOptions{
-		Limit:       limit,
-		UseFullText: true,
-		NodeTypes:   filters.NodeTypes,
+		Limit:              limit,
+		UseFullText:        true,
+		NodeTypes:          filters.NodeTypes,
+		ExcludeEntityTypes: filters.ExcludeEntityTypes,
 	})
 }
 
 func (s *Searcher) nodeSimilaritySearch(ctx context.Context, queryVector []float32, filters *SearchFilters, groupID string, limit int, minScore float64) ([]*types.Node, error) {
 	// This would use vector similarity search
 	return s.driver.SearchNodesByVector(ctx, queryVector, groupID, &driver.VectorSearchOptions{
-		Limit:     limit,
-		MinScore:  minScore,
-		NodeTypes: filters.NodeTypes,
+		Limit:              limit,
+		MinScore:           minScore,
+		NodeTypes:          filters.NodeTypes,
+		ExcludeEntityTypes: filters.ExcludeEntityTypes,
 	})
 }
 
