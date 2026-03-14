@@ -601,7 +601,16 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		allExtractedNodes = append(allExtractedNodes, tn)
 	}
 
-	// 4. Reconstruct Edges from Triples
+	// 4. Filter low-value triples before graph promotion
+	extTriples, removedTriples := types.FilterLowValueTriples(extTriples)
+	if len(removedTriples) > 0 {
+		c.logger.Info("Filtered low-value triples during promotion",
+			"source_id", sourceID,
+			"kept", len(extTriples),
+			"removed", len(removedTriples))
+	}
+
+	// 5. Reconstruct Edges from Triples
 	var allExtractedEdges []*types.Edge
 	for _, t := range extTriples {
 		var sUUID, tUUID string
@@ -635,7 +644,7 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 		}
 	}
 
-	// 4.5: Load and promote extracted rules
+	// 5.5: Load and promote extracted rules
 	extRules, err := c.factStore.GetExtractedRules(ctx, sourceID)
 	if err != nil {
 		c.logger.Warn("Failed to load extracted rules", "error", err)
@@ -1006,6 +1015,7 @@ func (c *Client) PromoteToGraphBatched(ctx context.Context, sourceID string, bat
 	}
 
 	// Phase 2: Upsert edges from triples in batches
+	var totalFiltered int64
 	for offset := 0; ; offset += batchSize {
 		extTriples, err := c.factStore.GetExtractedTriplesPaginated(ctx, sourceID, offset, batchSize)
 		if err != nil {
@@ -1014,6 +1024,10 @@ func (c *Client) PromoteToGraphBatched(ctx context.Context, sourceID string, bat
 		if len(extTriples) == 0 {
 			break
 		}
+
+		// Filter low-value triples before promotion
+		extTriples, removed := types.FilterLowValueTriples(extTriples)
+		totalFiltered += int64(len(removed))
 
 		graphEdges := make([]*types.Edge, 0, len(extTriples))
 		skipped := 0
@@ -1113,6 +1127,7 @@ func (c *Client) PromoteToGraphBatched(ctx context.Context, sourceID string, bat
 		"nodes", result.Nodes,
 		"edges", result.Edges,
 		"skipped_edges", result.SkippedEdges,
+		"filtered_low_value", totalFiltered,
 		"rules", result.Rules)
 
 	return result, nil

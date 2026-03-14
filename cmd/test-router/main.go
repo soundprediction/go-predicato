@@ -46,18 +46,36 @@ func main() {
 		query       string
 		expectTopic string
 	}{
-		{"What medications treat type 2 diabetes?", "diabetes-type2"},
-		{"How does metformin affect insulin resistance?", "diabetes-type2"},
-		{"What are the side effects of chemotherapy for breast cancer?", "breast-cancer"},
-		{"Tell me about BRCA1 gene mutations", "breast-cancer"},
-		{"What causes rheumatoid arthritis?", "autoimmune"},
-		{"How is lupus diagnosed?", "autoimmune"},
-		{"What vaccines are recommended for respiratory infections?", "respiratory-infections"},
-		{"Explain how statins lower cholesterol", "cardiovascular"},
-		{"What is the treatment for major depressive disorder?", "mental-health"},
-		{"How does ADHD medication work?", "mental-health"},
-		{"What are symptoms of irritable bowel syndrome?", "digestive-system"},
-		{"How is kidney failure treated?", "kidney-disease"},
+		// Cardiology & vascular
+		{"What are the warning signs of a heart attack?", "cardiovascular"},
+		{"How do blood thinners prevent stroke?", "cardiovascular"},
+		// Oncology
+		{"What is immunotherapy and how does it fight cancer?", "cancer"},
+		{"What screening tests detect colorectal cancer early?", "colorectal-cancer"},
+		// Infectious disease
+		{"How do antibiotics become resistant to bacteria?", "infectious-disease"},
+		{"What is the treatment for tuberculosis?", "infectious-disease"},
+		// Neurology & mental health
+		{"What are the early signs of Alzheimer's disease?", "serious-mental-illness"},
+		{"How do SSRIs work for anxiety disorders?", "depression-anxiety"},
+		// Endocrine & metabolic
+		{"What happens during diabetic ketoacidosis?", "diabetes-type2"},
+		{"How is hypothyroidism diagnosed and treated?", "pcos"},
+		// Respiratory
+		{"What triggers an asthma attack?", "respiratory-infections"},
+		{"How does COPD progress over time?", "respiratory-infections"},
+		// Musculoskeletal & pain
+		{"What is the difference between osteoarthritis and rheumatoid arthritis?", "musculoskeletal"},
+		{"How do opioids relieve pain and why are they addictive?", "pain"},
+		// Dermatology & allergy
+		{"What causes eczema flare-ups?", "dermatology"},
+		{"How do antihistamines work for allergic reactions?", "allergy-immunology"},
+		// Gastro & hepatology
+		{"What are the complications of Crohn's disease?", "gastrointestinal"},
+		{"How does hepatitis C damage the liver?", "liver-disease"},
+		// Renal & urological
+		{"What causes chronic kidney disease?", "kidney-urinary"},
+		{"How are kidney stones removed?", "urinary-tract"},
 	}
 
 	backends := []struct {
@@ -102,22 +120,22 @@ func main() {
 		}
 		fmt.Printf("Discovered %d topic graphs in %v\n", len(configs), discoverElapsed)
 
-		// Create embedding-based classifier
+		// Create cross-encoder-based classifier (faster than embedding strategy)
 		routerConfig := router.RouterConfig{
-			Strategy:      "embedding",
+			Strategy:      "cross_encoder",
 			MinConfidence: 0.1,
 			MaxGraphs:     3,
 			MergeStrategy: "rrf",
 		}
 
 		classifierStart := time.Now()
-		classifier, err := router.NewTopicClassifier(configs, routerConfig, emb, nil, routingTexts)
+		classifier, err := router.NewTopicClassifier(configs, routerConfig, emb, reranker, routingTexts)
 		classifierElapsed := time.Since(classifierStart)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Classifier creation failed: %v\n", err)
 			continue
 		}
-		fmt.Printf("Classifier initialized in %v (embedded %d topic vectors)\n", classifierElapsed, len(configs))
+		fmt.Printf("Classifier initialized in %v (cross-encoder, %d topics)\n", classifierElapsed, len(configs))
 
 		maxOpen := 38
 		if backend.name == "ladybug" {
