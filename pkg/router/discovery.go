@@ -54,13 +54,17 @@ func DiscoverTopicGraphs(dir string) ([]ClientConfig, map[string]string, error) 
 
 		keywords, routingText := parseTopicDescriptor(string(mdContent))
 
-		// Try to read group_id from companion .yaml file
+		// Try to read settings from companion .yaml file
 		groupID := "default"
+		var fallback, excludeFromSecondary bool
 		yamlPath := filepath.Join(absDir, slug+".yaml")
 		if yamlContent, err := os.ReadFile(yamlPath); err == nil {
-			if gid := parseYAMLGroupID(string(yamlContent)); gid != "" {
-				groupID = gid
+			yamlSettings := parseYAMLSettings(string(yamlContent))
+			if yamlSettings.GroupID != "" {
+				groupID = yamlSettings.GroupID
 			}
+			fallback = yamlSettings.Fallback
+			excludeFromSecondary = yamlSettings.ExcludeFromSecondary
 		}
 
 		graphDbMap := map[string]any{
@@ -69,12 +73,14 @@ func DiscoverTopicGraphs(dir string) ([]ClientConfig, map[string]string, error) 
 		}
 
 		cfg := ClientConfig{
-			Name:     slug,
-			GroupID:  groupID,
-			Topics:   keywords,
-			GraphDb:  graphDbMap,
-			Default:  firstClient,
-			ReadOnly: true,
+			Name:                 slug,
+			GroupID:              groupID,
+			Topics:               keywords,
+			GraphDb:              graphDbMap,
+			Default:              firstClient,
+			ReadOnly:             true,
+			Fallback:             fallback,
+			ExcludeFromSecondary: excludeFromSecondary,
 		}
 
 		configs = append(configs, cfg)
@@ -177,16 +183,33 @@ func parseTopicDescriptor(content string) (keywords []string, routingText string
 	return keywords, routingText
 }
 
-// parseYAMLGroupID extracts group_id from a simple YAML file without a full YAML parser.
-func parseYAMLGroupID(content string) string {
+// topicYAMLSettings holds settings parsed from a companion .yaml file.
+type topicYAMLSettings struct {
+	GroupID              string
+	Fallback             bool
+	ExcludeFromSecondary bool
+}
+
+// parseYAMLSettings extracts settings from a simple YAML file without a full
+// YAML parser. Supported keys: group_id, fallback, exclude_from_secondary.
+func parseYAMLSettings(content string) topicYAMLSettings {
+	var s topicYAMLSettings
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "group_id:") {
-			val := strings.TrimPrefix(line, "group_id:")
-			return strings.TrimSpace(val)
+		if k, v, ok := strings.Cut(line, ":"); ok {
+			k = strings.TrimSpace(k)
+			v = strings.TrimSpace(v)
+			switch k {
+			case "group_id":
+				s.GroupID = v
+			case "fallback":
+				s.Fallback = v == "true"
+			case "exclude_from_secondary":
+				s.ExcludeFromSecondary = v == "true"
+			}
 		}
 	}
-	return ""
+	return s
 }
 
 // parseKeywords extracts keywords from a raw string.

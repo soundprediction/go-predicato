@@ -40,6 +40,10 @@ type ClientConfig struct {
 	// Fallback marks this client as fallback (queried when no topic matches).
 	Fallback bool `json:"fallback"`
 
+	// ExcludeFromSecondary prevents this client from being selected as a
+	// secondary (2nd, 3rd, …) graph. It can still be the primary pick.
+	ExcludeFromSecondary bool `json:"exclude_from_secondary"`
+
 	// ReadOnly opens the database in read-only mode.
 	// Topic graph databases should be read-only; user-specific DBs should be read-write.
 	ReadOnly bool `json:"read_only"`
