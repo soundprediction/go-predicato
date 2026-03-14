@@ -1264,11 +1264,13 @@ func (k *LadybugDriver) UpsertCommunityEdge(ctx context.Context, communityUUID, 
 // DeleteEdge removes an edge.
 // Uses parameterized queries to prevent Cypher injection attacks.
 func (k *LadybugDriver) DeleteEdge(ctx context.Context, edgeID, groupID string) error {
-	// Delete using RelatesToNode_ pattern with parameterized query
+	// Delete using RelatesToNode_ pattern with parameterized query.
+	// DETACH DELETE is required because RelatesToNode_ intermediate nodes
+	// have RELATES_TO edges connecting them to Entity nodes.
 	deleteQuery := `
 		MATCH (a:Entity)-[:RELATES_TO]->(rel:RelatesToNode_)-[:RELATES_TO]->(b:Entity)
 		WHERE rel.uuid = $uuid AND rel.group_id = $group_id
-		DELETE rel
+		DETACH DELETE rel
 	`
 
 	params := map[string]any{
