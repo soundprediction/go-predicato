@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/soundprediction/predicato/pkg/driver"
 )
@@ -86,10 +87,9 @@ func (c *ClientConfig) CreateDriver(ctx context.Context) (driver.GraphDriver, er
 		cfg.DBPath = dbPath
 		cfg.ReadOnly = c.ReadOnly
 		if c.ReadOnly {
-			// Use a moderate buffer pool for read-only topic graphs. With LRU
-			// eviction (max 5 open), 768MB × 5 = 3.75GB total is reasonable.
-			// Too small causes OOM on edge BM25 for larger graphs.
-			cfg.BufferPoolSize = 768 * 1024 * 1024 // 768MB
+			// Scale buffer pool by DB file size. Larger graphs (e.g. pain at
+			// 1.3GB) OOM on BM25 with the previous flat 768MB allocation.
+			cfg.BufferPoolSize = bufferPoolForDBSize(dbPath)
 		}
 		return driver.NewLadybugDriverWithConfig(cfg)
 	default:
@@ -131,9 +131,26 @@ func (r *RouterConfig) GetMinConfidenceOrDefault() float64 {
 // GetMaxGraphsOrDefault returns the max graphs or the default value.
 func (r *RouterConfig) GetMaxGraphsOrDefault() int {
 	if r.MaxGraphs == 0 {
-		return 3
+		return 2
 	}
 	return r.MaxGraphs
+}
+
+// bufferPoolForDBSize returns a buffer pool size scaled to the DB file size.
+func bufferPoolForDBSize(dbPath string) uint64 {
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		return 768 * 1024 * 1024 // 768MB default
+	}
+	size := info.Size()
+	switch {
+	case size > 1<<30: // >1GB
+		return 2 * 1024 * 1024 * 1024 // 2GB
+	case size > 500<<20: // >500MB
+		return 1024 * 1024 * 1024 // 1GB
+	default:
+		return 768 * 1024 * 1024 // 768MB
+	}
 }
 
 // GetMergeStrategyOrDefault returns the merge strategy or the default value.

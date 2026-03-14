@@ -20,6 +20,7 @@ var genericTerms = map[string]bool{
 	"treatment":      true,
 	"patient":        true,
 	"clinical trial": true,
+	"clinical study": true,
 }
 
 var stopwords = map[string]bool{
@@ -62,8 +63,19 @@ var factSeparators = []string{
 	" is made up of ",
 }
 
+// IsClinicalMetadataEdge returns true for HAS_CONDITION edges that link
+// clinical trials/studies to conditions — these are trial metadata, not
+// medical knowledge, and dominate search results when left unfiltered.
+func IsClinicalMetadataEdge(edgeName, src, tgt string) bool {
+	if edgeName != "HAS_CONDITION" {
+		return false
+	}
+	lower := strings.ToLower(src)
+	return strings.Contains(lower, "clinical trial") || strings.Contains(lower, "clinical study")
+}
+
 // FilterLowValueEdges removes edges that are tautological, overly generic,
-// or duplicate by fact content. Returns the filtered list.
+// clinical-trial metadata, or duplicate by fact content. Returns the filtered list.
 func FilterLowValueEdges(edges []*Edge) []*Edge {
 	if len(edges) == 0 {
 		return edges
@@ -86,6 +98,10 @@ func FilterLowValueEdges(edges []*Edge) []*Edge {
 		}
 
 		if e.Name != "IS_A" && IsTautological(src, tgt) {
+			continue
+		}
+
+		if IsClinicalMetadataEdge(e.Name, src, tgt) {
 			continue
 		}
 
@@ -122,6 +138,12 @@ func FilterLowValueTriples(triples []*ExtractedTriple) (kept []*ExtractedTriple,
 
 		// Filter tautological triples (skip IS_A — taxonomy overlap is expected)
 		if t.Predicate != "IS_A" && IsTautological(t.Subject, t.Object) {
+			removed = append(removed, t)
+			continue
+		}
+
+		// Filter clinical trial metadata edges
+		if IsClinicalMetadataEdge(t.Predicate, t.Subject, t.Object) {
 			removed = append(removed, t)
 			continue
 		}

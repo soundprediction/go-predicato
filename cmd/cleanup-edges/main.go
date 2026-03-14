@@ -246,7 +246,12 @@ func shouldRemoveEdge(e *types.Edge) bool {
 		return true
 	}
 
-	// 3. Also check subject/target directly if fact parsing didn't find concepts
+	// 3. Clinical trial metadata edges (HAS_CONDITION from trials)
+	if types.IsClinicalMetadataEdge(e.Name, src, tgt) {
+		return true
+	}
+
+	// 4. Also check subject/target directly if fact parsing didn't find concepts
 	// For edges where fact text doesn't follow standard patterns, check names
 	if src == "" && tgt == "" {
 		// Try to extract from the fact by splitting on the predicate name

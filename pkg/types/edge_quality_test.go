@@ -74,6 +74,49 @@ func TestFilterLowValueTriples(t *testing.T) {
 	}
 }
 
+func TestIsClinicalMetadataEdge(t *testing.T) {
+	tests := []struct {
+		name string
+		edge string
+		src  string
+		tgt  string
+		want bool
+	}{
+		{"HAS_CONDITION from clinical trial", "HAS_CONDITION", "Clinical Trial NCT001234", "diabetes", true},
+		{"HAS_CONDITION from clinical study", "HAS_CONDITION", "Phase 3 Clinical Study", "hypertension", true},
+		{"HAS_CONDITION non-trial source", "HAS_CONDITION", "metformin", "diabetes", false},
+		{"Different predicate from trial", "TREATS", "clinical trial NCT999", "cancer", false},
+	}
+
+	for _, tt := range tests {
+		got := IsClinicalMetadataEdge(tt.edge, tt.src, tt.tgt)
+		if got != tt.want {
+			t.Errorf("IsClinicalMetadataEdge(%q, %q, %q) = %v, want %v",
+				tt.edge, tt.src, tt.tgt, got, tt.want)
+		}
+	}
+}
+
+func TestFilterLowValueTriples_ClinicalMetadata(t *testing.T) {
+	triples := []*ExtractedTriple{
+		{Subject: "aspirin", Predicate: "TREATS", Object: "headache"},                               // keep
+		{Subject: "Clinical Trial NCT001234", Predicate: "HAS_CONDITION", Object: "diabetes"},       // clinical metadata
+		{Subject: "Phase 2 Clinical Study XYZ", Predicate: "HAS_CONDITION", Object: "hypertension"}, // clinical metadata
+	}
+
+	kept, removed := FilterLowValueTriples(triples)
+
+	if len(kept) != 1 {
+		t.Errorf("expected 1 kept, got %d", len(kept))
+		for _, k := range kept {
+			t.Logf("  kept: %s %s %s", k.Subject, k.Predicate, k.Object)
+		}
+	}
+	if len(removed) != 2 {
+		t.Errorf("expected 2 removed, got %d", len(removed))
+	}
+}
+
 func TestFilterLowValueEdges(t *testing.T) {
 	edges := []*Edge{
 		{Name: "TREATS", Fact: "aspirin is used to treat headache"},
