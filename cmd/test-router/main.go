@@ -250,12 +250,12 @@ func main() {
 			ExcludeEntityTypes: []string{"CLINICAL_STUDY"},
 			NodeConfig: &types.NodeSearchConfig{
 				SearchMethods: []string{"cosine_similarity", "bm25"},
-				Reranker:      "cross_encoder",
+				Reranker:      "rrf",
 				MinScore:      0.0,
 			},
 			EdgeConfig: &types.EdgeSearchConfig{
 				SearchMethods: []string{"bm25"},
-				Reranker:      "cross_encoder",
+				Reranker:      "rrf",
 				MinScore:      0.0,
 			},
 		}

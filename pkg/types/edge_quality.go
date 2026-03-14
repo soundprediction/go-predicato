@@ -63,15 +63,12 @@ var factSeparators = []string{
 	" is made up of ",
 }
 
-// IsClinicalMetadataEdge returns true for HAS_CONDITION edges that link
-// clinical trials/studies to conditions — these are trial metadata, not
-// medical knowledge, and dominate search results when left unfiltered.
+// IsClinicalMetadataEdge returns true for HAS_CONDITION edges — these are
+// uniformly study-to-condition metadata (e.g. "Tamoxifen to Prevent Bone
+// Loss... has the condition syndrome"), not medical knowledge. They account
+// for 15–45% of edges per graph and dominate search results.
 func IsClinicalMetadataEdge(edgeName, src, tgt string) bool {
-	if edgeName != "HAS_CONDITION" {
-		return false
-	}
-	lower := strings.ToLower(src)
-	return strings.Contains(lower, "clinical trial") || strings.Contains(lower, "clinical study")
+	return edgeName == "HAS_CONDITION"
 }
 
 // FilterLowValueEdges removes edges that are tautological, overly generic,
