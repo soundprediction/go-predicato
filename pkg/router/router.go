@@ -272,8 +272,34 @@ func (r *Router) GetRouteInfo(ctx context.Context, query string) (*RouteInfo, er
 			filtered = filtered[:maxGraphs]
 		}
 
-		info.ClientNames = make([]string, len(filtered))
+		// Build set of clients excluded from secondary selection.
+		excludeSecondary := make(map[string]bool)
+		for _, cfg := range r.manager.configs {
+			if cfg.ExcludeFromSecondary {
+				excludeSecondary[cfg.Name] = true
+			}
+		}
+
+		// Keep primary unconditionally; for secondary picks, apply a
+		// confidence gap filter and honour ExcludeFromSecondary.
+		var selected []TopicMatch
 		for i, match := range filtered {
+			if i == 0 {
+				selected = append(selected, match)
+				continue
+			}
+			// Drop secondary if its confidence is <60% of primary.
+			if match.Confidence < filtered[0].Confidence*0.6 {
+				continue
+			}
+			if excludeSecondary[match.ClientName] {
+				continue
+			}
+			selected = append(selected, match)
+		}
+
+		info.ClientNames = make([]string, len(selected))
+		for i, match := range selected {
 			info.ClientNames[i] = match.ClientName
 		}
 	}

@@ -111,9 +111,12 @@ type EmbeddingTopicClassifier struct {
 
 // NewEmbeddingTopicClassifier creates a new embedding-based topic classifier.
 // It pre-computes embeddings for all client topics for efficient classification.
+// When routingTexts is provided, the richer routing descriptor text is used for
+// embedding instead of bare keywords, improving semantic similarity accuracy.
 func NewEmbeddingTopicClassifier(
 	configs []ClientConfig,
 	embedderClient embedder.Client,
+	routingTexts map[string]string,
 ) (*EmbeddingTopicClassifier, error) {
 	tc := &EmbeddingTopicClassifier{
 		embedder:           embedderClient,
@@ -128,7 +131,11 @@ func NewEmbeddingTopicClassifier(
 		if len(cfg.Topics) > 0 {
 			tc.clientTopics[cfg.Name] = cfg.Topics
 
+			// Prefer routing descriptor text over bare keywords for embedding
 			topicText := strings.Join(cfg.Topics, " ")
+			if rt, ok := routingTexts[cfg.Name]; ok && rt != "" {
+				topicText = rt
+			}
 			embedding, err := embedderClient.EmbedSingle(ctx, topicText)
 			if err != nil {
 				continue
@@ -272,7 +279,7 @@ func NewTopicClassifier(
 	switch strategy {
 	case "topic_based":
 		if embedderClient != nil {
-			return NewEmbeddingTopicClassifier(configs, embedderClient)
+			return NewEmbeddingTopicClassifier(configs, embedderClient, routingTexts)
 		}
 		return NewKeywordTopicClassifier(configs), nil
 
@@ -283,7 +290,7 @@ func NewTopicClassifier(
 		if embedderClient == nil {
 			return NewKeywordTopicClassifier(configs), nil
 		}
-		return NewEmbeddingTopicClassifier(configs, embedderClient)
+		return NewEmbeddingTopicClassifier(configs, embedderClient, routingTexts)
 
 	case "cross_encoder":
 		if rerankerClient != nil {

@@ -157,8 +157,9 @@ type LadybugDriver struct {
 	closeMu      sync.RWMutex
 	mu           sync.Mutex // Mutex to protect database operations from concurrent access
 
-	closed  bool
-	verbose bool
+	closed   bool
+	verbose  bool
+	readOnly bool
 }
 
 // copyDir recursively copies a directory from src to dst
@@ -452,6 +453,7 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 		tempDbPath:   tempDbPath,
 		originalPath: originalPath,
 		verbose:      config.Verbose,
+		readOnly:     config.ReadOnly,
 		writeQueue:   make(chan writeOperation, config.WriteQueueSize),
 		closeCh:      make(chan struct{}),
 	}
@@ -460,8 +462,11 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 	driver.writeWg.Add(1)
 	go driver.writeWorker()
 
-	// Setup schema exactly like Python
-	driver.setupSchema()
+	// Setup schema only for writable databases — read-only topic graphs
+	// already have their schema in place and write attempts would fail.
+	if !config.ReadOnly {
+		driver.setupSchema()
+	}
 
 	// Create connection - Go ladybug doesn't have AsyncConnection but we simulate the interface
 	client, err := ladybug.OpenConnection(database)
@@ -1264,11 +1269,13 @@ func (k *LadybugDriver) UpsertCommunityEdge(ctx context.Context, communityUUID, 
 // DeleteEdge removes an edge.
 // Uses parameterized queries to prevent Cypher injection attacks.
 func (k *LadybugDriver) DeleteEdge(ctx context.Context, edgeID, groupID string) error {
-	// Delete using RelatesToNode_ pattern with parameterized query
+	// Delete using RelatesToNode_ pattern with parameterized query.
+	// DETACH DELETE is required because RelatesToNode_ intermediate nodes
+	// have RELATES_TO edges connecting them to Entity nodes.
 	deleteQuery := `
 		MATCH (a:Entity)-[:RELATES_TO]->(rel:RelatesToNode_)-[:RELATES_TO]->(b:Entity)
 		WHERE rel.uuid = $uuid AND rel.group_id = $group_id
-		DELETE rel
+		DETACH DELETE rel
 	`
 
 	params := map[string]any{
