@@ -1,4 +1,4 @@
-//go:build cgo
+//go:build system_duckpgq
 
 package main
 
