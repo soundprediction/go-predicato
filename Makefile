@@ -9,6 +9,8 @@ CGO_LDFLAGS := -L$(LIB_PATH) -Wl,-rpath,$(LIB_PATH)
 # Download Ladybug native library
 generate:
 	go generate ./cmd/main.go
+	@# Latest LadybugDB SONAME is liblbug.so.0; create symlink so runtime linker finds it
+	@test -f cmd/lib-ladybug/liblbug.so && cd cmd/lib-ladybug && ln -sf liblbug.so liblbug.so.0 || true
 
 # Build the project (requires generate first)
 build: generate
