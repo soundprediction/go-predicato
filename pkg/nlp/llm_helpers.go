@@ -697,18 +697,21 @@ func ExtractExtendedHelper(ctx context.Context, client Client, text string, enti
 	systemPrompt := fmt.Sprintf(`You are an expert information extraction system.
 Your task is to extract structured information from the provided text.
 
-CRITICAL: All extracted values (entity names, relation heads/tails, triple subjects/objects,
-rule antecedents/consequents) MUST be EXACT substrings copied verbatim from the source text.
-Do NOT paraphrase, abbreviate, or infer. If a fact cannot be expressed using exact text spans,
-skip it.
+There are TWO types of extraction:
+(A) EXTRACTIVE — exact substrings copied verbatim from the source text.
+(B) INFERRED — knowledge derived from but not stated verbatim in the text.
+
+Both are valuable but MUST be placed in separate fields so they can be distinguished.
 
 Extract the following:
-1. Entities: Named entities grouped by type. Each entity name must be an exact substring of the text.%s
-2. Relations: Relationships between entities. Source and target must be exact substrings.%s
-3. Triples: Extended facts with context. Subject and object must be exact substrings.
-   Context fields (condition, temporal, scope, etc.) should also be exact substrings where possible.
-4. Rules: Conditional logic stated in the text. The antecedent and consequent must be exact
-   substrings or contiguous phrases copied from the text, not paraphrased summaries.
+1. Entities: Named entities grouped by type. Each entity name must be an EXACT substring of the text.%s
+2. Relations: Relationships between entities. Source and target must be EXACT substrings.%s
+3. Triples: Extended facts with context. Subject and object must be EXACT substrings.
+   Context fields (condition, temporal, scope, etc.) should be exact substrings where possible.
+4. Rules (extractive): Conditional logic STATED in the text. The antecedent and consequent must
+   be exact substrings or contiguous phrases copied from the text.
+5. Inferred rules: Clinical knowledge implied by the text but not stated verbatim. These go in
+   a SEPARATE "inferred_rules" array.
 
 Return the output as a JSON object matching this structure:
 {
@@ -731,12 +734,22 @@ Return the output as a JSON object matching this structure:
       "scope": "gestational diabetes",
       "source_attribution": ""
     }
+  ],
+  "inferred_rules": [
+    {
+      "antecedent": "Patient has uncontrolled gestational diabetes",
+      "consequent": "Monitor for fetal macrosomia",
+      "rule_type": "clinical_inference",
+      "scope": "gestational diabetes",
+      "source_attribution": ""
+    }
   ]
 }
 
-Remember: every entity name, relation source/target, triple subject/object, and rule
-antecedent/consequent must appear verbatim in the source text. If you cannot find an exact
-span, do not include that extraction.
+IMPORTANT:
+- "rules" array: antecedent/consequent/exception MUST appear verbatim in the source text.
+- "inferred_rules" array: paraphrased clinical knowledge derived from the text.
+- Entity names, relation source/target, and triple subject/object must ALWAYS be exact substrings.
 `, entityGuidance, relationGuidance)
 
 	userPrompt := fmt.Sprintf("Extract structured information from the following text:\n\n%s", text)
