@@ -2552,7 +2552,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	conn.ExecContext(ctx, "UPDATE _filt_triples SET _rownum = rowid")
 	var filtEdgesLoaded int64
 	for offset := int64(0); ; offset += edgeBatchSize {
-		batchSQL := fmt.Sprintf(`INSERT INTO edges (
+		batchSQL := fmt.Sprintf(`INSERT OR IGNORE INTO edges (
 				uuid, group_id, source_id, target_id, type, name, fact,
 				fact_embedding, embedding, attributes, source_ids,
 				strength, created_at, updated_at, valid_from
@@ -2610,7 +2610,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	// Phase 7: Insert filtered rules as edges.
 	fmt.Printf("  Phase 7/%d: Inserting filtered rules...\n", totalPhases)
 	phaseStart = time.Now()
-	ruleInsertSQL := fmt.Sprintf(`INSERT INTO edges (
+	ruleInsertSQL := fmt.Sprintf(`INSERT OR IGNORE INTO edges (
 			uuid, group_id, source_id, target_id, type, name, fact,
 			fact_embedding, embedding, attributes, source_ids,
 			strength, created_at, updated_at, valid_from
@@ -2787,7 +2787,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	conn.ExecContext(ctx, "UPDATE _extra_edges SET _rownum = rowid")
 	var extraEdgesInserted int64
 	for offset := int64(0); ; offset += edgeBatchSize {
-		batchSQL := fmt.Sprintf(`INSERT INTO edges (
+		batchSQL := fmt.Sprintf(`INSERT OR IGNORE INTO edges (
 				uuid, group_id, source_id, target_id, type, name, fact,
 				fact_embedding, embedding, attributes, source_ids,
 				strength, created_at, updated_at, valid_from
@@ -2842,7 +2842,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	}
 
 	// Insert extra rules as edges.
-	extraRuleInsertSQL := fmt.Sprintf(`INSERT INTO edges (
+	extraRuleInsertSQL := fmt.Sprintf(`INSERT OR IGNORE INTO edges (
 			uuid, group_id, source_id, target_id, type, name, fact,
 			fact_embedding, embedding, attributes, source_ids,
 			strength, created_at, updated_at, valid_from
