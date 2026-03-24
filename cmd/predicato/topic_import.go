@@ -270,6 +270,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 		EdgeThreshold:     edgeThreshold,
 		EdgeBatchSize:     edgeBatchSize,
 		ExcludePredicates: excludePredicates,
+		AppendMode:        appendMode,
 	}
 
 	if source == "postgres" {

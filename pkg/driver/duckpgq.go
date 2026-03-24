@@ -2336,7 +2336,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	if _, err := conn.ExecContext(ctx, filtTriplesSQL); err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to filter triples: %w", err)
 	}
-	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _valid_emb_triples")
+	if !filter.AppendMode { conn.ExecContext(ctx, "DROP TABLE IF EXISTS _valid_emb_triples") }
 	var filtTripleCount int64
 	if row := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM _filt_triples"); row != nil {
 		_ = row.Scan(&filtTripleCount)
@@ -2362,7 +2362,7 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		if _, err := conn.ExecContext(ctx, filtRulesSQL); err != nil {
 			return 0, 0, 0, fmt.Errorf("failed to filter rules: %w", err)
 		}
-		conn.ExecContext(ctx, "DROP TABLE IF EXISTS _valid_emb_rules")
+	if !filter.AppendMode { conn.ExecContext(ctx, "DROP TABLE IF EXISTS _valid_emb_rules") }
 	} else {
 		if _, err := conn.ExecContext(ctx, `CREATE TEMP TABLE _filt_rules (
 			id VARCHAR, source_id VARCHAR, antecedent VARCHAR, consequent VARCHAR,
@@ -2378,6 +2378,86 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 		_ = row.Scan(&filtRuleCount)
 	}
 	fmt.Printf("  Phase 3/%d: Done — %d rules match threshold in %s\n", totalPhases, filtRuleCount, time.Since(phaseStart).Round(time.Second))
+
+	// Phase 3b (append mode only): Add triples/rules at lower threshold that connect to existing entities.
+	if filter.AppendMode {
+		connectedThreshold := filter.AppendConnectedThreshold
+		if connectedThreshold == 0 {
+			connectedThreshold = tripleThreshold * 0.75
+		}
+		fmt.Printf("  Phase 3b/%d: Append mode — collecting connected triples/rules (threshold %.2f)...\n", totalPhases, connectedThreshold)
+		phaseStart = time.Now()
+
+		// Get existing entity names from the database
+		conn.ExecContext(ctx, `CREATE TEMP TABLE _existing_names AS
+			SELECT DISTINCT LOWER(TRIM(name)) AS nm FROM entities WHERE type = 'entity'`)
+		var existingCount int64
+		if row := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM _existing_names"); row != nil {
+			_ = row.Scan(&existingCount)
+		}
+		fmt.Printf("    Existing entities in DB: %d\n", existingCount)
+
+		if existingCount > 0 {
+			// Build exclude clause for connected triples
+			connectedExclude := ""
+			if len(filter.ExcludePredicates) > 0 {
+				quoted := make([]string, len(filter.ExcludePredicates))
+				for i, p := range filter.ExcludePredicates {
+					quoted[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(strings.ToLower(p), "'", "''"))
+				}
+				connectedExclude = fmt.Sprintf("\n\t\t\t\tAND LOWER(TRIM(t.predicate)) NOT IN (%s)", strings.Join(quoted, ", "))
+			}
+
+			// Add triples at lower threshold where subject OR object matches an existing entity
+			addConnectedTriplesSQL := fmt.Sprintf(`INSERT INTO _filt_triples
+				SELECT t.* FROM _valid_emb_triples t
+				WHERE list_cosine_similarity(t.emb::FLOAT[], %s::FLOAT[]) >= %g
+				  AND t.id NOT IN (SELECT id FROM _filt_triples)
+				  AND (LOWER(TRIM(t.subject)) IN (SELECT nm FROM _existing_names)
+				    OR LOWER(TRIM(t.object)) IN (SELECT nm FROM _existing_names))
+				%s`,
+				vecLit, connectedThreshold, connectedExclude)
+			res, err := conn.ExecContext(ctx, addConnectedTriplesSQL)
+			var connectedTriples int64
+			if err != nil {
+				fmt.Printf("    Warning: connected triple collection failed: %v\n", err)
+			} else {
+				connectedTriples, _ = res.RowsAffected()
+			}
+
+			// Add rules at lower threshold where antecedent/consequent mentions an existing entity
+			addConnectedRulesSQL := fmt.Sprintf(`INSERT INTO _filt_rules
+				SELECT r.* FROM _valid_emb_rules r
+				WHERE list_cosine_similarity(r.emb::FLOAT[], %s::FLOAT[]) >= %g
+				  AND r.id NOT IN (SELECT id FROM _filt_rules)
+				  AND EXISTS (
+				    SELECT 1 FROM _existing_names e
+				    WHERE position(e.nm IN LOWER(r.antecedent || ' ' || r.consequent)) > 0
+				  )`,
+				vecLit, connectedThreshold)
+			res, err = conn.ExecContext(ctx, addConnectedRulesSQL)
+			var connectedRules int64
+			if err != nil {
+				fmt.Printf("    Warning: connected rule collection failed: %v\n", err)
+			} else {
+				connectedRules, _ = res.RowsAffected()
+			}
+
+			// Update counts
+			if row := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM _filt_triples"); row != nil {
+				_ = row.Scan(&filtTripleCount)
+			}
+			if row := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM _filt_rules"); row != nil {
+				_ = row.Scan(&filtRuleCount)
+			}
+			fmt.Printf("  Phase 3b/%d: Done — +%d connected triples, +%d connected rules in %s\n",
+				totalPhases, connectedTriples, connectedRules, time.Since(phaseStart).Round(time.Second))
+		}
+		conn.ExecContext(ctx, "DROP TABLE IF EXISTS _existing_names")
+	}
+	// Clean up valid_emb tables (deferred from phases 2/3 when in append mode)
+	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _valid_emb_triples")
+	conn.ExecContext(ctx, "DROP TABLE IF EXISTS _valid_emb_rules")
 
 	// Phase 4: Build core qualifying node set = filtered nodes + triple endpoints + rule-referenced nodes.
 	// The rule-referenced lookup is done in two passes to avoid a full O(nodes×rules) cross-join:

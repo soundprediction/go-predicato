@@ -185,6 +185,18 @@ type ParquetTopicFilter struct {
 	// ExcludePredicates is a list of predicate strings to filter out from triples.
 	// Triples whose predicate matches any of these (case-insensitive) are excluded.
 	ExcludePredicates []string
+
+	// AppendMode when true indicates we are adding to an existing database.
+	// Two-tier filtering:
+	//   Tier 1: triples/rules independently meeting Threshold/TripleThreshold (high bar)
+	//   Tier 2: triples/rules meeting AppendConnectedThreshold (lower bar) AND
+	//           having at least one endpoint matching an existing entity in the DB
+	AppendMode bool
+
+	// AppendConnectedThreshold is the lower cosine similarity threshold for
+	// triples/rules that connect to pre-existing entities in append mode.
+	// Only used when AppendMode is true. When 0, defaults to TripleThreshold * 0.75.
+	AppendConnectedThreshold float64
 }
 
 // FilteredParquetImporter is implemented by drivers that support topic-filtered parquet import.
