@@ -58,6 +58,7 @@ func init() {
 	topicImportCmd.Flags().Int64("edge-batch-size", 10000, "number of edges to INSERT per batch (reduces peak memory)")
 	topicImportCmd.Flags().Bool("build-communities", false, "run community detection after graph construction")
 	topicImportCmd.Flags().Bool("force", false, "overwrite output file if it exists")
+	topicImportCmd.Flags().Bool("append", false, "append to existing database (do not delete first)")
 	topicImportCmd.Flags().Bool("skip-indexes", false, "skip index creation")
 	topicImportCmd.Flags().String("source", "parquet", "data source: parquet or postgres")
 	topicImportCmd.Flags().String("pg-conn", "", "PostgreSQL connection string (e.g. 'host=localhost port=5432 dbname=glancedb user=admin password=pass')")
@@ -85,6 +86,7 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 	edgeBatchSize, _ := cmd.Flags().GetInt64("edge-batch-size")
 	buildCommunities, _ := cmd.Flags().GetBool("build-communities")
 	force, _ := cmd.Flags().GetBool("force")
+	appendMode, _ := cmd.Flags().GetBool("append")
 	skipIndexes, _ := cmd.Flags().GetBool("skip-indexes")
 	source, _ := cmd.Flags().GetString("source")
 	pgConn, _ := cmd.Flags().GetString("pg-conn")
@@ -120,11 +122,18 @@ func runTopicImport(cmd *cobra.Command, args []string) error {
 
 	// Check output path.
 	if _, err := os.Stat(output); err == nil {
-		if !force {
-			return fmt.Errorf("output file already exists: %s (use --force to overwrite)", output)
+		if appendMode {
+			// Append mode: keep existing database, add new data
+			fmt.Printf("Appending to existing database: %s\n", output)
+		} else if !force {
+			return fmt.Errorf("output file already exists: %s (use --force to overwrite or --append to add data)", output)
+		} else {
+			os.Remove(output)
+			os.Remove(output + ".wal")
 		}
-		os.Remove(output)
-		os.Remove(output + ".wal")
+	} else if appendMode {
+		// Append requested but file doesn't exist — create fresh
+		fmt.Printf("Note: --append specified but %s does not exist, creating new database\n", output)
 	}
 
 	// Build or load the topic vector.
