@@ -2793,6 +2793,13 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 	// Phase 11: Insert extra edges + extra rules (batched).
 	fmt.Printf("  Phase 11/%d: Inserting extra edges and rules (batch size %d)...\n", totalPhases, edgeBatchSize)
 	phaseStart = time.Now()
+	// Deduplicate extra edges (can overlap with already-inserted filtered edges)
+	conn.ExecContext(ctx, `CREATE OR REPLACE TEMP TABLE _extra_edges_dedup AS
+		SELECT * FROM _extra_edges
+		WHERE id NOT IN (SELECT uuid FROM edges)
+		QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY confidence DESC) = 1`)
+	conn.ExecContext(ctx, `DROP TABLE IF EXISTS _extra_edges`)
+	conn.ExecContext(ctx, `ALTER TABLE _extra_edges_dedup RENAME TO _extra_edges`)
 	conn.ExecContext(ctx, "ALTER TABLE _extra_edges ADD COLUMN IF NOT EXISTS _rownum INTEGER")
 	conn.ExecContext(ctx, "UPDATE _extra_edges SET _rownum = rowid")
 	var extraEdgesInserted int64
@@ -2850,6 +2857,14 @@ func (d *DuckPGQDriver) BulkLoadFromParquetWithFilter(
 			break
 		}
 	}
+
+	// Deduplicate extra rules
+	conn.ExecContext(ctx, `CREATE OR REPLACE TEMP TABLE _extra_rules_dedup AS
+		SELECT * FROM _extra_rules
+		WHERE id NOT IN (SELECT uuid FROM edges)
+		QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY confidence DESC) = 1`)
+	conn.ExecContext(ctx, `DROP TABLE IF EXISTS _extra_rules`)
+	conn.ExecContext(ctx, `ALTER TABLE _extra_rules_dedup RENAME TO _extra_rules`)
 
 	// Insert extra rules as edges.
 	extraRuleInsertSQL := fmt.Sprintf(`INSERT INTO edges (
