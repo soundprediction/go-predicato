@@ -1843,29 +1843,32 @@ func (k *LadybugDriver) UpsertEdges(ctx context.Context, edges []*types.Edge) er
 }
 
 // ladybugEntity matches the Ladybug Entity node table column order for COPY FROM parquet.
+// ladybugEntity must match the Entity CREATE TABLE column order exactly
+// because DuckDB COPY FROM parquet matches by position, not name.
 type ladybugEntity struct {
-	CreatedAt     time.Time `parquet:"created_at,timestamp(microsecond)"`
 	Uuid          string    `parquet:"uuid"`
 	Name          string    `parquet:"name"`
 	GroupID       string    `parquet:"group_id"`
 	Labels        []string  `parquet:"labels,list"`
+	CreatedAt     time.Time `parquet:"created_at,timestamp(microsecond)"`
 	NameEmbedding []float32 `parquet:"name_embedding,list"`
 	Summary       string    `parquet:"summary"`
 	Attributes    string    `parquet:"attributes"`
 }
 
 // ladybugRelatesToNode matches the Ladybug RelatesToNode_ table column order for COPY FROM parquet.
+// ladybugRelatesToNode must match the RelatesToNode_ CREATE TABLE column order exactly.
 type ladybugRelatesToNode struct {
-	CreatedAt     time.Time  `parquet:"created_at,timestamp(microsecond)"`
-	ExpiredAt     *time.Time `parquet:"expired_at,timestamp(microsecond),optional"`
-	ValidAt       *time.Time `parquet:"valid_at,timestamp(microsecond),optional"`
-	InvalidAt     *time.Time `parquet:"invalid_at,timestamp(microsecond),optional"`
 	Uuid          string     `parquet:"uuid"`
 	GroupID       string     `parquet:"group_id"`
+	CreatedAt     time.Time  `parquet:"created_at,timestamp(microsecond)"`
 	Name          string     `parquet:"name"`
 	Fact          string     `parquet:"fact"`
 	FactEmbedding []float32  `parquet:"fact_embedding,list"`
 	Episodes      []string   `parquet:"episodes,list"`
+	ExpiredAt     *time.Time `parquet:"expired_at,timestamp(microsecond),optional"`
+	ValidAt       *time.Time `parquet:"valid_at,timestamp(microsecond),optional"`
+	InvalidAt     *time.Time `parquet:"invalid_at,timestamp(microsecond),optional"`
 	Attributes    string     `parquet:"attributes"`
 }
 
