@@ -44,9 +44,10 @@ type Rule struct {
 
 // ExtendedExtractionResult represents the full extraction output including extended triples and rules.
 type ExtendedExtractionResult struct {
-	SourceText string              `json:"source_text"`
-	Entities   map[string][]string `json:"entities"`
-	Relations  []ExtractedRelation `json:"relations"`
-	Triples    []ExtendedTriple    `json:"triples"`
-	Rules      []Rule              `json:"rules"`
+	SourceText    string              `json:"source_text"`
+	Entities      map[string][]string `json:"entities"`
+	Relations     []ExtractedRelation `json:"relations"`
+	Triples       []ExtendedTriple    `json:"triples"`
+	Rules         []Rule              `json:"rules"`
+	InferredRules []Rule              `json:"inferred_rules,omitempty"`
 }

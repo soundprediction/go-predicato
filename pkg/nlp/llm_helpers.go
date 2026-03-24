@@ -695,11 +695,23 @@ func ExtractExtendedHelper(ctx context.Context, client Client, text string, enti
 	}
 
 	systemPrompt := fmt.Sprintf(`You are an expert information extraction system.
-Your task is to extract structured information from the provided text, including:
-1. Entities: Named entities grouped by type.%s
-2. Relations: Relationships between entities.%s
-3. Triples: Extended facts with context (subject, predicate, object, plus condition, temporal, location, certainty, scope, source_attribution).
-4. Rules: Conditional logic found in the text (IF antecedent THEN consequent UNLESS exception).
+Your task is to extract structured information from the provided text.
+
+There are TWO types of extraction:
+(A) EXTRACTIVE — exact substrings copied verbatim from the source text.
+(B) INFERRED — knowledge derived from but not stated verbatim in the text.
+
+Both are valuable but MUST be placed in separate fields so they can be distinguished.
+
+Extract the following:
+1. Entities: Named entities grouped by type. Each entity name must be an EXACT substring of the text.%s
+2. Relations: Relationships between entities. Source and target must be EXACT substrings.%s
+3. Triples: Extended facts with context. Subject and object must be EXACT substrings.
+   Context fields (condition, temporal, scope, etc.) should be exact substrings where possible.
+4. Rules (extractive): Conditional logic STATED in the text. The antecedent and consequent must
+   be exact substrings or contiguous phrases copied from the text.
+5. Inferred rules: Clinical knowledge implied by the text but not stated verbatim. These go in
+   a SEPARATE "inferred_rules" array.
 
 Return the output as a JSON object matching this structure:
 {
@@ -708,22 +720,36 @@ Return the output as a JSON object matching this structure:
   "relations": [ { "source": "A", "target": "B", "type": "treats", "confidence": 1.0 } ],
   "triples": [
     {
-      "subject": "Metformin", "predicate": "reduces", "object": "glucose",
-      "condition": "in T2DM", "temporal": "", "location": "", "certainty": "established",
-      "scope": "adults with T2DM", "source_attribution": ""
+      "subject": "Metformin", "predicate": "reduces", "object": "blood glucose levels",
+      "condition": "in patients with type 2 diabetes", "temporal": "", "location": "",
+      "certainty": "established", "scope": "adults with type 2 diabetes", "source_attribution": ""
     }
   ],
   "rules": [
     {
-      "antecedent": "fasting glucose > 95",
-      "consequent": "initiate insulin",
-      "exception": "unless contraindicated",
+      "antecedent": "fasting glucose exceeds 95 mg/dL on two or more occasions",
+      "consequent": "insulin therapy should be initiated",
+      "exception": "unless contraindicated due to renal impairment",
       "rule_type": "clinical_decision",
       "scope": "gestational diabetes",
-      "source_attribution": "ACOG guidelines"
+      "source_attribution": ""
+    }
+  ],
+  "inferred_rules": [
+    {
+      "antecedent": "Patient has uncontrolled gestational diabetes",
+      "consequent": "Monitor for fetal macrosomia",
+      "rule_type": "clinical_inference",
+      "scope": "gestational diabetes",
+      "source_attribution": ""
     }
   ]
 }
+
+IMPORTANT:
+- "rules" array: antecedent/consequent/exception MUST appear verbatim in the source text.
+- "inferred_rules" array: paraphrased clinical knowledge derived from the text.
+- Entity names, relation source/target, and triple subject/object must ALWAYS be exact substrings.
 `, entityGuidance, relationGuidance)
 
 	userPrompt := fmt.Sprintf("Extract structured information from the following text:\n\n%s", text)
