@@ -2965,7 +2965,7 @@ func (k *LadybugDriver) BuildCommunities(ctx context.Context, groupID string) er
 	fmt.Printf("  Building communities for group %q...\n", groupID)
 	start := time.Now()
 
-	// Step 1: Load all edges as adjacency list.
+	// Load adjacency list from edges.
 	query := `
 		MATCH (a:Entity)-[:RELATES_TO]->(rel:RelatesToNode_)-[:RELATES_TO]->(b:Entity)
 		WHERE rel.group_id = $group_id
@@ -2993,55 +2993,7 @@ func (k *LadybugDriver) BuildCommunities(ctx context.Context, groupID string) er
 		return nil
 	}
 
-	// Step 2: Label propagation.
-	label := make(map[string]string, len(neighbors))
-	for node := range neighbors {
-		label[node] = node
-	}
-
-	const maxIter = 100
-	for iter := 0; iter < maxIter; iter++ {
-		changed := false
-		for node, nbs := range neighbors {
-			counts := make(map[string]int, len(nbs))
-			for _, nb := range nbs {
-				counts[label[nb]]++
-			}
-			bestLabel := label[node]
-			bestCount := 0
-			for lbl, cnt := range counts {
-				if cnt > bestCount || (cnt == bestCount && lbl < bestLabel) {
-					bestLabel = lbl
-					bestCount = cnt
-				}
-			}
-			if bestCount > 1 && bestLabel != label[node] {
-				label[node] = bestLabel
-				changed = true
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-
-	// Step 3: Group into multi-node clusters.
-	clusters := make(map[string][]string)
-	for node, lbl := range label {
-		clusters[lbl] = append(clusters[lbl], node)
-	}
-	var multiClusters [][]string
-	for _, members := range clusters {
-		if len(members) > 1 {
-			multiClusters = append(multiClusters, members)
-		}
-	}
-	if len(multiClusters) == 0 {
-		fmt.Println("  No multi-node communities found")
-		return nil
-	}
-
-	// Step 4: Load entity names.
+	// Load entity names.
 	nameQuery := `
 		MATCH (n:Entity)
 		WHERE n.group_id = $group_id
@@ -3060,51 +3012,41 @@ func (k *LadybugDriver) BuildCommunities(ctx context.Context, groupID string) er
 		}
 	}
 
-	// Step 5: Create community nodes and membership edges.
+	// Detect communities using shared label propagation.
+	clusters := DetectCommunities(neighbors, entityNames, groupID)
+	if len(clusters) == 0 {
+		fmt.Println("  No multi-node communities found")
+		return nil
+	}
+
+	// Create community nodes and membership edges.
 	now := time.Now().UTC()
 	var communityCount, edgeCount int64
-	for i, members := range multiClusters {
-		// Find most-connected member for community name.
-		bestUUID := members[0]
-		bestDegree := len(neighbors[bestUUID])
-		for _, m := range members[1:] {
-			if deg := len(neighbors[m]); deg > bestDegree {
-				bestUUID = m
-				bestDegree = deg
-			}
-		}
-
-		commName := entityNames[bestUUID]
-		if commName == "" {
-			commName = fmt.Sprintf("Community %d", i)
-		}
-
+	for _, cluster := range clusters {
 		commNode := &types.Node{
-			Uuid:       fmt.Sprintf("comm_%s_%d", groupID, i),
+			Uuid:       cluster.CommunityUUID,
 			GroupID:    groupID,
 			Type:       "community",
-			Name:       commName,
-			Content:    fmt.Sprintf("Community of %d related entities", len(members)),
+			Name:       cluster.Name,
+			Content:    cluster.Content,
 			EntityType: "community",
 			CreatedAt:  now,
 			UpdatedAt:  now,
 			ValidFrom:  now,
-			Level:      0,
 		}
 		if err := k.UpsertNode(ctx, commNode); err != nil {
 			return fmt.Errorf("failed to insert community node: %w", err)
 		}
 		communityCount++
 
-		// Create HAS_MEMBER edges.
-		for _, memberUUID := range members {
+		for _, memberUUID := range cluster.MemberUUIDs {
 			memberEdge := &types.Edge{
 				BaseEdge: types.BaseEdge{
-					Uuid:    fmt.Sprintf("comm_edge_%s_%d_%s", groupID, i, memberUUID),
-					GroupID:  groupID,
+					Uuid:      fmt.Sprintf("comm_edge_%s_%s", cluster.CommunityUUID, memberUUID),
+					GroupID:   groupID,
 					CreatedAt: now,
 				},
-				SourceID:  commNode.Uuid,
+				SourceID:  cluster.CommunityUUID,
 				TargetID:  memberUUID,
 				Type:      "community",
 				Name:      "HAS_MEMBER",

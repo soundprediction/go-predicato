@@ -1425,8 +1425,7 @@ func (d *DuckPGQDriver) BuildCommunities(ctx context.Context, groupID string) er
 	}
 	defer conn.Close()
 
-	// Step 1: Load adjacency list in bulk.
-	// Each edge connects two entity UUIDs; we build a bidirectional neighbor map.
+	// Load adjacency list from edges.
 	rows, err := conn.QueryContext(ctx, `
 		SELECT source_id, target_id FROM edges
 		WHERE group_id = ? AND type = 'entity'
@@ -1455,61 +1454,7 @@ func (d *DuckPGQDriver) BuildCommunities(ctx context.Context, groupID string) er
 		return nil
 	}
 
-	// Step 2: Label propagation (same algorithm as pkg/community/label_propagation.go).
-	// Each node starts with its own UUID as its label.
-	label := make(map[string]string, len(neighbors))
-	for node := range neighbors {
-		label[node] = node
-	}
-
-	const maxIter = 100
-	for iter := 0; iter < maxIter; iter++ {
-		changed := false
-		for node, nbs := range neighbors {
-			// Count community labels among neighbors.
-			counts := make(map[string]int, len(nbs))
-			for _, nb := range nbs {
-				counts[label[nb]]++
-			}
-			// Find the label with the highest count (break ties by label string).
-			bestLabel := label[node]
-			bestCount := 0
-			for lbl, cnt := range counts {
-				if cnt > bestCount || (cnt == bestCount && lbl < bestLabel) {
-					bestLabel = lbl
-					bestCount = cnt
-				}
-			}
-			if bestCount > 1 && bestLabel != label[node] {
-				label[node] = bestLabel
-				changed = true
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-
-	// Step 3: Group nodes by their community label, keep only multi-node communities.
-	clusters := make(map[string][]string)
-	for node, lbl := range label {
-		clusters[lbl] = append(clusters[lbl], node)
-	}
-
-	var multiClusters [][]string
-	for _, members := range clusters {
-		if len(members) > 1 {
-			multiClusters = append(multiClusters, members)
-		}
-	}
-
-	if len(multiClusters) == 0 {
-		fmt.Println("  No multi-node communities found")
-		return nil
-	}
-
-	// Step 4: For each community, find the most-connected member name to use as community name.
-	// Load entity names in bulk.
+	// Load entity names.
 	entityNames := make(map[string]string)
 	nameRows, err := conn.QueryContext(ctx, `SELECT uuid, name FROM entities WHERE group_id = ? AND type = 'entity'`, groupID)
 	if err != nil {
@@ -1524,48 +1469,35 @@ func (d *DuckPGQDriver) BuildCommunities(ctx context.Context, groupID string) er
 		entityNames[uuid] = name
 	}
 
-	// Step 5: Insert community nodes and HAS_MEMBER edges.
+	// Detect communities using shared label propagation.
+	clusters := DetectCommunities(neighbors, entityNames, groupID)
+	if len(clusters) == 0 {
+		fmt.Println("  No multi-node communities found")
+		return nil
+	}
+
+	// Insert community nodes and HAS_MEMBER edges.
 	now := time.Now().UTC()
 	var communityCount, edgeCount int64
-	for i, members := range multiClusters {
-		// Find the most-connected member for the community name.
-		bestUUID := members[0]
-		bestDegree := len(neighbors[bestUUID])
-		for _, m := range members[1:] {
-			if deg := len(neighbors[m]); deg > bestDegree {
-				bestUUID = m
-				bestDegree = deg
-			}
-		}
-		communityName := entityNames[bestUUID]
-		if communityName == "" {
-			communityName = fmt.Sprintf("Community %d", i+1)
-		}
-
-		commUUID := fmt.Sprintf("comm_%s_%d", groupID, i)
-
-		// Insert community node.
+	for _, cluster := range clusters {
 		_, err := conn.ExecContext(ctx, `INSERT INTO entities (
 				uuid, group_id, type, name, content, entity_type,
 				source_ids, created_at, updated_at, valid_from
 			) VALUES (?, ?, 'community', ?, ?, 'community', '["community"]', ?, ?, ?)`,
-			commUUID, groupID, communityName,
-			fmt.Sprintf("%d members", len(members)),
-			now, now, now)
+			cluster.CommunityUUID, groupID, cluster.Name, cluster.Content, now, now, now)
 		if err != nil {
 			return fmt.Errorf("failed to insert community node: %w", err)
 		}
 		communityCount++
 
-		// Insert HAS_MEMBER edges.
-		for _, memberUUID := range members {
-			edgeUUID := fmt.Sprintf("comm_edge_%s_%d_%s", groupID, i, memberUUID)
+		for _, memberUUID := range cluster.MemberUUIDs {
+			edgeUUID := fmt.Sprintf("comm_edge_%s_%s", cluster.CommunityUUID, memberUUID)
 			_, err := conn.ExecContext(ctx, `INSERT INTO edges (
 					uuid, group_id, source_id, target_id, type, name,
 					fact, source_ids, strength,
 					created_at, updated_at, valid_from
 				) VALUES (?, ?, ?, ?, 'community', 'HAS_MEMBER', '', '["community"]', 1.0, ?, ?, ?)`,
-				edgeUUID, groupID, commUUID, memberUUID, now, now, now)
+				edgeUUID, groupID, cluster.CommunityUUID, memberUUID, now, now, now)
 			if err != nil {
 				return fmt.Errorf("failed to insert community edge: %w", err)
 			}
