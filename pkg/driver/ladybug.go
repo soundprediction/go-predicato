@@ -1843,29 +1843,32 @@ func (k *LadybugDriver) UpsertEdges(ctx context.Context, edges []*types.Edge) er
 }
 
 // ladybugEntity matches the Ladybug Entity node table column order for COPY FROM parquet.
+// ladybugEntity must match the Entity CREATE TABLE column order exactly
+// because DuckDB COPY FROM parquet matches by position, not name.
 type ladybugEntity struct {
-	CreatedAt     time.Time `parquet:"created_at,timestamp(microsecond)"`
 	Uuid          string    `parquet:"uuid"`
 	Name          string    `parquet:"name"`
 	GroupID       string    `parquet:"group_id"`
 	Labels        []string  `parquet:"labels,list"`
+	CreatedAt     time.Time `parquet:"created_at,timestamp(microsecond)"`
 	NameEmbedding []float32 `parquet:"name_embedding,list"`
 	Summary       string    `parquet:"summary"`
 	Attributes    string    `parquet:"attributes"`
 }
 
 // ladybugRelatesToNode matches the Ladybug RelatesToNode_ table column order for COPY FROM parquet.
+// ladybugRelatesToNode must match the RelatesToNode_ CREATE TABLE column order exactly.
 type ladybugRelatesToNode struct {
-	CreatedAt     time.Time  `parquet:"created_at,timestamp(microsecond)"`
-	ExpiredAt     *time.Time `parquet:"expired_at,timestamp(microsecond),optional"`
-	ValidAt       *time.Time `parquet:"valid_at,timestamp(microsecond),optional"`
-	InvalidAt     *time.Time `parquet:"invalid_at,timestamp(microsecond),optional"`
 	Uuid          string     `parquet:"uuid"`
 	GroupID       string     `parquet:"group_id"`
+	CreatedAt     time.Time  `parquet:"created_at,timestamp(microsecond)"`
 	Name          string     `parquet:"name"`
 	Fact          string     `parquet:"fact"`
 	FactEmbedding []float32  `parquet:"fact_embedding,list"`
 	Episodes      []string   `parquet:"episodes,list"`
+	ExpiredAt     *time.Time `parquet:"expired_at,timestamp(microsecond),optional"`
+	ValidAt       *time.Time `parquet:"valid_at,timestamp(microsecond),optional"`
+	InvalidAt     *time.Time `parquet:"invalid_at,timestamp(microsecond),optional"`
 	Attributes    string     `parquet:"attributes"`
 }
 
@@ -2959,15 +2962,106 @@ func (k *LadybugDriver) GetCommunities(ctx context.Context, groupID string, leve
 // - Batch processing scenarios
 // - Simple structural community detection
 func (k *LadybugDriver) BuildCommunities(ctx context.Context, groupID string) error {
-	// Note: This implementation is kept simple intentionally.
-	// The full LLM-powered community building is available through
-	// community.Builder (see pkg/community/community.go) which provides:
-	// - Hierarchical LLM summarization of entity clusters
-	// - Descriptive community naming via LLM
-	// - Embedding generation for community names
-	// - Concurrent processing with semaphore limiting
-	//
-	// That implementation is the recommended approach for production use.
+	fmt.Printf("  Building communities for group %q...\n", groupID)
+	start := time.Now()
+
+	// Load adjacency list from edges.
+	query := `
+		MATCH (a:Entity)-[:RELATES_TO]->(rel:RelatesToNode_)-[:RELATES_TO]->(b:Entity)
+		WHERE rel.group_id = $group_id
+		RETURN a.uuid AS src, b.uuid AS tgt
+	`
+	result, _, _, err := k.ExecuteQuery(ctx, query, map[string]any{"group_id": groupID})
+	if err != nil {
+		return fmt.Errorf("failed to query edges for communities: %w", err)
+	}
+
+	neighbors := make(map[string][]string)
+	if rows, ok := result.([]map[string]any); ok {
+		for _, row := range rows {
+			src, _ := row["src"].(string)
+			tgt, _ := row["tgt"].(string)
+			if src != "" && tgt != "" {
+				neighbors[src] = append(neighbors[src], tgt)
+				neighbors[tgt] = append(neighbors[tgt], src)
+			}
+		}
+	}
+
+	if len(neighbors) == 0 {
+		fmt.Println("  No edges found — skipping community detection")
+		return nil
+	}
+
+	// Load entity names.
+	nameQuery := `
+		MATCH (n:Entity)
+		WHERE n.group_id = $group_id
+		RETURN n.uuid AS uuid, n.name AS name
+	`
+	nameResult, _, _, err := k.ExecuteQuery(ctx, nameQuery, map[string]any{"group_id": groupID})
+	if err != nil {
+		return fmt.Errorf("failed to query entity names: %w", err)
+	}
+	entityNames := make(map[string]string)
+	if rows, ok := nameResult.([]map[string]any); ok {
+		for _, row := range rows {
+			uuid, _ := row["uuid"].(string)
+			name, _ := row["name"].(string)
+			entityNames[uuid] = name
+		}
+	}
+
+	// Detect communities using shared label propagation.
+	clusters := DetectCommunities(neighbors, entityNames, groupID)
+	if len(clusters) == 0 {
+		fmt.Println("  No multi-node communities found")
+		return nil
+	}
+
+	// Create community nodes and membership edges.
+	now := time.Now().UTC()
+	var communityCount, edgeCount int64
+	for _, cluster := range clusters {
+		commNode := &types.Node{
+			Uuid:       cluster.CommunityUUID,
+			GroupID:    groupID,
+			Type:       "community",
+			Name:       cluster.Name,
+			Content:    cluster.Content,
+			EntityType: "community",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			ValidFrom:  now,
+		}
+		if err := k.UpsertNode(ctx, commNode); err != nil {
+			return fmt.Errorf("failed to insert community node: %w", err)
+		}
+		communityCount++
+
+		for _, memberUUID := range cluster.MemberUUIDs {
+			memberEdge := &types.Edge{
+				BaseEdge: types.BaseEdge{
+					Uuid:      fmt.Sprintf("comm_edge_%s_%s", cluster.CommunityUUID, memberUUID),
+					GroupID:   groupID,
+					CreatedAt: now,
+				},
+				SourceID:  cluster.CommunityUUID,
+				TargetID:  memberUUID,
+				Type:      "community",
+				Name:      "HAS_MEMBER",
+				UpdatedAt: now,
+				ValidFrom: now,
+			}
+			if err := k.UpsertEdge(ctx, memberEdge); err != nil {
+				continue // best effort
+			}
+			edgeCount++
+		}
+	}
+
+	fmt.Printf("  Communities built: %d communities, %d membership edges in %s\n",
+		communityCount, edgeCount, time.Since(start).Round(time.Second))
 	return nil
 }
 

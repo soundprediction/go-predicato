@@ -34,10 +34,14 @@ func copyGraphWithCounts(ctx context.Context, src driver.GraphDriver, dest drive
 	totalNodes := 0
 	totalEdges := 0
 
+	// Track seen node UUIDs across groups to avoid duplicate primary key errors
+	// when the same entity appears in multiple groups (e.g. statpearls + wikidata).
+	seenNodes := make(map[string]bool)
+
 	if exporter, ok := src.(driver.GraphExporter); ok {
 		// Use streaming iteration if available
 		for _, groupID := range groupIDs {
-			n, e, err := copyGroupStreaming(ctx, exporter, dest, groupID)
+			n, e, err := copyGroupStreaming(ctx, exporter, dest, groupID, seenNodes)
 			if err != nil {
 				return totalNodes, totalEdges, fmt.Errorf("failed to copy group %s: %w", groupID, err)
 			}
@@ -47,7 +51,7 @@ func copyGraphWithCounts(ctx context.Context, src driver.GraphDriver, dest drive
 	} else {
 		// Fallback: use GetEntityNodesByGroup
 		for _, groupID := range groupIDs {
-			n, e, err := copyGroupFallback(ctx, src, dest, groupID)
+			n, e, err := copyGroupFallback(ctx, src, dest, groupID, seenNodes)
 			if err != nil {
 				return totalNodes, totalEdges, fmt.Errorf("failed to copy group %s: %w", groupID, err)
 			}
@@ -59,13 +63,17 @@ func copyGraphWithCounts(ctx context.Context, src driver.GraphDriver, dest drive
 	return totalNodes, totalEdges, nil
 }
 
-func copyGroupStreaming(ctx context.Context, exporter driver.GraphExporter, dest driver.GraphDriver, groupID string) (int, int, error) {
+func copyGroupStreaming(ctx context.Context, exporter driver.GraphExporter, dest driver.GraphDriver, groupID string, seenNodes map[string]bool) (int, int, error) {
 	nodeCount := 0
 	edgeCount := 0
 
-	// Copy nodes in batches
+	// Copy nodes in batches, skipping duplicates across groups
 	batch := make([]*types.Node, 0, defaultBatchSize)
 	err := exporter.IterateNodes(ctx, groupID, func(node *types.Node) error {
+		if seenNodes[node.Uuid] {
+			return nil // skip duplicate
+		}
+		seenNodes[node.Uuid] = true
 		batch = append(batch, node)
 		if len(batch) >= defaultBatchSize {
 			if err := dest.UpsertNodes(ctx, batch); err != nil {
@@ -116,12 +124,22 @@ func copyGroupStreaming(ctx context.Context, exporter driver.GraphExporter, dest
 	return nodeCount, edgeCount, nil
 }
 
-func copyGroupFallback(ctx context.Context, src driver.GraphDriver, dest driver.GraphDriver, groupID string) (int, int, error) {
+func copyGroupFallback(ctx context.Context, src driver.GraphDriver, dest driver.GraphDriver, groupID string, seenNodes map[string]bool) (int, int, error) {
 	// Get all entity nodes for this group
 	nodes, err := src.GetEntityNodesByGroup(ctx, groupID)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to get nodes for group %s: %w", groupID, err)
 	}
+
+	// Filter out duplicates across groups
+	dedupedNodes := make([]*types.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if !seenNodes[node.Uuid] {
+			seenNodes[node.Uuid] = true
+			dedupedNodes = append(dedupedNodes, node)
+		}
+	}
+	nodes = dedupedNodes
 
 	// Upsert nodes in batches
 	nodeCount := 0
