@@ -83,10 +83,13 @@ Key code paths in `ingestion.go` / `ingestion_factstore.go`:
 
 ## Building
 
-**IMPORTANT**: This project uses CGO and requires the LadybugDB native library. Use the Makefile for building:
+**IMPORTANT**: This project uses CGO and requires the LadybugDB and CozoDB native libraries. Pre-built libraries for all supported platforms are vendored in `cmd/vendor-libs/` as compressed archives. Use the Makefile for building:
 
 ```bash
-# Build everything (recommended)
+# Extract vendored native libraries for current platform (required before building)
+make extract-libs
+
+# Build everything (includes extract-libs)
 make build
 
 # Build the CLI binary
@@ -101,14 +104,8 @@ make test-nocgo
 # Run only CGO tests
 make test-cgo
 
-# Run server
-make run-server
-
-# Run server in debug mode
-make run-server-debug
-
-# Development workflow (fmt, vet, test)
-make dev
+# Update vendored libraries from upstream (downloads all platforms)
+make update-libs
 
 # All available targets
 make help
@@ -119,8 +116,8 @@ make help
 If you need to build manually:
 
 ```bash
-# Download the ladybug native library (required before building)
-go generate ./cmd/main.go
+# Extract the vendored native libraries for your platform
+bash cmd/extract-vendor-libs.sh
 
 # Build with the system_ladybug tag
 go build -tags system_ladybug ./...
@@ -129,9 +126,21 @@ go build -tags system_ladybug ./...
 go build -tags system_ladybug -o bin/predicato ./cmd/main.go
 ```
 
-**Note**: The `go generate` command downloads `liblbug.so` to `cmd/lib-ladybug/`. If you see linker errors like `cannot find -llbug`, run `go generate ./cmd/main.go` first.
+### Updating Vendored Libraries
 
-**Known Issue**: Building `./...` (all packages including examples) may fail with linker errors because the examples need their own copy of `liblbug.so`. Use `make build-cli` to build the main CLI, or run `go generate` in each example directory before building.
+To update the vendored native libraries from upstream releases:
+
+```bash
+# Downloads latest releases for all platforms and compresses into cmd/vendor-libs/
+make update-libs
+# Or equivalently: go generate ./cmd/main.go
+```
+
+After updating, commit the changed files in `cmd/vendor-libs/`.
+
+**Note**: If you see linker errors like `cannot find -llbug`, run `make extract-libs` first.
+
+**Known Issue**: Building `./...` (all packages including examples) may fail with linker errors because the examples need their own copy of the native library. Use `make build-cli` to build the main CLI.
 
 ### CGO vs Non-CGO Packages
 

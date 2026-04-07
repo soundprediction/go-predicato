@@ -60,7 +60,7 @@ examples/ladybug_ollama/ladybug_ollama
 examples/openai_compatible/openai_compatible
 go.work.sum
 
-# Native libraries (downloaded via go generate)
+# Native libraries (extracted from vendor-libs at build time)
 lib-ladybug/
 lib-cozo/
 

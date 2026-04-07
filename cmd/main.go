@@ -1,7 +1,6 @@
 package main
 
-//go:generate sh -c "curl -sL https://raw.githubusercontent.com/LadybugDB/go-ladybug/refs/heads/master/download_lbug.sh | bash -s -- -out lib-ladybug"
-//go:generate bash download_cozo.sh -out lib-cozo
+//go:generate bash update-vendor-libs.sh
 
 /*
 #cgo LDFLAGS: -L${SRCDIR}/lib-cozo

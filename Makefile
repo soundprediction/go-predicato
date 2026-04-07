@@ -1,16 +1,21 @@
 # Go Predicato Makefile
 
-.PHONY: build build-cli test test-cgo test-nocgo clean fmt vet lint run-example run-server deps tidy generate
+.PHONY: build build-cli test test-cgo test-nocgo clean fmt vet lint run-example run-server deps tidy generate extract-libs update-libs
 
 # Library path for CGO tests
 LIB_PATH := $(shell pwd)/cmd/lib-ladybug
 CGO_LDFLAGS := -L$(LIB_PATH) -Wl,-rpath,$(LIB_PATH)
 
-# Download Ladybug native library
-generate:
+# Extract vendored native libraries for the current platform
+extract-libs:
+	bash cmd/extract-vendor-libs.sh
+
+# Download and update vendored native libraries (all platforms)
+update-libs:
 	go generate ./cmd/main.go
-	@# Latest LadybugDB SONAME is liblbug.so.0; create symlink so runtime linker finds it
-	@test -f cmd/lib-ladybug/liblbug.so && cd cmd/lib-ladybug && ln -sf liblbug.so liblbug.so.0 || true
+
+# Alias: extract-libs (replaces old generate that downloaded from upstream)
+generate: extract-libs
 
 # Build the project (requires generate first)
 build: generate
@@ -101,7 +106,9 @@ check: fmt vet lint test-race
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  generate     - Download Ladybug native library (required first)"
+	@echo "  extract-libs - Extract vendored native libraries for current platform"
+	@echo "  update-libs  - Download and update vendored libraries (all platforms)"
+	@echo "  generate     - Alias for extract-libs"
 	@echo "  build        - Build the project (includes generate)"
 	@echo "  build-cli    - Build CLI binary"
 	@echo "  build-cli-all- Build CLI for multiple platforms"
