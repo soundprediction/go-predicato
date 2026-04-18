@@ -537,6 +537,56 @@ for _, node := range results.Nodes {
 
 This performs hybrid search (vector similarity + keyword matching) using VectorChord and PostgreSQL full-text search.
 
+## Post-Hoc Verification (Hallucination Detection)
+
+Predicato includes a verification pipeline (`pkg/verification/`) that checks LLM-generated claims against source facts from the knowledge graph. It runs entirely on local models with no LLM calls required.
+
+### Pipeline
+
+1. **Claim splitting** — breaks the LLM response into individual sentences, filters short fragments, and detects meta-statements ("I don't have information about...") that should not be flagged
+2. **Evidence matching** — batch-embeds all claims and source facts, computes cosine similarity to find the best-matching source for each claim
+3. **NLI entailment check** — runs a DeBERTa cross-encoder to classify each claim as entailment/neutral/contradiction against its best evidence
+4. **Aggregation** — computes an overall trust score (fraction of supported claims) and a pass/fail verdict
+
+### Usage
+
+```go
+// Create an NLI client (LLM-free, ~80MB model auto-downloaded from HF Hub)
+nli, _ := verification.NewCandleNLIClient(&verification.CandleNLIConfig{
+    Model: "cross-encoder/nli-deberta-v3-xsmall",
+})
+defer nli.Close()
+
+// Attach to a predicato client
+client.SetVerifier(nli)
+
+// After generating an LLM response with RAG context:
+result, _ := client.VerifyResponse(ctx, llmResponse, ragFacts, nil)
+fmt.Printf("Trust: %.0f%%, Pass: %v\n", result.TrustScore*100, result.Pass)
+for _, c := range result.Claims {
+    fmt.Printf("  [%s] %s (confidence: %.2f)\n", c.Verdict, c.Text, c.Confidence)
+}
+```
+
+### NLI Backends
+
+| Backend | Constructor | Latency | Dependencies |
+|---------|-------------|---------|-------------|
+| DeBERTa cross-encoder | `NewCandleNLIClient()` | ~50ms/claim | CGO (go-candle FFI), model from HF Hub |
+| LLM prompt | `NewLLMNLIClient(nlpClient)` | ~500ms/claim | Any `nlp.Client` implementation |
+
+### Custom Thresholds
+
+```go
+result, _ := client.VerifyResponse(ctx, response, facts, &verification.VerifyOptions{
+    GateThreshold:          0.30,  // Min similarity to run NLI (default: 0.25)
+    SupportThreshold:       0.45,  // Min similarity for "supported" (default: 0.40)
+    ContradictionThreshold: 0.60,  // NLI contradiction probability threshold (default: 0.50)
+    EntailmentThreshold:    0.60,  // NLI entailment probability threshold (default: 0.50)
+    TrustPassScore:         0.80,  // Min trust score to pass (default: 0.70)
+})
+```
+
 ## CLI & Server
 
 ```bash
