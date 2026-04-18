@@ -17,6 +17,7 @@ import (
 	"github.com/soundprediction/predicato/pkg/search"
 	"github.com/soundprediction/predicato/pkg/types"
 	"github.com/soundprediction/predicato/pkg/utils/maintenance"
+	"github.com/soundprediction/predicato/pkg/verification"
 )
 
 // driverWrapper wraps driver.GraphDriver to implement types.EdgeOperations
@@ -144,6 +145,7 @@ type Client struct {
 	config      *Config
 	logger      *slog.Logger
 	factStore   factstore.FactsDB
+	verifier    *verification.Verifier
 
 	// Specialized NLP clients for different steps
 	nlpModels NlpModels
