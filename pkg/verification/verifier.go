@@ -57,9 +57,9 @@ func (v *Verifier) Verify(ctx context.Context, response string, facts []string, 
 
 	for i, m := range matches {
 		verdicts[i] = ClaimVerdict{
-			Text:          m.Claim.Text,
-			Evidence:      m.BestEvidence,
-			EvidenceScore: m.BestScore,
+			Text:            m.Claim.Text,
+			Evidence:        m.BestEvidence,
+			EvidenceScore:   m.BestScore,
 			IsMetaStatement: m.Claim.IsMetaStatement,
 		}
 

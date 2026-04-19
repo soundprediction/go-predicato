@@ -9,10 +9,10 @@ import (
 
 // EvidenceMatch represents a claim paired with its best-matching source evidence.
 type EvidenceMatch struct {
-	Claim         Claim
-	BestEvidence  string
-	BestScore     float64
-	AvgScore      float64
+	Claim        Claim
+	BestEvidence string
+	BestScore    float64
+	AvgScore     float64
 }
 
 // MatchEvidence finds the best-matching source fact for each claim using
@@ -62,7 +62,7 @@ func MatchEvidence(
 		}
 
 		matches[i] = EvidenceMatch{
-			Claim:    claims[i],
+			Claim:     claims[i],
 			BestScore: bestScore,
 			AvgScore:  totalScore / float64(len(facts)),
 		}

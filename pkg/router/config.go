@@ -16,6 +16,18 @@ const (
 	GraphDbTypeLadybug GraphDbType = "ladybug"
 )
 
+// DriverFactory creates a GraphDriver from client config, db path, and embedding dimensions.
+type DriverFactory func(c *ClientConfig, dbPath string, embDim int) (driver.GraphDriver, error)
+
+// driverFactories holds registered driver factories for build-tag-gated backends.
+var driverFactories = map[GraphDbType]DriverFactory{}
+
+// RegisterDriverFactory registers a driver factory for a graph database type.
+// Called from build-tagged init() functions (e.g., driver_ladybug.go).
+func RegisterDriverFactory(dbType GraphDbType, factory DriverFactory) {
+	driverFactories[dbType] = factory
+}
+
 // ClientConfig defines configuration for a single predicato client.
 type ClientConfig struct {
 	// GraphDb is the graph database configuration map.
@@ -86,17 +98,11 @@ func (c *ClientConfig) CreateDriver(ctx context.Context) (driver.GraphDriver, er
 			EmbeddingDim: embDim,
 			ReadOnly:     c.ReadOnly,
 		})
-	case GraphDbTypeLadybug:
-		cfg := driver.DefaultLadybugDriverConfig()
-		cfg.DBPath = dbPath
-		cfg.ReadOnly = c.ReadOnly
-		if c.ReadOnly {
-			// Scale buffer pool by DB file size. Larger graphs (e.g. pain at
-			// 1.3GB) OOM on BM25 with the previous flat 768MB allocation.
-			cfg.BufferPoolSize = bufferPoolForDBSize(dbPath)
-		}
-		return driver.NewLadybugDriverWithConfig(cfg)
 	default:
+		// Check platform-specific drivers (e.g., Ladybug behind build tags)
+		if factory, ok := driverFactories[GraphDbType(dbType)]; ok {
+			return factory(c, dbPath, embDim)
+		}
 		return nil, fmt.Errorf("unsupported graph database type: %s", dbType)
 	}
 }
