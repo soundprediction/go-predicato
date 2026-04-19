@@ -139,6 +139,9 @@ func (c *Client) RemoveEpisode(ctx context.Context, episodeUUID string) error {
 
 // Close closes the client and all its connections.
 func (c *Client) Close(ctx context.Context) error {
+	if c == nil || c.driver == nil {
+		return nil
+	}
 	return c.driver.Close()
 }
 
