@@ -47,8 +47,8 @@ func SplitClaims(text string) []Claim {
 		}
 
 		claim := Claim{
-			Text:            s,
-			IsMetaStatement: isMetaStatement(s),
+			Text:                    s,
+			IsMetaStatement:         isMetaStatement(s),
 			HasHallucinationPattern: hasHallucinationPattern(s),
 		}
 		claims = append(claims, claim)
