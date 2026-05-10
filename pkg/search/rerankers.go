@@ -7,6 +7,7 @@ import (
 
 	"github.com/soundprediction/predicato/pkg/driver"
 	"github.com/soundprediction/predicato/pkg/types"
+	"github.com/soundprediction/predicato/pkg/utils"
 )
 
 // RRFResult represents the result of RRF reranking
@@ -200,14 +201,18 @@ func MaximalMarginalRelevance(queryVector []float32, candidates map[string][]flo
 	uuids := make([]string, 0, len(candidates))
 
 	for uuid, embedding := range candidates {
-		// Normalize embeddings (L2 normalization)
-		normalized := normalizeL2(embedding)
+		normalized := utils.Normalize(embedding)
+		if normalized == nil {
+			normalized = embedding
+		}
 		candidateVectors[uuid] = normalized
 		uuids = append(uuids, uuid)
 	}
 
-	// Normalize query vector
-	normalizedQuery := normalizeL2(queryVector)
+	normalizedQuery := utils.Normalize(queryVector)
+	if normalizedQuery == nil {
+		normalizedQuery = queryVector
+	}
 
 	// Calculate similarity matrix between candidates
 	similarityMatrix := make(map[string]map[string]float64)
@@ -217,7 +222,7 @@ func MaximalMarginalRelevance(queryVector []float32, candidates map[string][]flo
 			if uuid1 == uuid2 {
 				similarityMatrix[uuid1][uuid2] = 1.0
 			} else {
-				sim := CalculateCosineSimilarity(candidateVectors[uuid1], candidateVectors[uuid2])
+				sim := utils.CosineSimilarity(candidateVectors[uuid1], candidateVectors[uuid2])
 				similarityMatrix[uuid1][uuid2] = sim
 			}
 		}
@@ -227,7 +232,7 @@ func MaximalMarginalRelevance(queryVector []float32, candidates map[string][]flo
 	mmrScores := make(map[string]float64)
 	for _, uuid := range uuids {
 		// Query-document similarity
-		queryDocSim := CalculateCosineSimilarity(normalizedQuery, candidateVectors[uuid])
+		queryDocSim := utils.CosineSimilarity(normalizedQuery, candidateVectors[uuid])
 
 		// Find maximum similarity to any other document
 		maxSim := 0.0
@@ -272,30 +277,6 @@ func MaximalMarginalRelevance(queryVector []float32, candidates map[string][]flo
 	}
 
 	return resultUUIDs, resultScores
-}
-
-// normalizeL2 performs L2 normalization on a vector
-func normalizeL2(vector []float32) []float32 {
-	if len(vector) == 0 {
-		return vector
-	}
-
-	var norm float32
-	for _, val := range vector {
-		norm += val * val
-	}
-	norm = float32(math.Sqrt(float64(norm)))
-
-	if norm == 0 {
-		return vector // Return as-is if zero vector
-	}
-
-	normalized := make([]float32, len(vector))
-	for i, val := range vector {
-		normalized[i] = val / norm
-	}
-
-	return normalized
 }
 
 // CrossEncoderReranker uses an LLM to rerank results (placeholder implementation)

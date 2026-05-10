@@ -197,26 +197,6 @@ func HasWordOverlap(text1, text2 string) bool {
 	return false
 }
 
-// CalculateCosineSimilarity calculates cosine similarity between two vectors
-func CalculateCosineSimilarity(vec1, vec2 []float32) float64 {
-	if len(vec1) != len(vec2) || len(vec1) == 0 {
-		return 0.0
-	}
-
-	var dotProduct, norm1, norm2 float64
-	for i := 0; i < len(vec1); i++ {
-		dotProduct += float64(vec1[i]) * float64(vec2[i])
-		norm1 += float64(vec1[i]) * float64(vec1[i])
-		norm2 += float64(vec2[i]) * float64(vec2[i])
-	}
-
-	if norm1 == 0 || norm2 == 0 {
-		return 0.0
-	}
-
-	return dotProduct / (norm1 * norm2)
-}
-
 // FindSimilarNodes finds nodes that are potentially duplicates based on word overlap and semantic similarity
 func FindSimilarNodes(node *types.Node, candidates []*types.Node, minScore float64) []*types.Node {
 	var similar []*types.Node
@@ -230,7 +210,7 @@ func FindSimilarNodes(node *types.Node, candidates []*types.Node, minScore float
 
 		// Check semantic similarity if embeddings are available
 		if len(node.Embedding) > 0 && len(candidate.Embedding) > 0 {
-			similarity := CalculateCosineSimilarity(node.Embedding, candidate.Embedding)
+			similarity := CosineSimilarity(node.Embedding, candidate.Embedding)
 			if similarity >= minScore {
 				similar = append(similar, candidate)
 			}
@@ -258,7 +238,7 @@ func FindSimilarEdges(edge *types.Edge, candidates []*types.Edge, minScore float
 
 		// Check semantic similarity if embeddings are available
 		if len(edge.Embedding) > 0 && len(candidate.Embedding) > 0 {
-			similarity := CalculateCosineSimilarity(edge.Embedding, candidate.Embedding)
+			similarity := CosineSimilarity(edge.Embedding, candidate.Embedding)
 			if similarity >= minScore {
 				similar = append(similar, candidate)
 			}

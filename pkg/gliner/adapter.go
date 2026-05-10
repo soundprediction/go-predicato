@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -193,12 +192,18 @@ func (a *LLMAdapter) ExtractExtended(ctx context.Context, text string, entityTyp
 
 // parseSection extracts content between <TAG> and </TAG>
 func parseSection(text, tag string) string {
-	re := regexp.MustCompile(fmt.Sprintf(`<%s>\s*([\s\S]*?)\s*</%s>`, tag, tag))
-	match := re.FindStringSubmatch(text)
-	if len(match) > 1 {
-		return match[1]
+	open := "<" + tag + ">"
+	close := "</" + tag + ">"
+	start := strings.Index(text, open)
+	if start < 0 {
+		return ""
 	}
-	return ""
+	start += len(open)
+	end := strings.Index(text[start:], close)
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(text[start : start+end])
 }
 
 // parseTSV parses simple TSV string into slice of records

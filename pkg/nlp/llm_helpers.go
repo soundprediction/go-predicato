@@ -64,21 +64,18 @@ func calculateProgressiveTimeout(attempt int) time.Duration {
 //	    5,
 //	)
 
+var (
+	thinkTagRe = regexp.MustCompile(`(?s)<think>.*?</think>`)
+	htmlTagRe  = regexp.MustCompile(`<[^>]*>`)
+)
+
 // RemoveThinkTags removes <think> tags and everything in between them from a string.
 func RemoveThinkTags(input string) string {
-	re := regexp.MustCompile(`(?s)<think>.*?</think>`)
-	return re.ReplaceAllString(input, "")
+	return thinkTagRe.ReplaceAllString(input, "")
 }
+
 func StripHtmlTags(s string) string {
-	// Regular expression to match HTML tags.
-	// <[^>]*> matches any character between '<' and '>'
-	const tagRegex = "<[^>]*>"
-
-	// Compile the regex
-	r := regexp.MustCompile(tagRegex)
-
-	// Replace all matches with an empty string
-	return r.ReplaceAllString(s, "")
+	return htmlTagRe.ReplaceAllString(s, "")
 }
 func GenerateJSONResponseWithContinuation(
 	ctx context.Context,

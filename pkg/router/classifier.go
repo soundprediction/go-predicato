@@ -154,24 +154,19 @@ func (tc *EmbeddingTopicClassifier) Classify(ctx context.Context, query string) 
 		return tc.fallbackClassifier.Classify(ctx, query)
 	}
 
-	matches := make([]TopicMatch, 0, len(tc.topicEmbeddings))
+	keywordMatches, _ := tc.fallbackClassifier.Classify(ctx, query)
+	matchedTopicsByClient := make(map[string][]string, len(keywordMatches))
+	for _, km := range keywordMatches {
+		matchedTopicsByClient[km.ClientName] = km.MatchedTopics
+	}
 
+	matches := make([]TopicMatch, 0, len(tc.topicEmbeddings))
 	for clientName, topicEmbedding := range tc.topicEmbeddings {
 		similarity := cosineSimilarity(queryEmbedding, topicEmbedding)
-
 		if similarity > 0.0 {
-			var matchedTopics []string
-			keywordMatches, _ := tc.fallbackClassifier.Classify(ctx, query)
-			for _, km := range keywordMatches {
-				if km.ClientName == clientName {
-					matchedTopics = km.MatchedTopics
-					break
-				}
-			}
-
 			matches = append(matches, TopicMatch{
 				ClientName:    clientName,
-				MatchedTopics: matchedTopics,
+				MatchedTopics: matchedTopicsByClient[clientName],
 				Confidence:    similarity,
 			})
 		}

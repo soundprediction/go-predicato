@@ -298,14 +298,6 @@ func (e *EntityEdge) updateFromCompat() {
 	}
 }
 
-// GenerateEmbedding implements the Python EntityEdge.generate_embedding() method
-func (e *EntityEdge) GenerateEmbedding(ctx context.Context, embedder interface{}) error {
-	// TODO: Implement embedder interface and logic
-	// text := strings.ReplaceAll(e.Fact, "\n", " ")
-	// e.FactEmbedding = await embedder.Create([]string{text})
-	return nil
-}
-
 // NewEntityEdge creates a new EntityEdge with backward compatibility
 func NewEntityEdge(id, sourceID, targetID, groupID, name string, edgeType EdgeType) *EntityEdge {
 	now := time.Now()

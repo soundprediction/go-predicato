@@ -25,25 +25,22 @@ const (
 var (
 	// Cache for shingles to avoid recomputation
 	shingleCache sync.Map
+
+	whitespaceRe  = regexp.MustCompile(`\s+`)
+	nonAlphaNumRe = regexp.MustCompile(`[^a-z0-9' ]`)
 )
 
 // NormalizeStringExact lowercases text and collapses whitespace so equal names map to the same key
 func NormalizeStringExact(name string) string {
-	// Collapse whitespace
-	re := regexp.MustCompile(`\s+`)
-	normalized := re.ReplaceAllString(strings.ToLower(name), " ")
+	normalized := whitespaceRe.ReplaceAllString(strings.ToLower(name), " ")
 	return strings.TrimSpace(normalized)
 }
 
 // normalizeNameForFuzzy produces a fuzzier form that keeps alphanumerics and apostrophes for n-gram shingles
 func normalizeNameForFuzzy(name string) string {
 	normalized := NormalizeStringExact(name)
-	// Keep only alphanumerics, apostrophes, and spaces
-	re := regexp.MustCompile(`[^a-z0-9' ]`)
-	normalized = re.ReplaceAllString(normalized, " ")
-	// Collapse multiple spaces
-	re = regexp.MustCompile(`\s+`)
-	normalized = re.ReplaceAllString(strings.TrimSpace(normalized), " ")
+	normalized = nonAlphaNumRe.ReplaceAllString(normalized, " ")
+	normalized = whitespaceRe.ReplaceAllString(strings.TrimSpace(normalized), " ")
 	return normalized
 }
 

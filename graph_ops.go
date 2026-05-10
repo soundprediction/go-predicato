@@ -46,25 +46,19 @@ func (c *Client) CreateIndices(ctx context.Context) error {
 }
 
 // RemoveEpisode removes an episode and its associated nodes and edges from the knowledge graph.
-// This is an exact translation of the Python Predicato.remove_episode() method.
 func (c *Client) RemoveEpisode(ctx context.Context, episodeUUID string) error {
-	// Find the episode to be deleted
-	// Equivalent to: episode = await EpisodicNode.get_by_uuid(self.driver, episode_uuid)
 	episode, err := types.GetEpisodicNodeByUUID(ctx, c.driver, episodeUUID)
 	if err != nil {
 		return fmt.Errorf("failed to get episode: %w", err)
 	}
 
-	// Find edges mentioned by the episode
-	// Equivalent to: edges = await EntityEdge.get_by_uuids(self.driver, episode.entity_edges)
 	wrapper := &driverWrapper{c.driver}
 	edges, err := types.GetEntityEdgesByUUIDs(ctx, wrapper, episode.EntityEdges)
 	if err != nil {
 		return fmt.Errorf("failed to get entity edges: %w", err)
 	}
 
-	// We should only delete edges created by the episode
-	// Equivalent to: if edge.episodes and edge.episodes[0] == episode.uuid:
+	// Only delete edges created by this episode (the episode is first in its episodes list).
 	var edgesToDelete []*types.Edge
 	for _, edge := range edges {
 		if len(edge.Episodes) > 0 && edge.Episodes[0] == episode.Uuid {
@@ -72,40 +66,38 @@ func (c *Client) RemoveEpisode(ctx context.Context, episodeUUID string) error {
 		}
 	}
 
-	// Find nodes mentioned by the episode
-	// Equivalent to: nodes = await get_mentioned_nodes(self.driver, [episode])
 	mentionedNodes, err := types.GetMentionedNodes(ctx, c.driver, []*types.Node{episode})
 	if err != nil {
 		return fmt.Errorf("failed to get mentioned nodes: %w", err)
 	}
 
-	// We should delete all nodes that are only mentioned in the deleted episode
+	// Find which mentioned nodes are referenced only by this episode in a single query.
 	var nodesToDelete []*types.Node
-	for _, node := range mentionedNodes {
-		// Equivalent to: query: LiteralString = 'MATCH (e:Episodic)-[:MENTIONS]->(n:Entity {uuid: $uuid}) RETURN count(*) AS episode_count'
-		query := `MATCH (e:Episodic)-[:MENTIONS]->(n:Entity {uuid: $uuid}) RETURN count(*) AS episode_count`
-		records, _, _, err := c.driver.ExecuteQuery(ctx, query, map[string]interface{}{
-			"uuid": node.Uuid,
-		})
-		if err != nil {
-			c.logger.Warn("failed to check episode count for node, skipping deletion",
-				"node_uuid", node.Uuid,
-				"error", err)
-			continue // Skip on error, don't delete
+	if len(mentionedNodes) > 0 {
+		uuids := make([]string, len(mentionedNodes))
+		for i, n := range mentionedNodes {
+			uuids[i] = n.Uuid
 		}
-
-		// Check if only one episode mentions this node
-		if recordList, ok := records.([]map[string]interface{}); ok {
+		query := `MATCH (e:Episodic)-[:MENTIONS]->(n:Entity) WHERE n.uuid IN $uuids RETURN n.uuid AS uuid, count(*) AS episode_count`
+		records, _, _, err := c.driver.ExecuteQuery(ctx, query, map[string]interface{}{"uuids": uuids})
+		if err != nil {
+			c.logger.Warn("failed to check episode counts; skipping orphan node deletion", "error", err)
+		} else if recordList, ok := records.([]map[string]interface{}); ok {
+			counts := make(map[string]int64, len(recordList))
 			for _, record := range recordList {
-				if count, ok := record["episode_count"].(int64); ok && count == 1 {
+				uuid, _ := record["uuid"].(string)
+				if count, ok := record["episode_count"].(int64); ok {
+					counts[uuid] = count
+				}
+			}
+			for _, node := range mentionedNodes {
+				if counts[node.Uuid] == 1 {
 					nodesToDelete = append(nodesToDelete, node)
 				}
 			}
 		}
 	}
 
-	// Delete edges first
-	// Equivalent to: await Edge.delete_by_uuids(self.driver, [edge.uuid for edge in edges_to_delete])
 	if len(edgesToDelete) > 0 {
 		edgeUUIDs := make([]string, len(edgesToDelete))
 		for i, edge := range edgesToDelete {
@@ -116,8 +108,6 @@ func (c *Client) RemoveEpisode(ctx context.Context, episodeUUID string) error {
 		}
 	}
 
-	// Delete nodes
-	// Equivalent to: await Node.delete_by_uuids(self.driver, [node.uuid for node in nodes_to_delete])
 	if len(nodesToDelete) > 0 {
 		nodeUUIDs := make([]string, len(nodesToDelete))
 		for i, node := range nodesToDelete {
@@ -128,8 +118,6 @@ func (c *Client) RemoveEpisode(ctx context.Context, episodeUUID string) error {
 		}
 	}
 
-	// Finally, delete the episode itself
-	// Equivalent to: await episode.delete(self.driver)
 	if err := types.DeleteNode(ctx, c.driver, episode); err != nil {
 		return fmt.Errorf("failed to delete episode: %w", err)
 	}

@@ -3,13 +3,13 @@ package search
 import (
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/soundprediction/predicato/pkg/driver"
 	"github.com/soundprediction/predicato/pkg/types"
+	"github.com/soundprediction/predicato/pkg/utils"
 )
 
 // Constants for search operations
@@ -32,31 +32,6 @@ func NewSearchUtilities(driver driver.GraphDriver) *SearchUtilities {
 	return &SearchUtilities{
 		driver: driver,
 	}
-}
-
-// CalculateCosineSimilarity calculates cosine similarity between two vectors
-func CalculateCosineSimilarity(vector1, vector2 []float32) float64 {
-	if len(vector1) != len(vector2) {
-		return 0.0
-	}
-
-	var dotProduct float64
-	var norm1, norm2 float64
-
-	for i := range vector1 {
-		dotProduct += float64(vector1[i]) * float64(vector2[i])
-		norm1 += float64(vector1[i]) * float64(vector1[i])
-		norm2 += float64(vector2[i]) * float64(vector2[i])
-	}
-
-	norm1 = math.Sqrt(norm1)
-	norm2 = math.Sqrt(norm2)
-
-	if norm1 == 0 || norm2 == 0 {
-		return 0.0 // Handle zero vectors
-	}
-
-	return dotProduct / (norm1 * norm2)
 }
 
 // FulltextQuery constructs a fulltext search query with group ID filtering
@@ -407,14 +382,14 @@ func MMRRerank(entities []*types.Node, queryEmbedding []float32, lambdaParam flo
 			// Calculate relevance score (similarity to query)
 			var relevanceScore float64
 			if len(entity.Embedding) > 0 {
-				relevanceScore = CalculateCosineSimilarity(queryEmbedding, entity.Embedding)
+				relevanceScore = utils.CosineSimilarity(queryEmbedding, entity.Embedding)
 			}
 
 			// Calculate diversity score (maximum similarity to already selected items)
 			var maxSimilarity float64
 			for _, selectedEntity := range selected {
 				if len(selectedEntity.Embedding) > 0 && len(entity.Embedding) > 0 {
-					similarity := CalculateCosineSimilarity(entity.Embedding, selectedEntity.Embedding)
+					similarity := utils.CosineSimilarity(entity.Embedding, selectedEntity.Embedding)
 					if similarity > maxSimilarity {
 						maxSimilarity = similarity
 					}

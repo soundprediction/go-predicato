@@ -152,14 +152,23 @@ func (c *Client) Add(ctx context.Context, episodes []types.Episode, options *Add
 		return &types.AddBulkEpisodeResults{}, nil
 	}
 
-	// Filter out episodes that already exist
-	var newEpisodes []types.Episode
-	var skippedCount int
+	// Filter out episodes that already exist with a single batch lookup.
+	episodeIDs := make([]string, len(episodes))
+	for i, episode := range episodes {
+		episodeIDs[i] = episode.ID
+	}
+	existingNodes, _ := c.driver.GetNodes(ctx, episodeIDs, c.config.GroupID)
+	existing := make(map[string]struct{}, len(existingNodes))
+	for _, n := range existingNodes {
+		if n != nil {
+			existing[n.Uuid] = struct{}{}
+		}
+	}
 
+	newEpisodes := make([]types.Episode, 0, len(episodes))
+	skippedCount := 0
 	for _, episode := range episodes {
-		existingNode, err := c.driver.GetNode(ctx, episode.ID, c.config.GroupID)
-		if err == nil && existingNode != nil {
-			// Episode already exists, skip it
+		if _, ok := existing[episode.ID]; ok {
 			skippedCount++
 			c.logger.Debug("Skipping existing episode", "episode_id", episode.ID)
 			continue
@@ -1302,8 +1311,6 @@ func (c *Client) AddTriplet(ctx context.Context, sourceNode *types.Node, edge *t
 		return nil, fmt.Errorf("source node, edge, and target node must not be nil")
 	}
 
-	// Step 1: Generate name embeddings for nodes if missing (lines 1024-1027)
-	// Equivalent to: if source_node.name_embedding is None: await source_node.generate_name_embedding(self.embedder)
 	if len(sourceNode.NameEmbedding) == 0 && c.embedder != nil {
 		embedding, err := c.embedder.EmbedSingle(ctx, sourceNode.Name)
 		if err != nil {
@@ -1320,8 +1327,6 @@ func (c *Client) AddTriplet(ctx context.Context, sourceNode *types.Node, edge *t
 		targetNode.NameEmbedding = embedding
 	}
 
-	// Step 2: Generate fact embedding for edge if missing (lines 1028-1029)
-	// Equivalent to: if edge.fact_embedding is None: await edge.generate_embedding(self.embedder)
 	if len(edge.FactEmbedding) == 0 && c.embedder != nil {
 		embedding, err := c.embedder.EmbedSingle(ctx, edge.Fact)
 		if err != nil {
@@ -1372,7 +1377,6 @@ func (c *Client) AddTriplet(ctx context.Context, sourceNode *types.Node, edge *t
 	}
 	existingEdges := existingResults.Edges
 
-	// Step 8: Create EpisodicNode exactly as in Python (lines 1066-1074)
 	var validAt time.Time
 	if !updatedEdge.ValidFrom.IsZero() {
 		validAt = updatedEdge.ValidFrom
@@ -1383,7 +1387,7 @@ func (c *Client) AddTriplet(ctx context.Context, sourceNode *types.Node, edge *t
 	episodicNode := &types.Node{
 		Name:        "",
 		Type:        types.EpisodicNodeType,
-		EpisodeType: types.DocumentEpisodeType, // Equivalent to Python's EpisodeType.text
+		EpisodeType: types.DocumentEpisodeType,
 		Content:     "",
 		Summary:     "",
 		ValidFrom:   validAt,
@@ -1425,14 +1429,9 @@ func (c *Client) AddTriplet(ctx context.Context, sourceNode *types.Node, edge *t
 	}, nil
 }
 
-// resolveExtractedEdgeExact is an exact translation of Python's resolve_extracted_edge function
 func (c *Client) resolveExtractedEdgeExact(ctx context.Context, extractedEdge *types.Edge, relatedEdges []*types.Edge, existingEdges []*types.Edge, episode *types.Node) (*types.Edge, []*types.Edge, error) {
-	// Use the EdgeOperations to resolve the edge exactly as in Python
 	edgeOps := maintenance.NewEdgeOperations(c.driver, c.nlProcessor, c.embedder, prompts.NewLibrary())
 	edgeOps.SetLogger(c.logger)
-
-	// The Go implementation wraps the private resolveExtractedEdge method
-	// We'll use ResolveExtractedEdges which internally calls the same logic
 	resolvedEdges, invalidatedEdges, err := edgeOps.ResolveExtractedEdges(ctx, []*types.Edge{extractedEdge}, episode, []*types.Node{}, c.config.EdgeTypes)
 	if err != nil {
 		return nil, nil, err
@@ -1484,10 +1483,6 @@ func (c *Client) createEntityNodeEmbeddings(ctx context.Context, nodes []*types.
 	}
 
 	return nil
-}
-
-func GenerateViaCsv[T any](ctx context.Context, client Predicato, messages []types.Message) ([]T, error) {
-	return nil, nil
 }
 
 // getOrCreateSourceNode retrieves an existing source node or creates a new one if it doesn't exist.
