@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -160,6 +161,27 @@ type LadybugDriver struct {
 	closed   bool
 	verbose  bool
 	readOnly bool
+
+	// bulkLoad, when true, makes batch upserts assume an initially-empty graph:
+	// they skip the per-row existence check and wrap each batch in a single
+	// transaction with one prepared statement. This is for one-shot bulk imports
+	// (e.g. convert-graph / parquet-import into a fresh DB), not incremental writes.
+	bulkLoad bool
+	// bulkCkptCounter counts edge batches since the last CHECKPOINT during a bulk
+	// load. Kùzu accumulates un-checkpointed pages in its buffer pool; without a
+	// periodic CHECKPOINT a multi-million-edge load exhausts the pool ("buffer
+	// pool is full and no memory could be freed"). Reset every bulkCheckpointEvery.
+	bulkCkptCounter int
+}
+
+// bulkCheckpointEvery is how many edge batches (of ~defaultBatchSize each) a bulk
+// load runs before issuing a CHECKPOINT to flush the buffer pool to disk.
+const bulkCheckpointEvery = 200
+
+// SetBulkLoad toggles bulk-load mode (see the bulkLoad field). Enable it only
+// when loading into a fresh graph; it trades upsert idempotency for throughput.
+func (k *LadybugDriver) SetBulkLoad(b bool) {
+	k.bulkLoad = b
 }
 
 // copyDir recursively copies a directory from src to dst
@@ -364,6 +386,19 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 	if config.BufferPoolSize == 0 {
 		config.BufferPoolSize = 1024 * 1024 * 1024 // 1GB
 	}
+	// The default (1GB, also set by DefaultLadybugDriverConfig — i.e. non-zero, so
+	// this override must live OUTSIDE the == 0 guard above) is far too small for
+	// bulk-loading million-edge graphs: Kùzu's resident working set (e.g. the
+	// primary-key index) outgrows it and COMMIT fails with "buffer pool is full
+	// and no memory could be freed". This opt-in override (bytes) wins regardless
+	// of the configured value, without changing the conservative default for
+	// normal/server use.
+	if v := os.Getenv("PREDICATO_LADYBUG_BUFFER_POOL_BYTES"); v != "" {
+		if n, perr := strconv.ParseUint(v, 10, 64); perr == nil && n > 0 {
+			config.BufferPoolSize = n
+		}
+	}
+	log.Printf("Ladybug buffer pool: %d MB", config.BufferPoolSize/(1024*1024))
 	if config.MaxDbSize == 0 {
 		config.MaxDbSize = 1 << 43 // 8TB
 	}
@@ -1834,10 +1869,169 @@ func (k *LadybugDriver) UpsertNodes(ctx context.Context, nodes []*types.Node) er
 
 // UpsertEdges bulk upserts edges
 func (k *LadybugDriver) UpsertEdges(ctx context.Context, edges []*types.Edge) error {
+	if k.bulkLoad {
+		return k.bulkCreateEdges(ctx, edges)
+	}
 	for _, edge := range edges {
 		if err := k.UpsertEdge(ctx, edge); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// bulkCreateEdges creates a batch of edges in a single transaction using one
+// prepared statement, skipping the existence check. This is dramatically faster
+// than UpsertEdge-per-row, which auto-commits (fsync) twice per edge. Intended
+// for loading into a fresh graph (bulkLoad mode).
+//
+// Edges whose endpoints are missing produce no rows (the MATCHes fail) and are
+// silently skipped, matching the non-bulk CREATE behaviour.
+func (k *LadybugDriver) bulkCreateEdges(ctx context.Context, edges []*types.Edge) error {
+	if len(edges) == 0 {
+		return nil
+	}
+
+	// The Go/Lbug binding cannot convert an empty Go slice into a LIST value, so
+	// empty list columns (fact_embedding FLOAT[], episodes STRING[]) must be
+	// written as CAST([] AS ...) literals in the query text rather than bound as
+	// params. We therefore prepare up to 4 query variants keyed by which list
+	// columns are empty, and only bind the non-empty lists.
+	buildQuery := func(embEmpty, epEmpty bool) string {
+		factEmb := "$fact_embedding"
+		if embEmpty {
+			factEmb = "CAST([] AS FLOAT[])"
+		}
+		eps := "$episodes"
+		if epEmpty {
+			eps = "CAST([] AS STRING[])"
+		}
+		return fmt.Sprintf(`
+			MATCH (a:Entity {uuid: $source_uuid, group_id: $group_id})
+			MATCH (b:Entity {uuid: $target_uuid, group_id: $group_id})
+			CREATE (rel:RelatesToNode_ {
+				uuid: $uuid,
+				group_id: $group_id,
+				created_at: $created_at,
+				name: $name,
+				fact: $fact,
+				fact_embedding: %s,
+				episodes: %s,
+				expired_at: $expired_at,
+				valid_at: $valid_at,
+				invalid_at: $invalid_at,
+				attributes: $attributes
+			})
+			CREATE (a)-[:RELATES_TO]->(rel)
+			CREATE (rel)-[:RELATES_TO]->(b)
+		`, factEmb, eps)
+	}
+
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	rollback := func() {
+		if res, err := k.client.Query("ROLLBACK"); err == nil {
+			res.Close()
+		}
+	}
+
+	// Cache prepared statements per (embEmpty, epEmpty) variant.
+	type variant struct{ embEmpty, epEmpty bool }
+	prepCache := make(map[variant]*ladybug.PreparedStatement, 4)
+	getPrepared := func(v variant) (*ladybug.PreparedStatement, error) {
+		if ps, ok := prepCache[v]; ok {
+			return ps, nil
+		}
+		ps, err := k.client.Prepare(buildQuery(v.embEmpty, v.epEmpty))
+		if err != nil {
+			return nil, err
+		}
+		prepCache[v] = ps
+		return ps, nil
+	}
+
+	beginRes, err := k.client.Query("BEGIN TRANSACTION")
+	if err != nil {
+		return fmt.Errorf("bulkCreateEdges: begin: %w", err)
+	}
+	beginRes.Close()
+
+	for _, edge := range edges {
+		if edge.CreatedAt.IsZero() {
+			edge.CreatedAt = time.Now()
+		}
+		if edge.ValidFrom.IsZero() {
+			edge.ValidFrom = edge.CreatedAt
+		}
+
+		var metadataJSON string
+		if edge.Metadata != nil {
+			if data, err := json.Marshal(edge.Metadata); err == nil {
+				metadataJSON = string(data)
+			}
+		}
+
+		v := variant{embEmpty: len(edge.FactEmbedding) == 0, epEmpty: len(edge.Episodes) == 0}
+		prepared, err := getPrepared(v)
+		if err != nil {
+			rollback()
+			return fmt.Errorf("bulkCreateEdges: prepare: %w", err)
+		}
+
+		params := map[string]any{
+			"source_uuid": edge.SourceID,
+			"target_uuid": edge.TargetID,
+			"group_id":    edge.GroupID,
+			"uuid":        edge.Uuid,
+			"created_at":  edge.CreatedAt,
+			"name":        edge.Name,
+			"fact":        edge.Fact,
+			"attributes":  metadataJSON,
+			"valid_at":    edge.ValidFrom,
+		}
+		if !v.embEmpty {
+			factEmbedding := make([]float64, len(edge.FactEmbedding))
+			for i, val := range edge.FactEmbedding {
+				factEmbedding[i] = float64(val)
+			}
+			params["fact_embedding"] = factEmbedding
+		}
+		if !v.epEmpty {
+			params["episodes"] = edge.Episodes
+		}
+		if edge.ValidTo != nil {
+			params["expired_at"] = edge.ValidTo
+			params["invalid_at"] = edge.ValidTo
+		} else {
+			params["expired_at"] = nil
+			params["invalid_at"] = nil
+		}
+
+		res, err := k.client.Execute(prepared, params)
+		if err != nil {
+			rollback()
+			return fmt.Errorf("bulkCreateEdges: create edge %s: %w", edge.Uuid, err)
+		}
+		res.Close()
+	}
+
+	commitRes, err := k.client.Query("COMMIT")
+	if err != nil {
+		rollback()
+		return fmt.Errorf("bulkCreateEdges: commit: %w", err)
+	}
+	commitRes.Close()
+
+	// Periodically flush the buffer pool to disk. Without this, un-checkpointed
+	// pages accumulate across millions of edges until Kùzu's buffer pool is
+	// exhausted and COMMIT fails with "buffer pool is full".
+	k.bulkCkptCounter++
+	if k.bulkCkptCounter >= bulkCheckpointEvery {
+		if res, err := k.client.Query("CHECKPOINT"); err == nil {
+			res.Close()
+		}
+		k.bulkCkptCounter = 0
 	}
 	return nil
 }

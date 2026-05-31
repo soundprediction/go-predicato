@@ -76,6 +76,14 @@ func NewDuckPGQDriverWithConfig(config DuckPGQDriverConfig) (*DuckPGQDriver, err
 		return nil, fmt.Errorf("failed to open DuckDB: %w", err)
 	}
 
+	// Optional memory cap (GLOBAL scope, so one statement covers the instance).
+	// Without this, DuckDB's buffer manager grows to ~80% of RAM while scanning a
+	// large database, which competes with a destination driver during conversion
+	// and can thrash swap. Opt-in via env so normal/server use is unaffected.
+	if ml := os.Getenv("PREDICATO_DUCKDB_MEMORY_LIMIT"); ml != "" {
+		_, _ = db.Exec(fmt.Sprintf("SET memory_limit='%s'", ml))
+	}
+
 	// Load extensions: duckpgq (graph queries), vss (vector similarity), fts (full-text search)
 	for _, ext := range []struct{ name, source string }{
 		{"duckpgq", "community"},
@@ -1650,13 +1658,49 @@ func (d *DuckPGQDriver) IterateNodes(ctx context.Context, groupID string, fn fun
 }
 
 func (d *DuckPGQDriver) IterateEdges(ctx context.Context, groupID string, fn func(*types.Edge) error) error {
-	edges, err := d.queryEdges(ctx, `SELECT uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength FROM edges WHERE group_id = ?`, groupID)
-	if err != nil {
+	// Page through the edges table in physical rowid blocks rather than issuing
+	// one `SELECT ... FROM edges` for the whole group. DuckDB materializes a
+	// query's full result set server-side, so a graph with millions of edges —
+	// each carrying 1024-dim fact/embedding vectors — would otherwise pin tens
+	// of GB of RAM at once and OOM (and thrash swap) during graph conversion.
+	//
+	// rowid range scans are used deliberately: the (uuid, group_id) primary key
+	// is a DuckDB ART index, which does NOT serve ordered range scans, so an
+	// `ORDER BY uuid LIMIT/OFFSET` keyset would force a full table sort per page
+	// (materializing every embedding just to sort). Scanning by the implicit,
+	// contiguous `rowid` reads sequential row blocks with no sort and bounds the
+	// resident set to edgeIteratePageSize edges per query.
+	const edgeIteratePageSize = 25000
+	const cols = `uuid, group_id, source_id, target_id, type, name, fact, fact_embedding, embedding, episodes, attributes, created_at, updated_at, valid_from, valid_to, expired_at, valid_at, invalid_at, source_ids, strength`
+
+	var maxRowID int64
+	if err := d.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid), -1) FROM edges WHERE group_id = ?`, groupID).Scan(&maxRowID); err != nil {
 		return err
 	}
-	for _, e := range edges {
-		if err := fn(e); err != nil {
+
+	query := `SELECT ` + cols + ` FROM edges WHERE group_id = ? AND rowid >= ? AND rowid < ?`
+	for lo := int64(0); lo <= maxRowID; lo += edgeIteratePageSize {
+		rows, err := d.db.QueryContext(ctx, query, groupID, lo, lo+edgeIteratePageSize)
+		if err != nil {
 			return err
+		}
+		var cbErr error
+		for rows.Next() {
+			edge, err := d.scanEdge(rows)
+			if err != nil {
+				continue
+			}
+			if err := fn(edge); err != nil {
+				cbErr = err
+				break
+			}
+		}
+		if cbErr == nil {
+			cbErr = rows.Err()
+		}
+		rows.Close()
+		if cbErr != nil {
+			return cbErr
 		}
 	}
 	return nil
