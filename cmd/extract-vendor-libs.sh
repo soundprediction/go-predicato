@@ -64,6 +64,13 @@ else
   echo "Ladybug library already extracted."
 fi
 
+# Ladybug C API header (lbug.h). go-ladybug >= v0.17 no longer ships lbug.h in
+# its Go module, so the build needs our vendored copy on the include path (see
+# CGO_CFLAGS in the Makefile, which adds -I$(LIB_PATH)).
+if [ -f "$VENDOR_DIR/lbug.h" ]; then
+  cp -f "$VENDOR_DIR/lbug.h" "${LBUG_DIR}/lbug.h"
+fi
+
 # ---------------------------------------------------------------------------
 # CozoDB
 # ---------------------------------------------------------------------------

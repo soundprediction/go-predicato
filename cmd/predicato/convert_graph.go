@@ -60,6 +60,14 @@ func runConvertGraph(cmd *cobra.Command, args []string) error {
 	}
 	defer destDriver.Close()
 
+	// convert-graph always writes into a fresh destination, so enable bulk-load
+	// mode (skip existence checks, batch each upsert in one transaction) for the
+	// drivers that support it. This is the difference between minutes and hours
+	// for million-edge graphs.
+	if lb, ok := destDriver.(*driver.LadybugDriver); ok {
+		lb.SetBulkLoad(true)
+	}
+
 	// Create indices on destination
 	ctx := context.Background()
 	if err := destDriver.CreateIndices(ctx); err != nil {

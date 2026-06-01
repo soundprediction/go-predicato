@@ -59,9 +59,12 @@ update_ladybug() {
 
     tar xzf "$tmpdir/$archive" -C "$tmpdir"
 
+    # Upstream archives ship liblbug.so as a symlink to liblbug.so.<version>;
+    # match the symlink (or the versioned real file) and resolve to the real file.
     local lib_file
-    lib_file="$(find "$tmpdir" -name "$lib_name" -type f | head -n1)"
-    if [ -z "$lib_file" ]; then
+    lib_file="$(find "$tmpdir" \( -name "$lib_name" -o -name "${lib_name}.*" -o -name "${lib_name%.*}.*.${lib_name##*.}" \) | head -n1)"
+    lib_file="$(readlink -f "$lib_file" 2>/dev/null || echo "$lib_file")"
+    if [ -z "$lib_file" ] || [ ! -f "$lib_file" ]; then
       echo "  WARNING: $lib_name not found in $archive — skipping"
       continue
     fi
@@ -70,6 +73,17 @@ update_ladybug() {
     local out="liblbug-${os}-${arch}.${ext}.gz"
     gzip -c "$lib_file" > "$VENDOR_DIR/$out"
     echo "  Stored $out ($(du -h "$VENDOR_DIR/$out" | cut -f1))"
+
+    # go-ladybug >= v0.17 dropped lbug.h from its Go module; vendor the C API
+    # header (platform-independent) so the build can find it via CGO_CFLAGS.
+    if [ ! -f "$VENDOR_DIR/lbug.h" ]; then
+      local hdr
+      hdr="$(find "$tmpdir" -name 'lbug.h' -type f | head -n1)"
+      if [ -n "$hdr" ]; then
+        cp -f "$hdr" "$VENDOR_DIR/lbug.h"
+        echo "  Stored lbug.h"
+      fi
+    fi
   done
 
   echo "$version" > "$VENDOR_DIR/ladybug.version"
