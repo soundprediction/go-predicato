@@ -5,6 +5,10 @@
 # Library path for CGO tests
 LIB_PATH := $(shell pwd)/cmd/lib-ladybug
 CGO_LDFLAGS := -L$(LIB_PATH) -Wl,-rpath,$(LIB_PATH)
+# go-ladybug >= v0.17 no longer ships lbug.h in its Go module; point cgo at the
+# vendored header extracted into lib-ladybug (see cmd/extract-vendor-libs.sh).
+CGO_CFLAGS := -I$(LIB_PATH)
+export CGO_CFLAGS
 
 # Extract vendored native libraries for the current platform
 extract-libs:
