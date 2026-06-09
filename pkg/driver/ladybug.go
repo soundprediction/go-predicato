@@ -1511,6 +1511,11 @@ func (k *LadybugDriver) SearchNodesByEmbedding(ctx context.Context, embedding []
 			Summary:   summary,
 			Type:      types.EntityNodeType,
 		}
+		// Surface entity provenance (sources, xrefs, member_uuids, ...) so callers
+		// can cite the originating source rather than just the graph group id.
+		if attrs := parseAttributesColumn(row["attributes"]); attrs != nil {
+			node.Metadata = attrs
+		}
 
 		nodes = append(nodes, node)
 	}
@@ -1781,7 +1786,62 @@ func (k *LadybugDriver) SearchEdges(ctx context.Context, query, groupID string, 
 		}
 	}
 
+	k.enrichEdgeAttributes(ctx, edges)
 	return edges, nil
+}
+
+// enrichEdgeAttributes fills each edge's Attributes (cross-source provenance:
+// sources, source_confidence, conflict, ...) via a primary-key lookup on the
+// matched edge UUIDs. The attributes column is deliberately NOT selected in the
+// search/FTS queries themselves: projecting that large STRING column there makes
+// Ladybug materialize it across the whole RelatesToNode_ table (millions of
+// rows), exhausting the buffer pool. Fetching it by UUID for just the handful of
+// result edges is a cheap indexed lookup. Best-effort: a failure leaves
+// Attributes nil and is not fatal to the search.
+func (k *LadybugDriver) enrichEdgeAttributes(ctx context.Context, edges []*types.Edge) {
+	if len(edges) == 0 {
+		return
+	}
+	uuids := make([]string, 0, len(edges))
+	for _, e := range edges {
+		if e != nil && e.Uuid != "" {
+			uuids = append(uuids, e.Uuid)
+		}
+	}
+	if len(uuids) == 0 {
+		return
+	}
+
+	result, _, _, err := k.ExecuteQuery(ctx,
+		`MATCH (e:RelatesToNode_) WHERE e.uuid IN $uuids
+		 RETURN e.uuid AS uuid, e.attributes AS attributes`,
+		map[string]any{"uuids": uuids})
+	if err != nil {
+		return
+	}
+	rows, ok := result.([]map[string]any)
+	if !ok {
+		return
+	}
+
+	byUUID := make(map[string]map[string]any, len(rows))
+	for _, row := range rows {
+		id, _ := row["uuid"].(string)
+		if id == "" {
+			continue
+		}
+		if attrs := parseAttributesColumn(row["attributes"]); attrs != nil {
+			byUUID[id] = attrs
+		}
+	}
+	for _, e := range edges {
+		if e == nil {
+			continue
+		}
+		if attrs, ok := byUUID[e.Uuid]; ok {
+			e.Attributes = attrs
+		}
+	}
 }
 
 // SearchNodesByVector performs vector similarity search on nodes with additional options
@@ -3512,6 +3572,19 @@ func (k *LadybugDriver) mapToNode(data map[string]any, tableName string) (*types
 		}
 	}
 
+	// Entity provenance lives in the separate `attributes` JSON column (sources,
+	// xrefs, member_uuids, canonical_id, ...). Surface it via Metadata when the
+	// node has no episodic metadata, so callers can cite the originating source
+	// rather than just the graph group id.
+	if node.Metadata == nil {
+		for _, key := range []string{"attributes", "n.attributes", "node.attributes"} {
+			if attrs := parseAttributesColumn(data[key]); attrs != nil {
+				node.Metadata = attrs
+				break
+			}
+		}
+	}
+
 	if embedding, ok := data["node.name_embedding"]; ok {
 		node.NameEmbedding = convertToFloat32Slice(embedding)
 	} else if embedding, ok := data["n.name_embedding"]; ok {
@@ -3565,6 +3638,22 @@ func (k *LadybugDriver) mapToNode(data map[string]any, tableName string) (*types
 	return node, nil
 }
 
+// parseAttributesColumn decodes the Entity/RelatesToNode_ `attributes` column —
+// a JSON object string carrying cross-source provenance (sources, xrefs,
+// member_uuids, source_confidence, conflict, ...) — into a map. Returns nil for
+// an absent/empty/unparseable value so callers can leave the field untouched.
+func parseAttributesColumn(v any) map[string]any {
+	s, ok := v.(string)
+	if !ok || strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil
+	}
+	return m
+}
+
 func (k *LadybugDriver) mapToEdge(data map[string]any) (*types.Edge, error) {
 	edge := &types.Edge{}
 
@@ -3573,6 +3662,9 @@ func (k *LadybugDriver) mapToEdge(data map[string]any) (*types.Edge, error) {
 	}
 	if groupID, ok := data["group_id"]; ok {
 		edge.GroupID = fmt.Sprintf("%v", groupID)
+	}
+	if attrs := parseAttributesColumn(data["attributes"]); attrs != nil {
+		edge.Attributes = attrs
 	}
 	if name, ok := data["name"]; ok {
 		edge.Name = fmt.Sprintf("%v", name)
