@@ -1537,7 +1537,7 @@ func (k *LadybugDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []
 	// Uses RelatesToNode_ intermediate representation
 	query := `
 		MATCH (n:Entity)-[:RELATES_TO]->(e:RelatesToNode_)-[:RELATES_TO]->(m:Entity)
-		WHERE e.group_id = $group_id
+		WHERE e.group_id = $group_id AND size(e.fact_embedding) = ` + fmt.Sprintf("%d", len(embedding)) + `
 		WITH DISTINCT e, n, m, array_cosine_similarity(e.fact_embedding, CAST($search_vector AS FLOAT[` + fmt.Sprintf("%d", len(embedding)) + `])) AS score
 		WHERE score > 0.0
 		RETURN

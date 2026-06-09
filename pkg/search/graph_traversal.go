@@ -121,6 +121,17 @@ func (su *SearchUtilities) NodeBFSSearch(ctx context.Context, originNodeUUIDs []
 	// Execute queries and collect results
 	allRecords := []map[string]interface{}{}
 
+	// Entity nodes carry their embedding in name_embedding; only the Rule node
+	// table has a plain `embedding` column. Ladybug binds properties strictly to
+	// the matched node table's schema, so selecting n.embedding on (n:Entity)
+	// raises "Cannot find property embedding for n". Omit it for Ladybug; other
+	// backends are schema-lenient and return null harmlessly (convertRecordsToNodes
+	// already treats embedding as optional).
+	embeddingReturn := ",\n\t\t\t\tn.embedding AS embedding"
+	if provider == driver.GraphProviderLadybug {
+		embeddingReturn = ""
+	}
+
 	for _, matchQuery := range matchQueries {
 		query := matchQuery + filterQuery + `
 			RETURN
@@ -130,8 +141,7 @@ func (su *SearchUtilities) NodeBFSSearch(ctx context.Context, originNodeUUIDs []
 				n.name_embedding AS name_embedding,
 				n.labels AS labels,
 				n.created_at AS created_at,
-				n.summary AS summary,
-				n.embedding AS embedding
+				n.summary AS summary` + embeddingReturn + `
 			LIMIT $limit
 		`
 
