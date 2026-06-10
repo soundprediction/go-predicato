@@ -1413,6 +1413,53 @@ func (k *LadybugDriver) GetRelatedNodes(ctx context.Context, nodeID, groupID str
 	return k.GetNeighbors(ctx, nodeID, groupID, 1)
 }
 
+// floatVecLiteral renders a float32 vector as a Cypher array literal "[v0,v1,...]".
+// QUERY_VECTOR_INDEX requires its query vector as a literal/bare-parameter (it
+// rejects CAST($param) as a scalar-function arg), so callers inline it as a constant.
+func floatVecLiteral(v []float32) string {
+	var b strings.Builder
+	b.Grow(len(v) * 12)
+	b.WriteByte('[')
+	for i, x := range v {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.FormatFloat(float64(x), 'g', -1, 32))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+// vectorIndexName returns the name of an HNSW vector index on the given table,
+// or "" if none exists. When present, callers use QUERY_VECTOR_INDEX for fast
+// approximate search; otherwise they fall back to brute-force cosine. This keeps
+// graphs without a vector index (FLOAT[] embeddings) working unchanged.
+func (k *LadybugDriver) vectorIndexName(ctx context.Context, table string) string {
+	res, _, _, err := k.ExecuteQuery(ctx, "CALL SHOW_INDEXES() RETURN table_name, index_name, index_type", nil)
+	if err != nil {
+		return ""
+	}
+	rows, ok := res.([]map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, r := range rows {
+		t, _ := r["table_name"].(string)
+		it, _ := r["index_type"].(string)
+		if t == table && strings.EqualFold(it, "HNSW") {
+			n, _ := r["index_name"].(string)
+			// Ensure the VECTOR extension is loaded on this connection so the
+			// subsequent QUERY_VECTOR_INDEX call resolves. If it can't load, fall
+			// back to brute-force (return "") rather than failing the search.
+			if _, _, _, lerr := k.ExecuteQuery(ctx, "LOAD VECTOR", nil); lerr != nil {
+				return ""
+			}
+			return n
+		}
+	}
+	return ""
+}
+
 // SearchNodesByEmbedding performs vector similarity search on node embeddings using cosine similarity.
 // This matches the Python implementation in search_utils.py:node_similarity_search()
 // For ladybug, it uses array_cosine_similarity function on name_embedding field.
@@ -1429,25 +1476,50 @@ func (k *LadybugDriver) SearchNodesByEmbedding(ctx context.Context, embedding []
 
 	// Build the Cypher query matching Python's ladybug implementation
 	// From search_utils.py:node_similarity_search() for ladybug provider
-	query := `
-		MATCH (n:Entity)
-		WHERE n.group_id = $group_id
-		  AND size(n.name_embedding) > 0
-		WITH n, array_cosine_similarity(n.name_embedding, CAST($search_vector AS FLOAT[` + fmt.Sprintf("%d", len(embedding)) + `])) AS score
-		WHERE score > 0.0
-		RETURN
-			n.uuid AS uuid,
-			n.name AS name,
-			n.group_id AS group_id,
-			n.created_at AS created_at,
-			n.summary AS summary,
-			n.labels AS labels,
-			n.name_embedding AS name_embedding,
-			n.attributes AS attributes,
-			score
-		ORDER BY score DESC
-		LIMIT $limit
-	`
+	dim := fmt.Sprintf("%d", len(embedding))
+	var query string
+	if idx := k.vectorIndexName(ctx, "Entity"); idx != "" {
+		// Fast path: HNSW vector index. The query vector is inlined as a literal
+		// because QUERY_VECTOR_INDEX rejects CAST($param) (scalar-function arg).
+		query = `
+			CALL QUERY_VECTOR_INDEX('Entity', '` + idx + `', CAST(` + floatVecLiteral(embedding) + ` AS FLOAT[` + dim + `]), $limit)
+			WITH node AS n, distance
+			WHERE n.group_id = $group_id
+			RETURN
+				n.uuid AS uuid,
+				n.name AS name,
+				n.group_id AS group_id,
+				n.created_at AS created_at,
+				n.summary AS summary,
+				n.labels AS labels,
+				n.name_embedding AS name_embedding,
+				n.attributes AS attributes,
+				(1.0 - distance) AS score
+			ORDER BY distance
+			LIMIT $limit
+		`
+	} else {
+		// Fallback: brute-force cosine over FLOAT[] embeddings (backward compatible).
+		query = `
+			MATCH (n:Entity)
+			WHERE n.group_id = $group_id
+			  AND size(n.name_embedding) > 0
+			WITH n, array_cosine_similarity(n.name_embedding, CAST($search_vector AS FLOAT[` + dim + `])) AS score
+			WHERE score > 0.0
+			RETURN
+				n.uuid AS uuid,
+				n.name AS name,
+				n.group_id AS group_id,
+				n.created_at AS created_at,
+				n.summary AS summary,
+				n.labels AS labels,
+				n.name_embedding AS name_embedding,
+				n.attributes AS attributes,
+				score
+			ORDER BY score DESC
+			LIMIT $limit
+		`
+	}
 
 	params := map[string]any{
 		"group_id":      groupID,
@@ -1540,28 +1612,49 @@ func (k *LadybugDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []
 	// Build the Cypher query matching Python's ladybug implementation for edges
 	// From search_utils.py:edge_similarity_search() for ladybug provider
 	// Uses RelatesToNode_ intermediate representation
-	query := `
-		MATCH (n:Entity)-[:RELATES_TO]->(e:RelatesToNode_)-[:RELATES_TO]->(m:Entity)
-		WHERE e.group_id = $group_id AND size(e.fact_embedding) = ` + fmt.Sprintf("%d", len(embedding)) + `
-		WITH DISTINCT e, n, m, array_cosine_similarity(e.fact_embedding, CAST($search_vector AS FLOAT[` + fmt.Sprintf("%d", len(embedding)) + `])) AS score
-		WHERE score > 0.0
-		RETURN
-			e.uuid AS uuid,
-			e.group_id AS group_id,
-			e.created_at AS created_at,
-			e.name AS name,
-			e.fact AS fact,
-			e.fact_embedding AS fact_embedding,
-			e.episodes AS episodes,
-			e.expired_at AS expired_at,
-			e.valid_at AS valid_at,
-			e.invalid_at AS invalid_at,
-			n.uuid AS source_node_uuid,
-			m.uuid AS target_node_uuid,
-			score
-		ORDER BY score DESC
-		LIMIT $limit
-	`
+	dim := fmt.Sprintf("%d", len(embedding))
+	var query string
+	if idx := k.vectorIndexName(ctx, "RelatesToNode_"); idx != "" {
+		// Fast path: use the HNSW vector index when present.
+		query = `
+			CALL QUERY_VECTOR_INDEX('RelatesToNode_', '` + idx + `', CAST(` + floatVecLiteral(embedding) + ` AS FLOAT[` + dim + `]), $limit)
+			WITH node AS e, distance
+			MATCH (n:Entity)-[:RELATES_TO]->(e)-[:RELATES_TO]->(m:Entity)
+			WHERE e.group_id = $group_id
+			RETURN
+				e.uuid AS uuid, e.group_id AS group_id, e.created_at AS created_at,
+				e.name AS name, e.fact AS fact, e.fact_embedding AS fact_embedding,
+				e.episodes AS episodes, e.expired_at AS expired_at, e.valid_at AS valid_at,
+				e.invalid_at AS invalid_at, n.uuid AS source_node_uuid, m.uuid AS target_node_uuid,
+				(1.0 - distance) AS score
+			ORDER BY distance
+			LIMIT $limit
+		`
+	} else {
+		// Fallback: brute-force cosine over FLOAT[] embeddings (backward compatible).
+		query = `
+			MATCH (n:Entity)-[:RELATES_TO]->(e:RelatesToNode_)-[:RELATES_TO]->(m:Entity)
+			WHERE e.group_id = $group_id AND size(e.fact_embedding) = ` + dim + `
+			WITH DISTINCT e, n, m, array_cosine_similarity(e.fact_embedding, CAST($search_vector AS FLOAT[` + dim + `])) AS score
+			WHERE score > 0.0
+			RETURN
+				e.uuid AS uuid,
+				e.group_id AS group_id,
+				e.created_at AS created_at,
+				e.name AS name,
+				e.fact AS fact,
+				e.fact_embedding AS fact_embedding,
+				e.episodes AS episodes,
+				e.expired_at AS expired_at,
+				e.valid_at AS valid_at,
+				e.invalid_at AS invalid_at,
+				n.uuid AS source_node_uuid,
+				m.uuid AS target_node_uuid,
+				score
+			ORDER BY score DESC
+			LIMIT $limit
+		`
+	}
 
 	params := map[string]any{
 		"group_id":      groupID,
