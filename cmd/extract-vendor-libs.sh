@@ -71,6 +71,20 @@ if [ -f "$VENDOR_DIR/lbug.h" ]; then
   cp -f "$VENDOR_DIR/lbug.h" "${LBUG_DIR}/lbug.h"
 fi
 
+# Ladybug official extensions (vector, fts) bundled at the pinned version. The
+# driver copies these into lbug's home extension dir at runtime so LOAD works
+# offline (no registry fetch). Extracted next to liblbug under extensions/.
+LBUG_EXT_DIR="${LBUG_DIR}/extensions"
+for extn in vector fts; do
+  EXT_GZ="$VENDOR_DIR/lib${extn}-${NORM_OS}-${NORM_ARCH}.lbug_extension.gz"
+  EXT_OUT="${LBUG_EXT_DIR}/lib${extn}.lbug_extension"
+  if [ -f "$EXT_GZ" ] && [ ! -f "$EXT_OUT" ]; then
+    mkdir -p "$LBUG_EXT_DIR"
+    gunzip -c "$EXT_GZ" > "$EXT_OUT"
+    echo "  Extracted extension: $EXT_OUT"
+  fi
+done
+
 # ---------------------------------------------------------------------------
 # CozoDB
 # ---------------------------------------------------------------------------

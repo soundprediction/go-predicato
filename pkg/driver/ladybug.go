@@ -497,6 +497,13 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 	driver.writeWg.Add(1)
 	go driver.writeWorker()
 
+	// Seed the vendored ladybug extensions (fts, vector) into lbug's home
+	// extension dir so that the LOAD/INSTALL calls below resolve offline,
+	// frozen to the same tested version as the vendored lib — instead of a
+	// network fetch from the extension registry. Best-effort: on a miss the
+	// existing INSTALL/LOAD path falls back to the registry as before.
+	seedLadybugExtensions(database)
+
 	// Setup schema only for writable databases — read-only topic graphs
 	// already have their schema in place and write attempts would fail.
 	if !config.ReadOnly {
@@ -1458,6 +1465,124 @@ func (k *LadybugDriver) vectorIndexName(ctx context.Context, table string) strin
 		}
 	}
 	return ""
+}
+
+// --- Bundled ladybug extensions --------------------------------------------
+//
+// Official extensions (vector, fts) are loaded by name and resolved by the
+// engine from its home directory (~/.lbdb/extension/<version>/<platform>/<ext>/).
+// To avoid a network INSTALL from the extension registry on first use — and to
+// freeze the extensions to the same tested version as the vendored liblbug — the
+// extension binaries are shipped alongside liblbug (see cmd/vendor-libs) and
+// copied into the home dir here when missing. All of this is best-effort: on a
+// miss the engine falls back to its normal registry INSTALL.
+
+// lbugPlatformDir maps the Go runtime to lbug's extension platform dir name.
+func lbugPlatformDir() string {
+	switch runtime.GOOS {
+	case "darwin":
+		if runtime.GOARCH == "arm64" {
+			return "osx_arm64"
+		}
+		return "osx_amd64"
+	case "linux":
+		if runtime.GOARCH == "arm64" {
+			return "linux_arm64"
+		}
+		return "linux_amd64"
+	}
+	return runtime.GOOS + "_" + runtime.GOARCH
+}
+
+// bundledExtensionFile locates a vendored lib<name>.lbug_extension shipped next
+// to liblbug. Searches PREDICATO_LADYBUG_EXTENSION_DIR, then the "extensions"
+// subdir (and root) of each *_LIBRARY_PATH entry, then next to the executable.
+// Returns "" if not found.
+func bundledExtensionFile(name string) string {
+	fname := "lib" + strings.ToLower(name) + ".lbug_extension"
+	var dirs []string
+	if d := os.Getenv("PREDICATO_LADYBUG_EXTENSION_DIR"); d != "" {
+		dirs = append(dirs, d)
+	}
+	for _, key := range []string{"LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"} {
+		for _, d := range filepath.SplitList(os.Getenv(key)) {
+			if d != "" {
+				dirs = append(dirs, filepath.Join(d, "extensions"), d)
+			}
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		dirs = append(dirs, filepath.Join(filepath.Dir(exe), "extensions"))
+	}
+	for _, d := range dirs {
+		p := filepath.Join(d, fname)
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
+// seedBundledExtension copies the vendored extension into lbug's home extension
+// dir when it isn't already installed there, so LOAD <name> works offline.
+func seedBundledExtension(name, version string) {
+	if version == "" {
+		return
+	}
+	src := bundledExtensionFile(name)
+	if src == "" {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	lname := strings.ToLower(name)
+	dstDir := filepath.Join(home, ".lbdb", "extension", version, lbugPlatformDir(), lname)
+	dst := filepath.Join(dstDir, "lib"+lname+".lbug_extension")
+	if fi, err := os.Stat(dst); err == nil && !fi.IsDir() {
+		return // already installed
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return
+	}
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+	}
+}
+
+// seedLadybugExtensions seeds the extensions the driver uses (fts, vector) from
+// the vendored bundle, keyed by the live engine version (CALL db_version()).
+func seedLadybugExtensions(db *ladybug.Database) {
+	conn, err := ladybug.OpenConnection(db)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	version := ""
+	if res, err := conn.Query("CALL db_version() RETURN version"); err == nil && res != nil {
+		if res.HasNext() {
+			if row, rerr := res.Next(); rerr == nil {
+				if vals, verr := row.GetAsSlice(); verr == nil && len(vals) > 0 {
+					if v, ok := vals[0].(string); ok {
+						version = v
+					}
+				}
+			}
+		}
+		res.Close()
+	}
+	for _, ext := range []string{"fts", "vector"} {
+		seedBundledExtension(ext, version)
+	}
 }
 
 // SearchNodesByEmbedding performs vector similarity search on node embeddings using cosine similarity.
