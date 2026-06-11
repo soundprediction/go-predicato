@@ -75,10 +75,19 @@ fi
 # driver copies these into lbug's home extension dir at runtime so LOAD works
 # offline (no registry fetch). Extracted next to liblbug under extensions/.
 LBUG_EXT_DIR="${LBUG_DIR}/extensions"
+EXT_MANIFEST="$VENDOR_DIR/ladybug-extensions.sha256"
 for extn in vector fts; do
   EXT_GZ="$VENDOR_DIR/lib${extn}-${NORM_OS}-${NORM_ARCH}.lbug_extension.gz"
   EXT_OUT="${LBUG_EXT_DIR}/lib${extn}.lbug_extension"
   if [ -f "$EXT_GZ" ] && [ ! -f "$EXT_OUT" ]; then
+    # Verify the vendored extension against the committed SHA-256 manifest
+    # before extracting (these binaries are dlopen'd at runtime).
+    if [ -f "$EXT_MANIFEST" ]; then
+      if ! ( cd "$VENDOR_DIR" && grep " $(basename "$EXT_GZ")\$" ladybug-extensions.sha256 | sha256sum -c --status - ); then
+        echo "ERROR: checksum mismatch for $(basename "$EXT_GZ") — refusing to extract" >&2
+        exit 1
+      fi
+    fi
     mkdir -p "$LBUG_EXT_DIR"
     gunzip -c "$EXT_GZ" > "$EXT_OUT"
     echo "  Extracted extension: $EXT_OUT"

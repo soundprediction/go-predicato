@@ -27,7 +27,7 @@ done
 update_ladybug() {
   local REPOSITORY="${LBUG_GITHUB_REPOSITORY:-LadybugDB/ladybug}"
   local VERSION_OVERRIDE="${LBUG_VERSION:-}"
-  local EXT_REGISTRY="${LBUG_EXTENSION_REGISTRY:-http://extension.ladybugdb.com}"
+  local EXT_REGISTRY="${LBUG_EXTENSION_REGISTRY:-https://extension.ladybugdb.com}"
   local LBUG_EXTENSIONS="${LBUG_EXTENSIONS:-vector fts}"
 
   local version
@@ -92,7 +92,13 @@ update_ladybug() {
       for extn in $LBUG_EXTENSIONS; do
         local exturl="${EXT_REGISTRY}/v${version}/${lbug_plat}/${extn}/lib${extn}.lbug_extension"
         local extout="lib${extn}-${os}-${arch}.lbug_extension.gz"
-        if curl -fSL "$exturl" -o "$tmpdir/lib${extn}.lbug_extension" 2>/dev/null; then
+        # Extensions are native libraries that get dlopen'd downstream — fetch
+        # over HTTPS only and refuse a protocol downgrade so the transport can't
+        # be MITM'd to inject a malicious binary. Integrity of the resulting
+        # vendored set is recorded in ladybug-extensions.sha256 below.
+        local curl_proto=(--proto '=https' --tlsv1.2)
+        case "$EXT_REGISTRY" in http://*) curl_proto=() ;; esac
+        if curl -fSL "${curl_proto[@]}" "$exturl" -o "$tmpdir/lib${extn}.lbug_extension" 2>/dev/null; then
           gzip -c "$tmpdir/lib${extn}.lbug_extension" > "$VENDOR_DIR/$extout"
           echo "  Stored $extout ($(du -h "$VENDOR_DIR/$extout" | cut -f1))"
         else
@@ -114,6 +120,14 @@ update_ladybug() {
   done
 
   echo "$version" > "$VENDOR_DIR/ladybug.version"
+
+  # Record SHA-256 of the vendored extension binaries. This is the integrity
+  # anchor: the committed manifest is reviewed in git, and extract-vendor-libs.sh
+  # verifies each extension against it before placing the dlopen'd library.
+  if ls "$VENDOR_DIR"/lib*-*.lbug_extension.gz >/dev/null 2>&1; then
+    ( cd "$VENDOR_DIR" && sha256sum lib*-*.lbug_extension.gz > ladybug-extensions.sha256 )
+    echo "  Wrote ladybug-extensions.sha256 ($(grep -c . "$VENDOR_DIR/ladybug-extensions.sha256") entries)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
