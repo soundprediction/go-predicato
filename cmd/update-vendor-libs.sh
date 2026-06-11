@@ -27,6 +27,8 @@ done
 update_ladybug() {
   local REPOSITORY="${LBUG_GITHUB_REPOSITORY:-LadybugDB/ladybug}"
   local VERSION_OVERRIDE="${LBUG_VERSION:-}"
+  local EXT_REGISTRY="${LBUG_EXTENSION_REGISTRY:-http://extension.ladybugdb.com}"
+  local LBUG_EXTENSIONS="${LBUG_EXTENSIONS:-vector fts}"
 
   local version
   if [ -n "$VERSION_OVERRIDE" ]; then
@@ -73,6 +75,31 @@ update_ladybug() {
     local out="liblbug-${os}-${arch}.${ext}.gz"
     gzip -c "$lib_file" > "$VENDOR_DIR/$out"
     echo "  Stored $out ($(du -h "$VENDOR_DIR/$out" | cut -f1))"
+
+    # Bundle the official extensions used by the driver (vector, fts) at the
+    # SAME pinned version, so downstream loads them offline instead of fetching
+    # from the extension registry at runtime. The registry uses lbug's own
+    # platform names (linux_amd64/linux_arm64/osx_amd64/osx_arm64).
+    local lbug_plat=""
+    case "${os}:${arch}" in
+      darwin:arm64)  lbug_plat="osx_arm64" ;;
+      darwin:x86_64) lbug_plat="osx_amd64" ;;
+      linux:x86_64)  lbug_plat="linux_amd64" ;;
+      linux:aarch64) lbug_plat="linux_arm64" ;;
+    esac
+    if [ -n "$lbug_plat" ]; then
+      local extn
+      for extn in $LBUG_EXTENSIONS; do
+        local exturl="${EXT_REGISTRY}/v${version}/${lbug_plat}/${extn}/lib${extn}.lbug_extension"
+        local extout="lib${extn}-${os}-${arch}.lbug_extension.gz"
+        if curl -fSL "$exturl" -o "$tmpdir/lib${extn}.lbug_extension" 2>/dev/null; then
+          gzip -c "$tmpdir/lib${extn}.lbug_extension" > "$VENDOR_DIR/$extout"
+          echo "  Stored $extout ($(du -h "$VENDOR_DIR/$extout" | cut -f1))"
+        else
+          echo "  WARNING: failed to download '$extn' extension for ${lbug_plat} ($exturl)"
+        fi
+      done
+    fi
 
     # go-ladybug >= v0.17 dropped lbug.h from its Go module; vendor the C API
     # header (platform-independent) so the build can find it via CGO_CFLAGS.
