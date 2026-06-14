@@ -1961,10 +1961,14 @@ func (k *LadybugDriver) SearchEdges(ctx context.Context, query, groupID string, 
 	// BM25 fulltext search using QUERY_FTS_INDEX (matching Python implementation)
 	// From graph_queries.py get_relationships_query() and search_utils.py edge_fulltext_search()
 	// For ladybug edges (RelatesToNode_): CALL QUERY_FTS_INDEX('RelatesToNode_', 'edge_name_and_fact', query, TOP := limit)
+	// Read source/target endpoint UUIDs from columns on the RelatesToNode_ node
+	// (baked in at build time) instead of the (n)-[:RELATES_TO]->(e)-[:RELATES_TO]->(m)
+	// traversal — the reverse-adjacency MATCH cost ~2.5s and materialized list
+	// columns, OOM-ing on large graphs. Columnar read is ~0.4s.
 	searchQuery := `
 		CALL QUERY_FTS_INDEX('RelatesToNode_', 'edge_name_and_fact', cast($query AS STRING), TOP := $limit)
 		YIELD node, score
-		MATCH (n:Entity)-[:RELATES_TO]->(e:RelatesToNode_ {uuid: node.uuid})-[:RELATES_TO]->(m:Entity)
+		MATCH (e:RelatesToNode_ {uuid: node.uuid})
 		WHERE e.group_id = $group_id
 		RETURN
 			e.uuid AS uuid,
@@ -1972,13 +1976,12 @@ func (k *LadybugDriver) SearchEdges(ctx context.Context, query, groupID string, 
 			e.created_at AS created_at,
 			e.name AS name,
 			e.fact AS fact,
-			e.fact_embedding AS fact_embedding,
 			e.episodes AS episodes,
 			e.expired_at AS expired_at,
 			e.valid_at AS valid_at,
 			e.invalid_at AS invalid_at,
-			n.uuid AS source_node_uuid,
-			m.uuid AS target_node_uuid,
+			e.source_uuid AS source_node_uuid,
+			e.target_uuid AS target_node_uuid,
 			score
 		ORDER BY score DESC
 	`
