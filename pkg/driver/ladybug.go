@@ -1740,17 +1740,21 @@ func (k *LadybugDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []
 	dim := fmt.Sprintf("%d", len(embedding))
 	var query string
 	if idx := k.vectorIndexName(ctx, "RelatesToNode_"); idx != "" {
-		// Fast path: use the HNSW vector index when present.
+		// Fast path: HNSW vector index. Read source/target endpoint UUIDs from
+		// columns baked onto RelatesToNode_ (build-time) instead of the
+		// (n)-[:RELATES_TO]->(e)-[:RELATES_TO]->(m) traversal, and do NOT project
+		// fact_embedding — both make Ladybug materialize huge intermediates and
+		// were the cost removed from the FTS path (see SearchEdges). Attributes
+		// (incl. upstream provenance) are filled by enrichEdgeAttributes below.
 		query = `
 			CALL QUERY_VECTOR_INDEX('RelatesToNode_', '` + idx + `', CAST(` + floatVecLiteral(embedding) + ` AS FLOAT[` + dim + `]), $limit)
 			WITH node AS e, distance
-			MATCH (n:Entity)-[:RELATES_TO]->(e)-[:RELATES_TO]->(m:Entity)
 			WHERE e.group_id = $group_id
 			RETURN
 				e.uuid AS uuid, e.group_id AS group_id, e.created_at AS created_at,
-				e.name AS name, e.fact AS fact, e.fact_embedding AS fact_embedding,
+				e.name AS name, e.fact AS fact,
 				e.episodes AS episodes, e.expired_at AS expired_at, e.valid_at AS valid_at,
-				e.invalid_at AS invalid_at, n.uuid AS source_node_uuid, m.uuid AS target_node_uuid,
+				e.invalid_at AS invalid_at, e.source_uuid AS source_node_uuid, e.target_uuid AS target_node_uuid,
 				(1.0 - distance) AS score
 			ORDER BY distance
 			LIMIT $limit
@@ -1866,6 +1870,10 @@ func (k *LadybugDriver) SearchEdgesByEmbedding(ctx context.Context, embedding []
 		edges = append(edges, edge)
 	}
 
+	// Fill cross-source provenance (sources, upstream, conflict, ...) by uuid —
+	// the search query deliberately omits the large attributes column. Without
+	// this, edge-similarity results would carry no citation/upstream.
+	k.enrichEdgeAttributes(ctx, edges)
 	return edges, nil
 }
 
