@@ -528,6 +528,17 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 		ftsResult.Close()
 	}
 
+	// Load the VECTOR extension for this connection too, so HNSW vector indexes
+	// (QUERY_VECTOR_INDEX) are usable. Without it, vector similarity search
+	// silently falls back to a brute-force cosine scan even when an index exists.
+	vecResult, verr := client.Query("LOAD VECTOR;")
+	if verr != nil && !strings.Contains(verr.Error(), "already loaded") {
+		log.Printf("Warning: Failed to load VECTOR extension on main connection: %v", verr)
+	}
+	if vecResult != nil {
+		vecResult.Close()
+	}
+
 	// Set up a finalizer to clean up temp directories if Close() is never called.
 	// This is a best-effort cleanup - finalizers are not guaranteed to run.
 	if driver.tempDbPath != "" {
@@ -785,6 +796,23 @@ func (k *LadybugDriver) setupSchema() {
 	if result, err := conn.Query("LOAD EXTENSION FTS;"); err != nil && !strings.Contains(err.Error(), "already loaded") {
 		log.Printf("Failed to load FTS extension for setup: %v", err)
 		ftsLoaded = false
+	} else if result != nil {
+		result.Close()
+	}
+
+	// Install + load the VECTOR extension (one-time install, like FTS) so HNSW
+	// vector indexes are usable. The extension is environment-local — it is NOT
+	// stored inside the .ladybug file — so a graph built elsewhere and copied to a
+	// new host must (re)install it here within the server process. Without this,
+	// QUERY_VECTOR_INDEX is unavailable and vector search silently degrades to a
+	// brute-force cosine scan over every edge.
+	if result, err := conn.Query("INSTALL VECTOR;"); err != nil && !strings.Contains(err.Error(), "already installed") {
+		log.Printf("VECTOR extension install note: %v", err)
+	} else if result != nil {
+		result.Close()
+	}
+	if result, err := conn.Query("LOAD VECTOR;"); err != nil && !strings.Contains(err.Error(), "already loaded") {
+		log.Printf("Failed to load VECTOR extension for setup: %v", err)
 	} else if result != nil {
 		result.Close()
 	}
