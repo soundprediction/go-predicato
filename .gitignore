@@ -86,3 +86,6 @@ predicato_server.log
 .ralphy
 openspec/
 ralphy-spec
+
+# build-local ladybug lib dir (extracted by extract-vendor-libs.sh)
+cmd/lib/

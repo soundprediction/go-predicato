@@ -1608,7 +1608,7 @@ func seedLadybugExtensions(db *ladybug.Database) {
 		}
 		res.Close()
 	}
-	for _, ext := range []string{"fts", "vector"} {
+	for _, ext := range []string{"fts", "vector", "reasoning"} {
 		seedBundledExtension(ext, version)
 	}
 }

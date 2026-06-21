@@ -75,7 +75,7 @@ fi
 # driver copies these into lbug's home extension dir at runtime so LOAD works
 # offline (no registry fetch). Extracted next to liblbug under extensions/.
 LBUG_EXT_DIR="${LBUG_DIR}/extensions"
-for extn in vector fts; do
+for extn in vector fts reasoning; do
   EXT_GZ="$VENDOR_DIR/lib${extn}-${NORM_OS}-${NORM_ARCH}.lbug_extension.gz"
   EXT_OUT="${LBUG_EXT_DIR}/lib${extn}.lbug_extension"
   if [ -f "$EXT_GZ" ] && [ ! -f "$EXT_OUT" ]; then
