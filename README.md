@@ -210,6 +210,11 @@ if !result.Valid {
 | **Entity Extraction** | GLiNER (ONNX) | GLiNER2 (API) | LLM-based extraction |
 | **Fact Storage** | DoltGres (embedded) | PostgreSQL + VectorChord |
 
+**Serving:** an HTTP/MCP server (`predicato server`) and a **gRPC server**
+(`predicato serve-grpc`) — run the graph as a separate process / on its own
+machine, query it remotely, and scale it as a pool. See
+[docs/GRPC_SERVER.md](docs/GRPC_SERVER.md).
+
 **Why choose Predicato:**
 - **Security** - Don't expose your data to external services
 - **Run offline** - Embedded database + local ML models = no network required
