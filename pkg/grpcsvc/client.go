@@ -8,7 +8,6 @@ import (
 	"github.com/soundprediction/predicato/pkg/grpcsvc/pb"
 	"github.com/soundprediction/predicato/pkg/types"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Client calls a remote predicato gRPC graph server, presenting predicato's Go
@@ -21,12 +20,13 @@ type Client struct {
 	own bool // true when Dial created cc (so Close shuts it down)
 }
 
-// Dial connects to a predicato gRPC server at target (host:port). Defaults to an
-// insecure transport; pass opts to add TLS, keepalive, retries, load-balancing.
-// The connection is lazy (grpc.NewClient).
+// Dial connects to a predicato gRPC server or POOL. target may be a single
+// "host:port", a comma-separated static pool "h1:port,h2:port", or a scheme target
+// such as "dns:///predicato.svc:50071" (a dynamic, autoscaling pool); requests
+// round-robin across all instances. Defaults to insecure transport; pass opts for
+// TLS/keepalive/retries. The connection is lazy (grpc.NewClient).
 func Dial(target string, opts ...grpc.DialOption) (*Client, error) {
-	base := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-	cc, err := grpc.NewClient(target, append(base, opts...)...)
+	cc, err := dialPool(target, opts...)
 	if err != nil {
 		return nil, err
 	}
