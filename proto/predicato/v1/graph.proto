@@ -1,0 +1,174 @@
+syntax = "proto3";
+
+package predicato.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/soundprediction/predicato/pkg/grpcsvc/pb;pb";
+
+// GraphService exposes predicato's knowledge-graph query + ingest operations so
+// the engine can run as a separate process / on another machine. Large embedding
+// vectors are intentionally omitted from the wire types (callers use names,
+// facts, types, sources — not the vectors), keeping payloads small.
+service GraphService {
+  // Search runs hybrid search (semantic + keyword + graph traversal).
+  rpc Search(SearchRequest) returns (SearchResults);
+  // AddEpisode ingests a single episode into the graph.
+  rpc AddEpisode(AddEpisodeRequest) returns (AddEpisodeResults);
+  // GetNode / GetEdge fetch a single graph element by uuid.
+  rpc GetNode(GetNodeRequest) returns (Node);
+  rpc GetEdge(GetEdgeRequest) returns (Edge);
+  // GetStats returns graph statistics.
+  rpc GetStats(StatsRequest) returns (GraphStats);
+  // Health is a liveness probe.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Node mirrors types.Node (embeddings omitted).
+message Node {
+  string uuid = 1;
+  string name = 2;
+  string type = 3;          // NodeType
+  string group_id = 4;
+  string entity_type = 5;
+  string summary = 6;
+  string episode_type = 7;  // EpisodeType
+  string content = 8;
+  repeated string entity_edges = 9;
+  repeated string source_ids = 10;
+  int32 level = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  google.protobuf.Timestamp valid_from = 14;
+  google.protobuf.Timestamp valid_to = 15;     // optional (nil when unset)
+  google.protobuf.Timestamp reference = 16;
+  google.protobuf.Struct metadata = 17;
+}
+
+// Edge mirrors types.EntityEdge (BaseEdge fields inlined; embeddings omitted).
+message Edge {
+  string uuid = 1;
+  string group_id = 2;
+  string source_node_id = 3;   // BaseEdge.SourceNodeID
+  string target_node_id = 4;   // BaseEdge.TargetNodeID
+  string name = 5;
+  string fact = 6;
+  string type = 7;             // EdgeType
+  string source_id = 8;        // backward-compat alias
+  string target_id = 9;        // backward-compat alias
+  string summary = 10;
+  repeated string episodes = 11;
+  repeated string source_ids = 12;
+  double strength = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+  google.protobuf.Timestamp valid_from = 16;
+  google.protobuf.Timestamp valid_to = 17;
+  google.protobuf.Timestamp expired_at = 18;
+  google.protobuf.Timestamp valid_at = 19;
+  google.protobuf.Timestamp invalid_at = 20;
+  google.protobuf.Struct metadata = 21;
+  google.protobuf.Struct attributes = 22;
+}
+
+message NodeSearchConfig {
+  string reranker = 1;
+  repeated string search_methods = 2;
+  double min_score = 3;
+}
+
+message EdgeSearchConfig {
+  string reranker = 1;
+  repeated string search_methods = 2;
+  double min_score = 3;
+}
+
+message TimeRange {
+  google.protobuf.Timestamp start = 1;
+  google.protobuf.Timestamp end = 2;
+}
+
+message SearchFilters {
+  TimeRange time_range = 1;
+  repeated string group_ids = 2;
+  repeated string node_types = 3;
+  repeated string edge_types = 4;
+  repeated string entity_types = 5;
+}
+
+message SearchConfig {
+  SearchFilters filters = 1;
+  NodeSearchConfig node_config = 2;
+  EdgeSearchConfig edge_config = 3;
+  repeated string exclude_entity_types = 4;
+  repeated string preferred_predicates = 5;
+  int32 limit = 6;
+  int32 center_node_distance = 7;
+  double min_score = 8;
+  bool include_edges = 9;
+}
+
+message SearchRequest {
+  string query = 1;
+  SearchConfig config = 2;
+}
+
+message SearchResults {
+  string query = 1;
+  repeated Node nodes = 2;
+  repeated Edge edges = 3;
+  int32 total = 4;
+}
+
+// Episode mirrors types.Episode (ContentEmbedding omitted).
+message Episode {
+  string id = 1;
+  string name = 2;
+  string content = 3;
+  string source = 4;
+  string group_id = 5;
+  google.protobuf.Timestamp reference = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Struct metadata = 8;
+}
+
+// AddEpisodeOptions carries the serializable subset of predicato.AddEpisodeOptions
+// (GraphModeler / error-handling policy cannot be remoted).
+message AddEpisodeOptions {
+  repeated string excluded_entity_types = 1;
+  repeated string previous_episode_uuids = 2;
+  int32 max_characters = 3;
+  google.protobuf.Struct entity_types = 4;
+  google.protobuf.Struct edge_types = 5;
+}
+
+message AddEpisodeRequest {
+  Episode episode = 1;
+  AddEpisodeOptions options = 2;
+}
+
+message AddEpisodeResults {
+  Node episode = 1;
+  repeated Edge episodic_edges = 2;
+  repeated Node nodes = 3;
+  repeated Edge edges = 4;
+  repeated Node communities = 5;
+  repeated Edge community_edges = 6;
+  repeated Node rules = 7;
+  repeated Edge rule_edges = 8;
+}
+
+message GetNodeRequest { string uuid = 1; }
+message GetEdgeRequest { string uuid = 1; }
+message StatsRequest { string group_id = 1; }
+
+message GraphStats {
+  int64 node_count = 1;
+  int64 edge_count = 2;
+  int64 episode_count = 3;
+  int64 community_count = 4;
+}
+
+message HealthRequest {}
+message HealthResponse { string status = 1; }
