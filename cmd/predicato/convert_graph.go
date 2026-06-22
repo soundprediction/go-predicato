@@ -64,7 +64,7 @@ func runConvertGraph(cmd *cobra.Command, args []string) error {
 	// mode (skip existence checks, batch each upsert in one transaction) for the
 	// drivers that support it. This is the difference between minutes and hours
 	// for million-edge graphs.
-	if lb, ok := destDriver.(*driver.LadybugDriver); ok {
+	if lb, ok := destDriver.(interface{ SetBulkLoad(bool) }); ok {
 		lb.SetBulkLoad(true)
 	}
 
