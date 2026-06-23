@@ -100,8 +100,12 @@ func (s *Server) setupRoutes() {
 			r.Post("/extract-source", nlpHandler.ExtractSource)
 		})
 
-		// Embedding route - generate embeddings using configured embedder
+		// Embedding routes - generate embeddings using the configured embedder.
+		// /embed is predicato's native shape; /embeddings is OpenAI-compatible so an
+		// OpenAI-embeddings client can use this server as a drop-in (and poolable)
+		// embedding provider running the same model.
 		r.Post("/embed", embedHandler.Embed)
+		r.Post("/embeddings", embedHandler.OpenAIEmbeddings)
 
 		// Extended extraction route - extract entities, relations, triples, rules
 		if s.nlpClient != nil {
