@@ -11,6 +11,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/soundprediction/predicato/pkg/ruleschema"
 	"github.com/soundprediction/predicato/pkg/utils"
 )
 
@@ -209,6 +210,10 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 			confidence FLOAT,
 			embedding vector(%d),
 			chunk_index INT,
+			model VARCHAR(255),
+			structured_rule TEXT,
+			structure_status TEXT,
+			structure_error TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`, p.embeddingDimensions)
 	if _, err := p.db.ExecContext(ctx, rulesTable); err != nil {
@@ -262,6 +267,18 @@ func (p *PostgresDB) Initialize(ctx context.Context) error {
 	for _, migration := range modelMigrations {
 		if _, err := p.db.ExecContext(ctx, migration); err != nil {
 			fmt.Printf("Warning: failed to add model column: %v\n", err)
+		}
+	}
+
+	// --- Structured rule migration ---
+	ruleStructureMigrations := []string{
+		`ALTER TABLE extracted_rules ADD COLUMN IF NOT EXISTS structured_rule TEXT`,
+		`ALTER TABLE extracted_rules ADD COLUMN IF NOT EXISTS structure_status TEXT`,
+		`ALTER TABLE extracted_rules ADD COLUMN IF NOT EXISTS structure_error TEXT`,
+	}
+	for _, migration := range ruleStructureMigrations {
+		if _, err := p.db.ExecContext(ctx, migration); err != nil {
+			fmt.Printf("Warning: failed to add rule structure column: %v\n", err)
 		}
 	}
 
@@ -662,8 +679,8 @@ func (p *PostgresDB) SaveExtractedRules(ctx context.Context, sourceID string, ru
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO extracted_rules (id, source_id, antecedent, consequent, exception, rule_type, scope, source_attribution, confidence, embedding, chunk_index, model, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		INSERT INTO extracted_rules (id, source_id, antecedent, consequent, exception, rule_type, scope, source_attribution, confidence, embedding, chunk_index, model, structured_rule, structure_status, structure_error, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (id) DO UPDATE SET
 			antecedent = EXCLUDED.antecedent,
 			consequent = EXCLUDED.consequent,
@@ -674,7 +691,10 @@ func (p *PostgresDB) SaveExtractedRules(ctx context.Context, sourceID string, ru
 			confidence = EXCLUDED.confidence,
 			embedding = EXCLUDED.embedding,
 			chunk_index = EXCLUDED.chunk_index,
-			model = EXCLUDED.model`)
+			model = EXCLUDED.model,
+			structured_rule = EXCLUDED.structured_rule,
+			structure_status = EXCLUDED.structure_status,
+			structure_error = EXCLUDED.structure_error`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare rule statement: %w", err)
 	}
@@ -689,11 +709,16 @@ func (p *PostgresDB) SaveExtractedRules(ctx context.Context, sourceID string, ru
 		if createdAt.IsZero() {
 			createdAt = time.Now()
 		}
+		structuredRule, structureStatus, structureError, err := marshalRuleStructureForDB(r)
+		if err != nil {
+			return fmt.Errorf("failed to marshal structured rule %s: %w", r.ID, err)
+		}
 
 		if _, err := stmt.ExecContext(ctx,
 			r.ID, sourceID, r.Antecedent, r.Consequent, r.Exception,
 			r.RuleType, r.Scope, r.SourceAttribution,
-			r.Confidence, embeddingVal, r.ChunkIndex, r.Model, createdAt); err != nil {
+			r.Confidence, embeddingVal, r.ChunkIndex, r.Model, structuredRule,
+			structureStatus, structureError, createdAt); err != nil {
 			return fmt.Errorf("failed to insert rule %s: %w", r.ID, err)
 		}
 	}
@@ -704,27 +729,51 @@ func (p *PostgresDB) SaveExtractedRules(ctx context.Context, sourceID string, ru
 func (p *PostgresDB) GetExtractedRules(ctx context.Context, sourceID string) ([]*ExtractedRule, error) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT id, source_id, antecedent, consequent, exception, rule_type, scope,
-		       source_attribution, confidence, embedding, chunk_index, model, created_at
+		       source_attribution, confidence, embedding, chunk_index, model,
+		       structured_rule, structure_status, structure_error, created_at
 		FROM extracted_rules WHERE source_id = $1`, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query extracted rules: %w", err)
 	}
 	defer rows.Close()
 
+	return p.scanRuleRows(rows)
+}
+
+func marshalRuleStructureForDB(r *ExtractedRule) (any, string, string, error) {
+	status := r.StructureStatus
+	errText := r.StructureError
+	if r.Structured == nil {
+		if status == "" {
+			status = ruleschema.StructureStatusUnparsed
+		}
+		return nil, status, errText, nil
+	}
+
+	data, err := json.Marshal(r.Structured)
+	if err != nil {
+		return nil, ruleschema.StructureStatusInvalid, err.Error(), err
+	}
+	if status == "" {
+		status = ruleschema.StructureStatusParsed
+	}
+	return string(data), status, errText, nil
+}
+
+func (p *PostgresDB) scanRuleRows(rows *sql.Rows) ([]*ExtractedRule, error) {
 	var rules []*ExtractedRule
 	for rows.Next() {
 		var r ExtractedRule
 		var embeddingStr sql.NullString
 		var exception, ruleType, scope, sourceAttr sql.NullString
+		var model, structuredRule, structureStatus, structureError sql.NullString
 		var confidence sql.NullFloat64
-
-		var model sql.NullString
 		if err := rows.Scan(&r.ID, &r.SourceID, &r.Antecedent, &r.Consequent,
 			&exception, &ruleType, &scope, &sourceAttr,
-			&confidence, &embeddingStr, &r.ChunkIndex, &model, &r.CreatedAt); err != nil {
+			&confidence, &embeddingStr, &r.ChunkIndex, &model,
+			&structuredRule, &structureStatus, &structureError, &r.CreatedAt); err != nil {
 			return nil, err
 		}
-
 		if exception.Valid {
 			r.Exception = exception.String
 		}
@@ -746,8 +795,36 @@ func (p *PostgresDB) GetExtractedRules(ctx context.Context, sourceID string) ([]
 		if model.Valid {
 			r.Model = model.String
 		}
-
+		if structureStatus.Valid {
+			r.StructureStatus = structureStatus.String
+		}
+		if structureError.Valid {
+			r.StructureError = structureError.String
+		}
+		if structuredRule.Valid && strings.TrimSpace(structuredRule.String) != "" {
+			var structured ruleschema.Rule
+			if err := json.Unmarshal([]byte(structuredRule.String), &structured); err != nil {
+				if r.StructureStatus == "" {
+					r.StructureStatus = ruleschema.StructureStatusInvalid
+				}
+				if r.StructureError == "" {
+					r.StructureError = err.Error()
+				}
+			} else {
+				r.Structured = &structured
+			}
+		}
+		if r.StructureStatus == "" {
+			if r.Structured != nil {
+				r.StructureStatus = ruleschema.StructureStatusParsed
+			} else {
+				r.StructureStatus = ruleschema.StructureStatusUnparsed
+			}
+		}
 		rules = append(rules, &r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return rules, nil
 }
@@ -791,7 +868,8 @@ func (p *PostgresDB) GetExtractedTriplesPaginated(ctx context.Context, sourceID 
 func (p *PostgresDB) GetExtractedRulesPaginated(ctx context.Context, sourceID string, offset, limit int) ([]*ExtractedRule, error) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT id, source_id, antecedent, consequent, exception, rule_type, scope,
-		       source_attribution, confidence, embedding, chunk_index, model, created_at
+		       source_attribution, confidence, embedding, chunk_index, model,
+		       structured_rule, structure_status, structure_error, created_at
 		FROM extracted_rules WHERE source_id = $1
 		ORDER BY id
 		LIMIT $2 OFFSET $3`, sourceID, limit, offset)
@@ -800,42 +878,7 @@ func (p *PostgresDB) GetExtractedRulesPaginated(ctx context.Context, sourceID st
 	}
 	defer rows.Close()
 
-	var rules []*ExtractedRule
-	for rows.Next() {
-		var r ExtractedRule
-		var embeddingStr sql.NullString
-		var exception, ruleType, scope, sourceAttr sql.NullString
-		var confidence sql.NullFloat64
-		var model sql.NullString
-		if err := rows.Scan(&r.ID, &r.SourceID, &r.Antecedent, &r.Consequent,
-			&exception, &ruleType, &scope, &sourceAttr,
-			&confidence, &embeddingStr, &r.ChunkIndex, &model, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		if exception.Valid {
-			r.Exception = exception.String
-		}
-		if ruleType.Valid {
-			r.RuleType = ruleType.String
-		}
-		if scope.Valid {
-			r.Scope = scope.String
-		}
-		if sourceAttr.Valid {
-			r.SourceAttribution = sourceAttr.String
-		}
-		if confidence.Valid {
-			r.Confidence = confidence.Float64
-		}
-		if embeddingStr.Valid {
-			r.Embedding = p.parseEmbedding(embeddingStr.String)
-		}
-		if model.Valid {
-			r.Model = model.String
-		}
-		rules = append(rules, &r)
-	}
-	return rules, nil
+	return p.scanRuleRows(rows)
 }
 
 func (p *PostgresDB) CountExtractedNodes(ctx context.Context, sourceID string) (int64, error) {

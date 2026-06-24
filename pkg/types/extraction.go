@@ -2,6 +2,8 @@ package types
 
 import (
 	"time"
+
+	"github.com/soundprediction/predicato/pkg/ruleschema"
 )
 
 // ExtractedNode represents a raw entity extracted from a source.
@@ -121,17 +123,20 @@ func (r *ExtractionResults) RuleCount() int {
 // ExtractedRule represents a conditional rule extracted from a source:
 // IF antecedent THEN consequent [UNLESS exception].
 type ExtractedRule struct {
-	CreatedAt         time.Time `json:"created_at"`
-	ID                string    `json:"id"`
-	SourceID          string    `json:"source_id"`
-	Antecedent        string    `json:"antecedent"`
-	Consequent        string    `json:"consequent"`
-	Exception         string    `json:"exception,omitempty"`
-	RuleType          string    `json:"rule_type,omitempty"`
-	Scope             string    `json:"scope,omitempty"`
-	SourceAttribution string    `json:"source_attribution,omitempty"`
-	Model             string    `json:"model,omitempty"`
-	Embedding         []float32 `json:"embedding,omitempty"`
-	Confidence        float64   `json:"confidence,omitempty"`
-	ChunkIndex        int       `json:"chunk_index"`
+	CreatedAt         time.Time        `json:"created_at"`
+	ID                string           `json:"id"`
+	SourceID          string           `json:"source_id"`
+	Antecedent        string           `json:"antecedent"`
+	Consequent        string           `json:"consequent"`
+	Exception         string           `json:"exception,omitempty"`
+	RuleType          string           `json:"rule_type,omitempty"`
+	Scope             string           `json:"scope,omitempty"`
+	SourceAttribution string           `json:"source_attribution,omitempty"`
+	Model             string           `json:"model,omitempty"`
+	Embedding         []float32        `json:"embedding,omitempty"`
+	Confidence        float64          `json:"confidence,omitempty"`
+	ChunkIndex        int              `json:"chunk_index"`
+	Structured        *ruleschema.Rule `json:"structured,omitempty"`
+	StructureStatus   string           `json:"structure_status,omitempty"`
+	StructureError    string           `json:"structure_error,omitempty"`
 }

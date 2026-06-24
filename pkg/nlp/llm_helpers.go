@@ -59,7 +59,7 @@ func calculateProgressiveTimeout(attempt int) time.Duration {
 //	jsonStr, err := GenerateJSONResponseWithContinuation(
 //	    ctx, nlProcessor,
 //	    "You are a JSON generator. Return only valid JSON.",
-//	    "Generate a list of 10 pregnancy tips",
+//	    "Generate a list of 10 onboarding tips",
 //	    &result,
 //	    5,
 //	)
@@ -707,46 +707,96 @@ Extract the following:
    Context fields (condition, temporal, scope, etc.) should be exact substrings where possible.
 4. Rules (extractive): Conditional logic STATED in the text. The antecedent and consequent must
    be exact substrings or contiguous phrases copied from the text.
-5. Inferred rules: Clinical knowledge implied by the text but not stated verbatim. These go in
+5. Inferred rules: Knowledge implied by the text but not stated verbatim. These go in
    a SEPARATE "inferred_rules" array.
 
 Return the output as a JSON object matching this structure:
 {
   "source_text": "Original text segment",
   "entities": { "type": ["entity1", "entity2"] },
-  "relations": [ { "source": "A", "target": "B", "type": "treats", "confidence": 1.0 } ],
+  "relations": [ { "source": "A", "target": "B", "type": "depends_on", "confidence": 1.0 } ],
   "triples": [
     {
-      "subject": "Metformin", "predicate": "reduces", "object": "blood glucose levels",
-      "condition": "in patients with type 2 diabetes", "temporal": "", "location": "",
-      "certainty": "established", "scope": "adults with type 2 diabetes", "source_attribution": ""
+      "subject": "request", "predicate": "requires", "object": "approval",
+      "condition": "when the amount exceeds the limit", "temporal": "", "location": "",
+      "certainty": "stated", "scope": "approval workflow", "source_attribution": ""
     }
   ],
   "rules": [
     {
-      "antecedent": "fasting glucose exceeds 95 mg/dL on two or more occasions",
-      "consequent": "insulin therapy should be initiated",
-      "exception": "unless contraindicated due to renal impairment",
-      "rule_type": "clinical_decision",
-      "scope": "gestational diabetes",
-      "source_attribution": ""
+      "antecedent": "the request amount exceeds the approval limit",
+      "consequent": "manager approval is required",
+      "exception": "unless the requester has pre-approval",
+      "rule_type": "policy_rule",
+      "scope": "approval workflow",
+      "source_attribution": "",
+      "structured": {
+        "schema_version": 1,
+        "conditions": [
+          {
+            "id": "c1",
+            "subject": { "var": "x" },
+            "predicate": "exceeds",
+            "predicate_canonical": "exceeds",
+            "object": { "entity": "approval limit", "entity_type": "threshold" }
+          }
+        ],
+        "consequent": {
+          "id": "k1",
+          "subject": { "var": "x" },
+          "predicate": "requires",
+          "predicate_canonical": "requires",
+          "object": { "entity": "manager approval" }
+        },
+        "exceptions": [
+          {
+            "id": "e1",
+            "subject": { "var": "x" },
+            "predicate": "has",
+            "object": { "entity": "pre-approval" }
+          }
+        ]
+      }
     }
   ],
   "inferred_rules": [
     {
-      "antecedent": "Patient has uncontrolled gestational diabetes",
-      "consequent": "Monitor for fetal macrosomia",
-      "rule_type": "clinical_inference",
-      "scope": "gestational diabetes",
-      "source_attribution": ""
+      "antecedent": "A task is blocked by a missing approval",
+      "consequent": "The task should be escalated to the owner",
+      "rule_type": "inference_rule",
+      "scope": "approval workflow",
+      "source_attribution": "",
+      "structured": {
+        "schema_version": 1,
+        "conditions": [
+          {
+            "id": "c1",
+            "subject": { "var": "task" },
+            "predicate": "blocked_by",
+            "object": { "entity": "missing approval" }
+          }
+        ],
+        "consequent": {
+          "id": "k1",
+          "subject": { "var": "task" },
+          "predicate": "escalated_to",
+          "object": { "entity": "owner" }
+        },
+        "exceptions": []
+      }
     }
   ]
 }
 
 IMPORTANT:
 - "rules" array: antecedent/consequent/exception MUST appear verbatim in the source text.
-- "inferred_rules" array: paraphrased clinical knowledge derived from the text.
+- "inferred_rules" array: paraphrased knowledge derived from the text.
 - Entity names, relation source/target, and triple subject/object must ALWAYS be exact substrings.
+- For every rule, include the existing text fields AND, when possible, a "structured" object.
+- structured.conditions, structured.consequent, and structured.exceptions MUST use subject/predicate/object patterns.
+- Pattern terms MUST be either variables like { "var": "x" } or constants like { "entity": "approval limit", "entity_uuid": "", "entity_type": "threshold" }.
+- Use the same variable name across related patterns. Every variable in structured.consequent or structured.exceptions MUST also appear in structured.conditions.
+- If a rule cannot be represented confidently as structured patterns, omit "structured" and still return the text rule.
 `, entityGuidance, relationGuidance)
 
 	userPrompt := fmt.Sprintf("Extract structured information from the following text:\n\n%s", text)
@@ -775,6 +825,7 @@ IMPORTANT:
 	if result.SourceText == "" {
 		result.SourceText = text
 	}
+	CompileExtendedExtractionRuleStructures(&result)
 
 	return &result, nil
 }
