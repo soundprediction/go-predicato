@@ -1,5 +1,7 @@
 package nlp
 
+import "github.com/soundprediction/predicato/pkg/ruleschema"
+
 // ExtractedEntity represents an entity extracted from text by an NLP model.
 type ExtractedEntity struct {
 	Text       string  `json:"text"`
@@ -33,13 +35,16 @@ type ExtendedTriple struct {
 
 // Rule represents a conditional rule: IF antecedent THEN consequent [UNLESS exception].
 type Rule struct {
-	Antecedent        string  `json:"antecedent"`
-	Consequent        string  `json:"consequent"`
-	Exception         string  `json:"exception,omitempty"`
-	RuleType          string  `json:"rule_type,omitempty"`
-	Scope             string  `json:"scope,omitempty"`
-	SourceAttribution string  `json:"source_attribution,omitempty"`
-	Confidence        float64 `json:"confidence,omitempty"`
+	Antecedent        string           `json:"antecedent"`
+	Consequent        string           `json:"consequent"`
+	Exception         string           `json:"exception,omitempty"`
+	RuleType          string           `json:"rule_type,omitempty"`
+	Scope             string           `json:"scope,omitempty"`
+	SourceAttribution string           `json:"source_attribution,omitempty"`
+	Confidence        float64          `json:"confidence,omitempty"`
+	Structured        *ruleschema.Rule `json:"structured,omitempty"`
+	StructureStatus   string           `json:"structure_status,omitempty"`
+	StructureError    string           `json:"structure_error,omitempty"`
 }
 
 // ExtendedExtractionResult represents the full extraction output including extended triples and rules.

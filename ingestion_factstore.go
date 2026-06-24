@@ -11,6 +11,7 @@ import (
 	"github.com/soundprediction/predicato/pkg/modeler"
 	"github.com/soundprediction/predicato/pkg/nlp"
 	"github.com/soundprediction/predicato/pkg/prompts"
+	"github.com/soundprediction/predicato/pkg/ruleschema"
 	"github.com/soundprediction/predicato/pkg/types"
 	"github.com/soundprediction/predicato/pkg/utils"
 	"github.com/soundprediction/predicato/pkg/utils/maintenance"
@@ -334,8 +335,16 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 
 				// Convert nlp.Rule → types.ExtractedRule
 				for _, r := range result.Rules {
+					ruleID := fmt.Sprintf("%s-rule-%d-%d", episode.ID, chunkIdx, len(knowledgeRules))
+					nlp.CompileRuleStructure(&r, nlp.RuleStructureMetadata{
+						ID:            ruleID,
+						SourceID:      episode.ID,
+						Model:         extModel,
+						ChunkIndex:    chunkIdx,
+						HasChunkIndex: true,
+					})
 					knowledgeRules = append(knowledgeRules, &types.ExtractedRule{
-						ID:                fmt.Sprintf("%s-rule-%d-%d", episode.ID, chunkIdx, len(knowledgeRules)),
+						ID:                ruleID,
 						SourceID:          episode.ID,
 						Antecedent:        r.Antecedent,
 						Consequent:        r.Consequent,
@@ -347,6 +356,9 @@ func (c *Client) ExtractToFacts(ctx context.Context, episode types.Episode, opti
 						Model:             extModel,
 						ChunkIndex:        chunkIdx,
 						CreatedAt:         time.Now(),
+						Structured:        r.Structured,
+						StructureStatus:   r.StructureStatus,
+						StructureError:    r.StructureError,
 					})
 				}
 			}
@@ -665,15 +677,10 @@ func (c *Client) PromoteToGraph(ctx context.Context, sourceID string, options *A
 			Embedding:  rule.Embedding,
 			GroupID:    source.GroupID,
 			SourceIDs:  []string{source.ID},
-			Metadata: map[string]interface{}{
-				"scope":              rule.Scope,
-				"source_attribution": rule.SourceAttribution,
-				"confidence":         rule.Confidence,
-				"source_id":          rule.SourceID,
-			},
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-			ValidFrom: time.Now(),
+			Metadata:   buildRuleMetadata(rule, source.ID),
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			ValidFrom:  time.Now(),
 		}
 		ruleNodes = append(ruleNodes, ruleNode)
 
@@ -1098,14 +1105,10 @@ func (c *Client) PromoteToGraphBatched(ctx context.Context, sourceID string, bat
 				Embedding:  rule.Embedding,
 				GroupID:    source.GroupID,
 				SourceIDs:  []string{sourceID},
-				Metadata: map[string]interface{}{
-					"scope":              rule.Scope,
-					"source_attribution": rule.SourceAttribution,
-					"confidence":         rule.Confidence,
-				},
-				CreatedAt: rule.CreatedAt,
-				UpdatedAt: rule.CreatedAt,
-				ValidFrom: rule.CreatedAt,
+				Metadata:   buildRuleMetadata(rule, sourceID),
+				CreatedAt:  rule.CreatedAt,
+				UpdatedAt:  rule.CreatedAt,
+				ValidFrom:  rule.CreatedAt,
 			}
 			ruleNodes = append(ruleNodes, ruleNode)
 		}
@@ -1179,6 +1182,36 @@ func buildRuleContent(rule *types.ExtractedRule) string {
 	}
 	b, _ := json.Marshal(m)
 	return string(b)
+}
+
+func buildRuleMetadata(rule *types.ExtractedRule, sourceID string) map[string]interface{} {
+	metadata := map[string]interface{}{
+		"scope":              rule.Scope,
+		"source_attribution": rule.SourceAttribution,
+		"confidence":         rule.Confidence,
+		"source_id":          sourceID,
+	}
+	if rule.SourceID != "" {
+		metadata["source_id"] = rule.SourceID
+	}
+	if rule.StructureStatus != "" {
+		metadata["structure_status"] = rule.StructureStatus
+	}
+	if rule.StructureError != "" {
+		metadata["structure_error"] = rule.StructureError
+	}
+	if rule.Structured != nil {
+		if data, err := json.Marshal(rule.Structured); err == nil {
+			metadata["structured_rule"] = string(data)
+			if _, ok := metadata["structure_status"]; !ok {
+				metadata["structure_status"] = ruleschema.StructureStatusParsed
+			}
+		} else {
+			metadata["structure_status"] = ruleschema.StructureStatusInvalid
+			metadata["structure_error"] = err.Error()
+		}
+	}
+	return metadata
 }
 
 // matchEntitiesInText performs case-insensitive substring matching of node names

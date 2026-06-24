@@ -30,7 +30,7 @@ func ExampleGenerateJSONResponseWithContinuation() {
 	// 	context.Background(),
 	// 	nlProcessor,
 	// 	"You are a helpful assistant that returns only valid JSON.",
-	// 	"Generate a JSON object with pregnancy nutrition tips",
+	// 	"Generate a JSON object with onboarding tips",
 	// 	&result,
 	// 	5, // max retries
 	// )
@@ -52,7 +52,7 @@ func ExampleGenerateJSONWithContinuation() {
 	// 	context.Background(),
 	// 	nlProcessor,
 	// 	"Return only valid JSON.",
-	// 	"List 5 pregnancy exercises as JSON array",
+	// 	"List 5 onboarding tasks as JSON array",
 	// 	3,
 	// )
 	//

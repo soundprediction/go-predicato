@@ -22,6 +22,7 @@ import (
 	ladybug "github.com/LadybugDB/go-ladybug"
 	"github.com/parquet-go/parquet-go"
 
+	"github.com/soundprediction/predicato/pkg/ruleschema"
 	"github.com/soundprediction/predicato/pkg/types"
 )
 
@@ -2560,18 +2561,7 @@ func (k *LadybugDriver) BulkLoadFromParquet(ctx context.Context, inputDir, group
 				if r.Exception != "" {
 					fact += " UNLESS " + r.Exception
 				}
-				attrs := "{}"
-				if data, err := json.Marshal(map[string]any{
-					"antecedent":         r.Antecedent,
-					"consequent":         r.Consequent,
-					"exception":          r.Exception,
-					"rule_type":          r.RuleType,
-					"scope":              r.Scope,
-					"source_attribution": r.SourceAttribution,
-					"confidence":         r.Confidence,
-				}); err == nil {
-					attrs = string(data)
-				}
+				attrs := buildRuleAttributes(r)
 				rules[i] = ladybugRule{
 					Uuid:          r.ID,
 					Name:          r.RuleType + ": " + r.Antecedent,
@@ -2943,18 +2933,7 @@ func (k *LadybugDriver) BulkLoadFromParquetWithFilter(ctx context.Context, input
 			if r.Exception != "" {
 				fact += " UNLESS " + r.Exception
 			}
-			attrs := "{}"
-			if data, err := json.Marshal(map[string]any{
-				"antecedent":         r.Antecedent,
-				"consequent":         r.Consequent,
-				"exception":          r.Exception,
-				"rule_type":          r.RuleType,
-				"scope":              r.Scope,
-				"source_attribution": r.SourceAttribution,
-				"confidence":         r.Confidence,
-			}); err == nil {
-				attrs = string(data)
-			}
+			attrs := buildRuleAttributes(r)
 			rules[i] = ladybugRule{
 				Uuid:          r.ID,
 				Name:          r.RuleType + ": " + r.Antecedent,
@@ -3065,6 +3044,9 @@ type factstoreRule struct {
 	Embedding         []float32 `parquet:"embedding,list"`
 	Confidence        float64   `parquet:"confidence"`
 	ChunkIndex        int32     `parquet:"chunk_index"`
+	StructuredRule    string    `parquet:"structured_rule"`
+	StructureStatus   string    `parquet:"structure_status"`
+	StructureError    string    `parquet:"structure_error"`
 }
 
 func buildTripleAttributes(t factstoreTriple) string {
@@ -3095,6 +3077,35 @@ func buildTripleAttributes(t factstoreTriple) string {
 	}
 	if t.ObjectType != "" {
 		attrs["object_type"] = t.ObjectType
+	}
+	data, err := json.Marshal(attrs)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
+func buildRuleAttributes(r factstoreRule) string {
+	attrs := map[string]any{
+		"antecedent":         r.Antecedent,
+		"consequent":         r.Consequent,
+		"exception":          r.Exception,
+		"rule_type":          r.RuleType,
+		"scope":              r.Scope,
+		"source_attribution": r.SourceAttribution,
+		"confidence":         r.Confidence,
+	}
+	if r.StructuredRule != "" {
+		attrs["structured_rule"] = r.StructuredRule
+		if r.StructureStatus == "" {
+			attrs["structure_status"] = ruleschema.StructureStatusParsed
+		}
+	}
+	if r.StructureStatus != "" {
+		attrs["structure_status"] = r.StructureStatus
+	}
+	if r.StructureError != "" {
+		attrs["structure_error"] = r.StructureError
 	}
 	data, err := json.Marshal(attrs)
 	if err != nil {
