@@ -1,0 +1,195 @@
+openapi: 3.0.3
+info:
+  title: predicato — Knowledge Graph REST API
+  version: "1.0"
+  description: >
+    REST API of the predicato `server` command (HTTP/JSON over chi). predicato is
+    primarily a **gRPC** service — `predicato.v1.GraphService` (see
+    `proto/predicato/v1/graph.proto`), which is what production deploys
+    (`serve-grpc`). This REST surface exposes the same engine over HTTP and is
+    documented here for HTTP integrators. In router mode a single server routes a
+    query across many topic graphs and merges results via Reciprocal Rank Fusion,
+    with per-node `group_id` + `source_ids` provenance.
+
+    Auth (when enabled): send `x-api-key: <key>` (the gRPC server uses the same
+    header; the REST server may be fronted similarly). Health endpoints are exempt.
+servers:
+  - url: http://localhost:8080
+    description: predicato HTTP server (the `server` command; default host:port)
+tags:
+  - name: health
+  - name: search
+  - name: ingest
+  - name: nlp
+  - name: config
+paths:
+  /health:
+    get: { tags: [health], summary: Health check, responses: { "200": { description: OK } } }
+  /healthcheck:
+    get: { tags: [health], summary: Legacy health check, responses: { "200": { description: OK } } }
+  /ready:
+    get: { tags: [health], summary: Readiness probe, responses: { "200": { description: Ready } } }
+  /live:
+    get: { tags: [health], summary: Kubernetes liveness probe, responses: { "200": { description: Alive } } }
+  /health/detailed:
+    get: { tags: [health], summary: Detailed health (backend/driver status), responses: { "200": { description: OK } } }
+
+  /api/v1/search:
+    post:
+      tags: [search]
+      summary: Hybrid knowledge-graph search (semantic + keyword + graph traversal)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SearchRequest' }
+      responses:
+        "200":
+          description: Merged, provenance-carrying results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResults' }
+  /api/v1/search/facts:
+    post:
+      tags: [search]
+      summary: Fact-store cosine-similarity search
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SearchRequest' } } }
+      responses: { "200": { description: Fact matches, content: { application/json: { schema: { type: object } } } } }
+  /api/v1/entity-edge/{uuid}:
+    get:
+      tags: [search]
+      summary: Fetch an edge by UUID
+      parameters: [ { name: uuid, in: path, required: true, schema: { type: string } } ]
+      responses: { "200": { description: Edge, content: { application/json: { schema: { $ref: '#/components/schemas/Edge' } } } }, "404": { description: Not found } }
+  /api/v1/episodes/{group_id}:
+    get:
+      tags: [search]
+      summary: List episodes for a group/topic
+      parameters: [ { name: group_id, in: path, required: true, schema: { type: string } } ]
+      responses: { "200": { description: Episodes, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Node' } } } } } }
+
+  /api/v1/ingest/messages:
+    post:
+      tags: [ingest]
+      summary: Add message episodes to the graph (extract entities/edges)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Episode' } } } }
+      responses: { "200": { description: AddEpisodeResults, content: { application/json: { schema: { $ref: '#/components/schemas/AddEpisodeResults' } } } } }
+  /api/v1/ingest/entity:
+    post: { tags: [ingest], summary: Add a single entity node, requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Node' } } } }, responses: { "200": { description: OK } } }
+  /api/v1/ingest/extract:
+    post: { tags: [ingest], summary: Two-phase ingestion — extract an episode to the fact store, requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Episode' } } } }, responses: { "200": { description: ExtractionResults } } }
+  /api/v1/ingest/promote:
+    post: { tags: [ingest], summary: Promote extracted facts into the graph, responses: { "200": { description: AddEpisodeResults } } }
+  /api/v1/ingest/clear:
+    delete:
+      tags: [ingest]
+      summary: Clear all data for a group
+      parameters: [ { name: group_id, in: query, schema: { type: string } } ]
+      responses: { "200": { description: Cleared } }
+
+  /api/v1/nlp/analyze-relevance:
+    post: { tags: [nlp], summary: Analyze whether content is relevant to topics, responses: { "200": { description: "{relevant: bool}" } } }
+  /api/v1/nlp/extract-source:
+    post: { tags: [nlp], summary: Extract source name/type from content+url, responses: { "200": { description: "{source_name, source_type}" } } }
+  /api/v1/embed:
+    post: { tags: [nlp], summary: Embed text(s), responses: { "200": { description: Embeddings } } }
+  /api/v1/embeddings:
+    post: { tags: [nlp], summary: OpenAI-compatible embeddings, responses: { "200": { description: OpenAI embeddings response } } }
+  /api/v1/extract:
+    post: { tags: [nlp], summary: Extended entity/edge extraction from content, responses: { "200": { description: Extraction } } }
+
+  /api/v1/config/models:
+    get: { tags: [config], summary: Configured models, responses: { "200": { description: OK } } }
+  /api/v1/config/nlp:
+    get: { tags: [config], summary: NLP model config, responses: { "200": { description: OK } } }
+  /api/v1/config/embedding:
+    get: { tags: [config], summary: Embedding model config, responses: { "200": { description: OK } } }
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+  schemas:
+    SearchRequest:
+      type: object
+      properties:
+        query: { type: string }
+        config: { $ref: '#/components/schemas/SearchConfig' }
+      required: [query]
+    SearchConfig:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            group_ids: { type: array, items: { type: string } }
+            node_types: { type: array, items: { type: string } }
+            edge_types: { type: array, items: { type: string } }
+            entity_types: { type: array, items: { type: string } }
+        limit: { type: integer }
+        center_node_distance: { type: integer }
+        min_score: { type: number }
+        include_edges: { type: boolean }
+        exclude_entity_types: { type: array, items: { type: string } }
+        preferred_predicates: { type: array, items: { type: string } }
+    SearchResults:
+      type: object
+      properties:
+        query: { type: string }
+        nodes: { type: array, items: { $ref: '#/components/schemas/Node' } }
+        edges: { type: array, items: { $ref: '#/components/schemas/Edge' } }
+        total: { type: integer }
+    Node:
+      type: object
+      properties:
+        uuid: { type: string }
+        name: { type: string }
+        type: { type: string }
+        group_id: { type: string, description: topic / provenance group }
+        entity_type: { type: string }
+        summary: { type: string }
+        content: { type: string }
+        source_ids: { type: array, items: { type: string } }
+        level: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        metadata: { type: object }
+    Edge:
+      type: object
+      properties:
+        uuid: { type: string }
+        group_id: { type: string }
+        source_node_id: { type: string }
+        target_node_id: { type: string }
+        name: { type: string }
+        fact: { type: string }
+        type: { type: string }
+        summary: { type: string }
+        source_ids: { type: array, items: { type: string } }
+        strength: { type: number }
+        created_at: { type: string, format: date-time }
+        metadata: { type: object }
+        attributes: { type: object }
+    Episode:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        content: { type: string }
+        source: { type: string }
+        group_id: { type: string }
+        reference: { type: string, format: date-time }
+        metadata: { type: object }
+      required: [content]
+    AddEpisodeResults:
+      type: object
+      properties:
+        episode: { $ref: '#/components/schemas/Node' }
+        nodes: { type: array, items: { $ref: '#/components/schemas/Node' } }
+        edges: { type: array, items: { $ref: '#/components/schemas/Edge' } }
+        communities: { type: array, items: { $ref: '#/components/schemas/Node' } }
+        rules: { type: array, items: { $ref: '#/components/schemas/Node' } }
