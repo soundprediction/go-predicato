@@ -59,6 +59,22 @@ func init() {
 	serveGRPCCmd.Flags().String("embedding-base-url", "", "Embedding base URL")
 
 	serveGRPCCmd.Flags().String("telemetry-parquet-path", "", "Path to directory for telemetry")
+
+	// Router-mode flags. When --source-dir is set, the server discovers topic
+	// graphs in that directory and routes/merges queries across them instead of
+	// serving a single graph.
+	serveGRPCCmd.Flags().String("source-dir", "", "Directory of topic graphs (<slug>.duckdb/.lbug + <slug>.md). When set, enables multi-graph router mode.")
+	serveGRPCCmd.Flags().String("strategy", "cross_encoder", "Routing strategy: cross_encoder, embedding, keyword, topic_based")
+	serveGRPCCmd.Flags().String("merge-strategy", "rrf", "Result merge strategy: rrf, simple_concat, max_score")
+	serveGRPCCmd.Flags().Int("max-graphs", 2, "Max number of topic graphs to query per request")
+	serveGRPCCmd.Flags().Float64("min-confidence", 0.3, "Minimum routing confidence to include a topic graph")
+	serveGRPCCmd.Flags().Int("max-open-graphs", 8, "Max number of topic graph databases kept open simultaneously (LRU eviction)")
+
+	// Reranker selection for cross_encoder routing. When empty, an
+	// embedding-based reranker is built from the shared embedder (no extra model).
+	serveGRPCCmd.Flags().String("reranker-provider", "", "Cross-encoder reranker provider for cross_encoder strategy: embedding (default), reranker, local, openai")
+	serveGRPCCmd.Flags().String("reranker-model", "", "Reranker model name (for reranker provider)")
+	serveGRPCCmd.Flags().String("reranker-base-url", "", "Reranker base URL (for Jina-compatible reranker provider)")
 }
 
 func runServeGRPC(cmd *cobra.Command, _ []string) error {
@@ -68,6 +84,13 @@ func runServeGRPC(cmd *cobra.Command, _ []string) error {
 	}
 	overrideConfigWithFlags(cmd, cfg)
 
+	// Multi-graph router mode: when --source-dir is set, discover topic graphs
+	// in that directory and route/merge queries across them.
+	if sourceDir, _ := cmd.Flags().GetString("source-dir"); sourceDir != "" {
+		return runServeGRPCRouterMode(cmd, cfg, sourceDir, grpcAddr)
+	}
+
+	// Single-graph mode (unchanged).
 	fmt.Println("Initializing Predicato...")
 	predicatoInstance, _, _, err := initializePredicato(cmd, cfg)
 	if err != nil {
