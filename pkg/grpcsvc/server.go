@@ -3,7 +3,9 @@ package grpcsvc
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
+	"os"
 
 	"github.com/soundprediction/predicato"
 	"github.com/soundprediction/predicato/pkg/driver"
@@ -100,6 +102,15 @@ func Serve(p predicato.Predicato, addr string, opts ...grpc.ServerOption) error 
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("grpcsvc listen %s: %w", addr, err)
+	}
+	if key := os.Getenv("PREDICATO_API_KEY"); key != "" {
+		log.Printf("grpcsvc: api-key auth ON (x-api-key required; Health exempt)")
+		opts = append([]grpc.ServerOption{
+			grpc.ChainUnaryInterceptor(APIKeyUnaryInterceptor(key)),
+			grpc.ChainStreamInterceptor(APIKeyStreamInterceptor(key)),
+		}, opts...)
+	} else {
+		log.Printf("grpcsvc: api-key auth OFF (PREDICATO_API_KEY unset; fail-open)")
 	}
 	gs := grpc.NewServer(opts...)
 	NewServer(p).Register(gs)
