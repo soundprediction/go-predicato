@@ -303,136 +303,16 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 	}
 
 	// Initialize NLP client
-	var nlProcessor nlp.Client
-
-	if useGLiNER2 {
-		endpoint, _ := cmd.Flags().GetString("gliner2-endpoint")
-
-		// Check if server is running, if not start it
-		if err := ensureGLiNER2Server(endpoint); err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to ensure GLiNER2 server: %w", err)
-		}
-
-		glinerClient, err := gliner2.NewClient(gliner2.Config{
-			Provider: gliner2.ProviderLocal,
-			Local: &gliner2.LocalConfig{
-				Endpoint: endpoint,
-			},
-		})
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to create GLiNER2 client: %w", err)
-		}
-
-		nlProcessor = glinerClient
-		fmt.Printf("Using GLiNER2 NLP provider at: %s (Verified Healthy)\n", endpoint)
-
-		// Update config to reflect GLiNER2 usage so logging and other components are aware
-		defaultModel := cfg.NLP.Models["default"]
-		defaultModel.Provider = "gliner2"
-		defaultModel.Model = "gliner2-multi-v1" // or prompt for model?
-		cfg.NLP.Models["default"] = defaultModel
+	nlProcessor, err := buildNLP(cmd, cfg, &logger)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-
 	defaultModel := cfg.NLP.Models["default"]
-	if nlProcessor == nil && defaultModel.APIKey != "" {
-		switch defaultModel.Provider {
-		case "openai":
-			nlpConfig := nlp.Config{
-				Model:       defaultModel.Model,
-				Temperature: &defaultModel.Temperature,
-				BaseURL:     defaultModel.BaseURL,
-			}
-			baseNLPClient, err := nlp.NewOpenAIClient(defaultModel.APIKey, nlpConfig)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("failed to create NLP client: %w", err)
-			}
-			// Wrap with retry client for automatic retry on errors
-			retryClient, err := nlp.NewRetryClient(baseNLPClient, nlp.DefaultRetryConfig())
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("failed to create retry client: %w", err)
-			}
-
-			// Telemetry using Parquet
-			trackingPath := cfg.Telemetry.ParquetPath
-			if trackingPath == "" {
-				homeDir, err := os.UserHomeDir()
-				if err != nil {
-					return nil, nil, nil, fmt.Errorf("failed to get user home directory: %w", err)
-				}
-				trackingPath = fmt.Sprintf("%s/.predicato/telemetry", homeDir)
-			}
-
-			// Ensure directory exists
-			if err := os.MkdirAll(trackingPath, 0755); err != nil {
-				return nil, nil, nil, fmt.Errorf("failed to create telemetry directory: %w", err)
-			}
-
-			// Initialize Token Tracker
-			tracker, err := nlp.NewTokenTracker(trackingPath)
-			if err != nil {
-				fmt.Printf("Warning: Failed to initialize token tracker: %v\n", err)
-				nlProcessor = retryClient
-			} else {
-				nlProcessor = nlp.NewTokenTrackingClient(retryClient, tracker)
-				fmt.Printf("Token tracking enabled at: %s\n", trackingPath)
-			}
-
-			// Initialize Error Tracking Logger
-			colorHandler := predicatoLogger.NewColorHandler(os.Stderr, &slog.HandlerOptions{
-				Level: slog.LevelInfo,
-			})
-
-			parquetHandler, err := telemetry.NewParquetHandler(colorHandler, trackingPath)
-			if err != nil {
-				fmt.Printf("Warning: Failed to initialize error tracking: %v\n", err)
-			} else {
-				// Update the global logger to use our new handler
-				logger = slog.New(parquetHandler)
-				fmt.Printf("Error tracking enabled\n")
-			}
-		default:
-			return nil, nil, nil, fmt.Errorf("unsupported NLP provider: %s", defaultModel.Provider)
-		}
-	} else if nlProcessor == nil {
-		// Default to internal Candle NLP client (no external API required)
-		fmt.Println("Initializing internal Candle NLP service...")
-		candleClient := candleAdapter.NewClient(candleAdapter.CandleNLPConfig{
-			TextGenModelID: "HuggingFaceTB/SmolLM2-360M-Instruct",
-		})
-		nlProcessor = candleAdapter.NewLLMAdapter(candleClient, "text_generation")
-		fmt.Println("Candle NLP service initialized (internal, no API key required)")
-	}
 
 	// Initialize embedder client
-	var embedderClient embedder.Client
-	if cfg.Embedding.APIKey != "" {
-		switch cfg.Embedding.Provider {
-		case "openai":
-			embedderConfig := embedder.Config{
-				Model:   cfg.Embedding.Model,
-				BaseURL: cfg.Embedding.BaseURL,
-			}
-			embedderClient = embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedderConfig)
-		default:
-			return nil, nil, nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Embedding.Provider)
-		}
-	} else {
-		// Default to internal Candle embedder (no external API required)
-		fmt.Println("Initializing internal Candle embedder service...")
-		internalEmbedder, err := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
-			Model:      "qwen/qwen3-embedding-0.6b",
-			Dimensions: 1024,
-			Normalize:  true,
-		})
-		if err != nil {
-			fmt.Printf("Warning: Failed to initialize Candle embedder: %v\n", err)
-			fmt.Println("Continuing without embedder - semantic search will be unavailable")
-		} else {
-			embedderClient = internalEmbedder
-			cfg.Embedding.Provider = "candle"
-			cfg.Embedding.Model = "qwen/qwen3-embedding-0.6b"
-			fmt.Println("Candle embedder initialized (internal, no API key required)")
-		}
+	embedderClient, err := buildEmbedder(cfg)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	// Initialize FactStore (PostgreSQL with VectorChord required)
@@ -478,6 +358,155 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 	}
 
 	return client, embedderClient, nlProcessor, nil
+}
+
+// buildNLP constructs the NLP client from config and flags. It mirrors the
+// behaviour previously inlined in initializePredicato so that other commands
+// (e.g. serve-grpc router mode) can obtain an NLP client without opening a
+// throwaway graph. The logger pointer may be replaced with a telemetry-aware
+// logger when error tracking is enabled.
+func buildNLP(cmd *cobra.Command, cfg *config.Config, logger **slog.Logger) (nlp.Client, error) {
+	var nlProcessor nlp.Client
+
+	if useGLiNER2 {
+		endpoint, _ := cmd.Flags().GetString("gliner2-endpoint")
+
+		// Check if server is running, if not start it
+		if err := ensureGLiNER2Server(endpoint); err != nil {
+			return nil, fmt.Errorf("failed to ensure GLiNER2 server: %w", err)
+		}
+
+		glinerClient, err := gliner2.NewClient(gliner2.Config{
+			Provider: gliner2.ProviderLocal,
+			Local: &gliner2.LocalConfig{
+				Endpoint: endpoint,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create GLiNER2 client: %w", err)
+		}
+
+		nlProcessor = glinerClient
+		fmt.Printf("Using GLiNER2 NLP provider at: %s (Verified Healthy)\n", endpoint)
+
+		// Update config to reflect GLiNER2 usage so logging and other components are aware
+		defaultModel := cfg.NLP.Models["default"]
+		defaultModel.Provider = "gliner2"
+		defaultModel.Model = "gliner2-multi-v1" // or prompt for model?
+		cfg.NLP.Models["default"] = defaultModel
+	}
+
+	defaultModel := cfg.NLP.Models["default"]
+	if nlProcessor == nil && defaultModel.APIKey != "" {
+		switch defaultModel.Provider {
+		case "openai":
+			nlpConfig := nlp.Config{
+				Model:       defaultModel.Model,
+				Temperature: &defaultModel.Temperature,
+				BaseURL:     defaultModel.BaseURL,
+			}
+			baseNLPClient, err := nlp.NewOpenAIClient(defaultModel.APIKey, nlpConfig)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create NLP client: %w", err)
+			}
+			// Wrap with retry client for automatic retry on errors
+			retryClient, err := nlp.NewRetryClient(baseNLPClient, nlp.DefaultRetryConfig())
+			if err != nil {
+				return nil, fmt.Errorf("failed to create retry client: %w", err)
+			}
+
+			// Telemetry using Parquet
+			trackingPath := cfg.Telemetry.ParquetPath
+			if trackingPath == "" {
+				homeDir, err := os.UserHomeDir()
+				if err != nil {
+					return nil, fmt.Errorf("failed to get user home directory: %w", err)
+				}
+				trackingPath = fmt.Sprintf("%s/.predicato/telemetry", homeDir)
+			}
+
+			// Ensure directory exists
+			if err := os.MkdirAll(trackingPath, 0755); err != nil {
+				return nil, fmt.Errorf("failed to create telemetry directory: %w", err)
+			}
+
+			// Initialize Token Tracker
+			tracker, err := nlp.NewTokenTracker(trackingPath)
+			if err != nil {
+				fmt.Printf("Warning: Failed to initialize token tracker: %v\n", err)
+				nlProcessor = retryClient
+			} else {
+				nlProcessor = nlp.NewTokenTrackingClient(retryClient, tracker)
+				fmt.Printf("Token tracking enabled at: %s\n", trackingPath)
+			}
+
+			// Initialize Error Tracking Logger
+			colorHandler := predicatoLogger.NewColorHandler(os.Stderr, &slog.HandlerOptions{
+				Level: slog.LevelInfo,
+			})
+
+			parquetHandler, err := telemetry.NewParquetHandler(colorHandler, trackingPath)
+			if err != nil {
+				fmt.Printf("Warning: Failed to initialize error tracking: %v\n", err)
+			} else if logger != nil {
+				// Update the global logger to use our new handler
+				*logger = slog.New(parquetHandler)
+				fmt.Printf("Error tracking enabled\n")
+			}
+		default:
+			return nil, fmt.Errorf("unsupported NLP provider: %s", defaultModel.Provider)
+		}
+	} else if nlProcessor == nil {
+		// Default to internal Candle NLP client (no external API required)
+		fmt.Println("Initializing internal Candle NLP service...")
+		candleClient := candleAdapter.NewClient(candleAdapter.CandleNLPConfig{
+			TextGenModelID: "HuggingFaceTB/SmolLM2-360M-Instruct",
+		})
+		nlProcessor = candleAdapter.NewLLMAdapter(candleClient, "text_generation")
+		fmt.Println("Candle NLP service initialized (internal, no API key required)")
+	}
+
+	return nlProcessor, nil
+}
+
+// buildEmbedder constructs the embedder client from config. It mirrors the
+// behaviour previously inlined in initializePredicato so that other commands
+// (e.g. serve-grpc router mode) can obtain a shared embedder without opening a
+// throwaway graph. cfg.Embedding.Provider/Model may be updated to reflect the
+// fallback Candle embedder.
+func buildEmbedder(cfg *config.Config) (embedder.Client, error) {
+	var embedderClient embedder.Client
+	if cfg.Embedding.APIKey != "" {
+		switch cfg.Embedding.Provider {
+		case "openai":
+			embedderConfig := embedder.Config{
+				Model:   cfg.Embedding.Model,
+				BaseURL: cfg.Embedding.BaseURL,
+			}
+			embedderClient = embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedderConfig)
+		default:
+			return nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Embedding.Provider)
+		}
+	} else {
+		// Default to internal Candle embedder (no external API required)
+		fmt.Println("Initializing internal Candle embedder service...")
+		internalEmbedder, err := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+			Model:      "qwen/qwen3-embedding-0.6b",
+			Dimensions: 1024,
+			Normalize:  true,
+		})
+		if err != nil {
+			fmt.Printf("Warning: Failed to initialize Candle embedder: %v\n", err)
+			fmt.Println("Continuing without embedder - semantic search will be unavailable")
+		} else {
+			embedderClient = internalEmbedder
+			cfg.Embedding.Provider = "candle"
+			cfg.Embedding.Model = "qwen/qwen3-embedding-0.6b"
+			fmt.Println("Candle embedder initialized (internal, no API key required)")
+		}
+	}
+
+	return embedderClient, nil
 }
 
 func ensureGLiNER2Server(endpoint string) error {
