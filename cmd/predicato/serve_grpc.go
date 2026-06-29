@@ -58,6 +58,11 @@ func init() {
 	serveGRPCCmd.Flags().String("embedding-api-key", "", "Embedding API key")
 	serveGRPCCmd.Flags().String("embedding-base-url", "", "Embedding base URL")
 
+	serveGRPCCmd.Flags().String("reranker-provider", "reranker", "Cross-encoder reranker provider (reranker, local, mock)")
+	serveGRPCCmd.Flags().String("reranker-model", "", "Cross-encoder reranker model")
+	serveGRPCCmd.Flags().String("reranker-api-key", "", "Cross-encoder reranker API key")
+	serveGRPCCmd.Flags().String("reranker-base-url", "", "Cross-encoder reranker base URL")
+
 	serveGRPCCmd.Flags().String("telemetry-parquet-path", "", "Path to directory for telemetry")
 }
 

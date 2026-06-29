@@ -16,6 +16,7 @@ import (
 	"github.com/soundprediction/predicato"
 	candleAdapter "github.com/soundprediction/predicato/pkg/candle"
 	"github.com/soundprediction/predicato/pkg/config"
+	"github.com/soundprediction/predicato/pkg/crossencoder"
 	"github.com/soundprediction/predicato/pkg/driver"
 	"github.com/soundprediction/predicato/pkg/embedder"
 	"github.com/soundprediction/predicato/pkg/factstore"
@@ -85,6 +86,12 @@ func init() {
 	serverCmd.Flags().String("embedding-model", "text-embedding-3-small", "Embedding model")
 	serverCmd.Flags().String("embedding-api-key", "", "Embedding API key")
 	serverCmd.Flags().String("embedding-base-url", "", "Embedding base URL")
+
+	// Reranker flags
+	serverCmd.Flags().String("reranker-provider", "reranker", "Cross-encoder reranker provider (reranker, local, mock)")
+	serverCmd.Flags().String("reranker-model", "", "Cross-encoder reranker model")
+	serverCmd.Flags().String("reranker-api-key", "", "Cross-encoder reranker API key")
+	serverCmd.Flags().String("reranker-base-url", "", "Cross-encoder reranker base URL")
 
 	// Telemetry flags
 	serverCmd.Flags().String("telemetry-parquet-path", "", "Path to directory for telemetry (errors and token usage)")
@@ -240,6 +247,20 @@ func overrideConfigWithFlags(cmd *cobra.Command, cfg *config.Config) {
 	}
 	if cmd.Flags().Changed("embedding-base-url") {
 		cfg.Embedding.BaseURL, _ = cmd.Flags().GetString("embedding-base-url")
+	}
+
+	// Reranker flags
+	if cmd.Flags().Changed("reranker-provider") {
+		cfg.Reranker.Provider, _ = cmd.Flags().GetString("reranker-provider")
+	}
+	if cmd.Flags().Changed("reranker-model") {
+		cfg.Reranker.Model, _ = cmd.Flags().GetString("reranker-model")
+	}
+	if cmd.Flags().Changed("reranker-api-key") {
+		cfg.Reranker.APIKey, _ = cmd.Flags().GetString("reranker-api-key")
+	}
+	if cmd.Flags().Changed("reranker-base-url") {
+		cfg.Reranker.BaseURL, _ = cmd.Flags().GetString("reranker-base-url")
 	}
 
 	// Telemetry flags
@@ -468,6 +489,12 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create Predicato client: %w", err)
 	}
+	if ce, err := createRerankerClient(cfg.Reranker); err != nil {
+		return nil, nil, nil, err
+	} else if ce != nil {
+		client.SetCrossEncoder(ce)
+		fmt.Printf("Cross-encoder reranker enabled: %s (%s)\n", cfg.Reranker.Model, cfg.Reranker.BaseURL)
+	}
 
 	fmt.Printf("Predicato initialized successfully with driver: %s\n", cfg.Database.Driver)
 	if nlProcessor != nil {
@@ -478,6 +505,35 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 	}
 
 	return client, embedderClient, nlProcessor, nil
+}
+
+func createRerankerClient(cfg config.RerankerConfig) (crossencoder.Client, error) {
+	if cfg.BaseURL == "" && cfg.Provider == "" && cfg.Model == "" {
+		return nil, nil
+	}
+
+	provider := cfg.Provider
+	if provider == "" {
+		provider = "reranker"
+	}
+
+	switch provider {
+	case "reranker", "http", "jina":
+		if cfg.BaseURL == "" {
+			return nil, fmt.Errorf("reranker.base_url is required for provider %q", provider)
+		}
+		return crossencoder.NewRerankerClient(crossencoder.RerankerConfig{
+			BaseURL: cfg.BaseURL,
+			APIKey:  cfg.APIKey,
+			Config:  crossencoder.Config{Model: cfg.Model},
+		}), nil
+	case "local":
+		return crossencoder.NewLocalRerankerClient(crossencoder.Config{Model: cfg.Model}), nil
+	case "mock":
+		return crossencoder.NewMockRerankerClient(crossencoder.Config{Model: cfg.Model}), nil
+	default:
+		return nil, fmt.Errorf("unsupported reranker provider: %s", provider)
+	}
 }
 
 func ensureGLiNER2Server(endpoint string) error {

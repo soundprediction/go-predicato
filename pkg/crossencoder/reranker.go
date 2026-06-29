@@ -27,6 +27,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -61,8 +62,10 @@ type RerankResponse struct {
 // RankedResult represents a single ranking result
 type RankedResult struct {
 	Document       string  `json:"document"`
+	Text           string  `json:"text"`
 	Index          int     `json:"index"`
 	RelevanceScore float64 `json:"relevance_score"`
+	Score          float64 `json:"score"`
 }
 
 // Usage represents token usage information
@@ -89,6 +92,7 @@ func NewRerankerClient(config RerankerConfig) *RerankerClient {
 	if config.BaseURL == "" {
 		config.BaseURL = "http://localhost:8000/v1" // Common default for local services
 	}
+	config.BaseURL = strings.TrimRight(config.BaseURL, "/")
 
 	return &RerankerClient{
 		baseURL: config.BaseURL,
@@ -209,9 +213,20 @@ func (c *RerankerClient) Rank(ctx context.Context, query string, passages []stri
 	// Convert to RankedPassage format
 	results := make([]RankedPassage, len(rerankResponse.Results))
 	for i, result := range rerankResponse.Results {
+		passage := result.Document
+		if passage == "" {
+			passage = result.Text
+		}
+		if passage == "" && result.Index >= 0 && result.Index < len(passages) {
+			passage = passages[result.Index]
+		}
+		score := result.RelevanceScore
+		if score == 0 {
+			score = result.Score
+		}
 		results[i] = RankedPassage{
-			Passage: result.Document,
-			Score:   result.RelevanceScore,
+			Passage: passage,
+			Score:   score,
 		}
 	}
 

@@ -16,7 +16,28 @@ predicato serve-grpc --addr :50071
 ```
 
 Configuration comes from the config file, environment, or flags (`--db-driver`,
-`--db-uri`, `--nlp-*`, `--embedding-*`, `--gliner2*`, …) exactly like `server`.
+`--db-uri`, `--nlp-*`, `--embedding-*`, `--reranker-*`, `--gliner2*`, …)
+exactly like `server`.
+
+For graph-result cross-encoder reranking, start every predicato worker with a
+Jina-compatible `/v1/rerank` service:
+
+```bash
+predicato serve-grpc \
+  --addr :50072 \
+  --db-driver ladybug \
+  --db-uri /data/topic-graphs/ladybug/canonical.ladybug \
+  --embedding-provider openai \
+  --embedding-base-url http://GPU_PRIVATE_IP:9099/v1 \
+  --embedding-model Qwen/Qwen3-Embedding-0.6B \
+  --embedding-api-key "$EMBEDDING_API_KEY" \
+  --reranker-provider reranker \
+  --reranker-base-url http://GPU_PRIVATE_IP:9099/v1 \
+  --reranker-model zhiqing/Qwen3-Reranker-0.6B-ONNX
+```
+
+Equivalent environment variables are `RERANKER_PROVIDER`,
+`RERANKER_BASE_URL`, `RERANKER_MODEL`, and `RERANKER_API_KEY`.
 
 ## What it exposes
 
@@ -82,6 +103,7 @@ route `AddEpisode` (writes) to a single writer/primary that replicates out.
 ```toml
 [predicato]
 grpc_endpoint = "dns:///predicato.svc:50071"   # pool; or "host:50071", or "h1:port,h2:port"
+search_node_reranker = "cross_encoder"         # asks predicato to use its configured reranker
 ```
 
 When set, humn routes its knowledge-graph queries to the remote pool instead of an

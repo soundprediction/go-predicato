@@ -16,6 +16,9 @@ type Config struct {
 	// Embedding configuration
 	Embedding EmbeddingConfig `mapstructure:"embedding"`
 
+	// Reranker configuration for cross-encoder search result reranking.
+	Reranker RerankerConfig `mapstructure:"reranker"`
+
 	// Log configuration
 	Log LogConfig `mapstructure:"log"`
 
@@ -120,6 +123,14 @@ type EmbeddingConfig struct {
 	BaseURL  string `mapstructure:"base_url" json:"base_url"`
 }
 
+// RerankerConfig holds cross-encoder reranker configuration.
+type RerankerConfig struct {
+	Provider string `mapstructure:"provider" json:"provider"` // reranker, local, mock
+	Model    string `mapstructure:"model" json:"model"`
+	APIKey   string `mapstructure:"api_key" json:"-"`
+	BaseURL  string `mapstructure:"base_url" json:"base_url"`
+}
+
 // FactStoreConfig holds factstore configuration
 type FactStoreConfig struct {
 	// Type is the backend type: "postgres" for PostgreSQL/VectorChord, "duckdb" for DuckDB
@@ -176,6 +187,10 @@ func setDefaults() {
 	viper.SetDefault("nlp.models.embedding.base_url", "candle://")
 	viper.SetDefault("nlp.models.embedding.model", "qwen/qwen3-embedding-0.6b")
 
+	viper.SetDefault("reranker.provider", "")
+	viper.SetDefault("reranker.base_url", "")
+	viper.SetDefault("reranker.model", "")
+
 	// Telemetry defaults
 	home, err := os.UserHomeDir()
 	if err == nil {
@@ -215,6 +230,19 @@ func overrideWithEnv(config *Config) {
 		embeddingModel.APIKey = apiKey
 	}
 	config.NLP.Models["embedding"] = embeddingModel
+
+	if provider := os.Getenv("RERANKER_PROVIDER"); provider != "" {
+		config.Reranker.Provider = provider
+	}
+	if baseURL := os.Getenv("RERANKER_BASE_URL"); baseURL != "" {
+		config.Reranker.BaseURL = baseURL
+	}
+	if model := os.Getenv("RERANKER_MODEL"); model != "" {
+		config.Reranker.Model = model
+	}
+	if apiKey := os.Getenv("RERANKER_API_KEY"); apiKey != "" {
+		config.Reranker.APIKey = apiKey
+	}
 
 	// Database credentials
 	if uri := os.Getenv("NEO4J_URI"); uri != "" {
