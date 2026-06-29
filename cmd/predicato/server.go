@@ -413,38 +413,9 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 		fmt.Println("Candle NLP service initialized (internal, no API key required)")
 	}
 
-	// Initialize embedder client
-	var embedderClient embedder.Client
-	if cfg.Embedding.APIKey != "" || cfg.Embedding.BaseURL != "" {
-		switch cfg.Embedding.Provider {
-		case "openai":
-			embedderConfig := embedder.Config{
-				Model:   cfg.Embedding.Model,
-				BaseURL: cfg.Embedding.BaseURL,
-			}
-			embedderClient = embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedderConfig)
-			if fallback, err := createInternalEmbedder(); err != nil {
-				fmt.Printf("Warning: Failed to initialize fallback Candle embedder: %v\n", err)
-			} else {
-				embedderClient = embedder.NewFallbackClient(embedderClient, fallback)
-				fmt.Println("Embedding fallback enabled: internal Candle embedder")
-			}
-		default:
-			return nil, nil, nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Embedding.Provider)
-		}
-	} else {
-		// Default to internal Candle embedder (no external API required)
-		fmt.Println("Initializing internal Candle embedder service...")
-		internalEmbedder, err := createInternalEmbedder()
-		if err != nil {
-			fmt.Printf("Warning: Failed to initialize Candle embedder: %v\n", err)
-			fmt.Println("Continuing without embedder - semantic search will be unavailable")
-		} else {
-			embedderClient = internalEmbedder
-			cfg.Embedding.Provider = "candle"
-			cfg.Embedding.Model = "qwen/qwen3-embedding-0.6b"
-			fmt.Println("Candle embedder initialized (internal, no API key required)")
-		}
+	embedderClient, err := createEmbedderClient(cfg)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	// Initialize FactStore (PostgreSQL with VectorChord required)
@@ -496,6 +467,40 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 	}
 
 	return client, embedderClient, nlProcessor, nil
+}
+
+func createEmbedderClient(cfg *config.Config) (embedder.Client, error) {
+	if cfg.Embedding.APIKey != "" || cfg.Embedding.BaseURL != "" {
+		switch cfg.Embedding.Provider {
+		case "openai":
+			embedderConfig := embedder.Config{
+				Model:   cfg.Embedding.Model,
+				BaseURL: cfg.Embedding.BaseURL,
+			}
+			var embedderClient embedder.Client = embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedderConfig)
+			if fallback, err := createInternalEmbedder(); err != nil {
+				fmt.Printf("Warning: Failed to initialize fallback Candle embedder: %v\n", err)
+			} else {
+				embedderClient = embedder.NewFallbackClient(embedderClient, fallback)
+				fmt.Println("Embedding fallback enabled: internal Candle embedder")
+			}
+			return embedderClient, nil
+		default:
+			return nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Embedding.Provider)
+		}
+	}
+
+	fmt.Println("Initializing internal Candle embedder service...")
+	internalEmbedder, err := createInternalEmbedder()
+	if err != nil {
+		fmt.Printf("Warning: Failed to initialize Candle embedder: %v\n", err)
+		fmt.Println("Continuing without embedder - semantic search will be unavailable")
+		return nil, nil
+	}
+	cfg.Embedding.Provider = "candle"
+	cfg.Embedding.Model = "qwen/qwen3-embedding-0.6b"
+	fmt.Println("Candle embedder initialized (internal, no API key required)")
+	return internalEmbedder, nil
 }
 
 func createInternalEmbedder() (embedder.Client, error) {

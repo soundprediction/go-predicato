@@ -10,7 +10,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var grpcAddr string
+var (
+	grpcAddr            string
+	routerSourceDir     string
+	routerStrategy      string
+	routerMergeStrategy string
+	routerMaxGraphs     int
+	routerMaxOpenGraphs int
+	routerMinConfidence float64
+)
 
 var serveGRPCCmd = &cobra.Command{
 	Use:   "serve-grpc",
@@ -30,6 +38,12 @@ func init() {
 	rootCmd.AddCommand(serveGRPCCmd)
 
 	serveGRPCCmd.Flags().StringVar(&grpcAddr, "addr", ":50071", "gRPC listen address (host:port)")
+	serveGRPCCmd.Flags().StringVar(&routerSourceDir, "source-dir", "", "Directory of topic graph databases and descriptors for pooled routing mode")
+	serveGRPCCmd.Flags().StringVar(&routerStrategy, "strategy", "topic_based", "Router strategy for --source-dir mode (topic_based, keyword, embedding, cross_encoder)")
+	serveGRPCCmd.Flags().StringVar(&routerMergeStrategy, "merge-strategy", "rrf", "Router merge strategy for --source-dir mode (rrf, simple_concat, max_score)")
+	serveGRPCCmd.Flags().IntVar(&routerMaxGraphs, "max-graphs", 2, "Maximum routed graphs to query per request in --source-dir mode")
+	serveGRPCCmd.Flags().Float64Var(&routerMinConfidence, "min-confidence", 0.3, "Minimum routing confidence in --source-dir mode")
+	serveGRPCCmd.Flags().IntVar(&routerMaxOpenGraphs, "max-open-graphs", 10, "Maximum graph databases to keep open in --source-dir mode (0 disables the limit)")
 
 	// Mirror the HTTP server's graph/NLP/embedder flags so initializePredicato can
 	// build the engine the same way (overrideConfigWithFlags reads these).
@@ -74,6 +88,16 @@ func runServeGRPC(cmd *cobra.Command, _ []string) error {
 	overrideConfigWithFlags(cmd, cfg)
 
 	fmt.Println("Initializing Predicato...")
+	if routerSourceDir != "" {
+		routerPredicato, err := initializeRouterPredicato(cmd, cfg)
+		if err != nil {
+			return fmt.Errorf("failed to initialize Predicato router: %w", err)
+		}
+
+		fmt.Printf("Predicato pooled gRPC server listening on %s (service %s)\n", grpcAddr, grpcsvc.ServiceName)
+		return grpcsvc.Serve(routerPredicato, grpcAddr)
+	}
+
 	predicatoInstance, _, _, err := initializePredicato(cmd, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Predicato: %w", err)
