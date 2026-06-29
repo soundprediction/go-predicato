@@ -328,24 +328,13 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 
 	if useGLiNER2 {
 		endpoint, _ := cmd.Flags().GetString("gliner2-endpoint")
-
-		// Check if server is running, if not start it
-		if err := ensureGLiNER2Server(endpoint); err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to ensure GLiNER2 server: %w", err)
-		}
-
-		glinerClient, err := gliner2.NewClient(gliner2.Config{
-			Provider: gliner2.ProviderLocal,
-			Local: &gliner2.LocalConfig{
-				Endpoint: endpoint,
-			},
-		})
+		glinerClient, err := createGLiNER2NLPClient(endpoint)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to create GLiNER2 client: %w", err)
 		}
 
 		nlProcessor = glinerClient
-		fmt.Printf("Using GLiNER2 NLP provider at: %s (Verified Healthy)\n", endpoint)
+		fmt.Printf("Using GLiNER2 NLP provider at: %s\n", endpoint)
 
 		// Update config to reflect GLiNER2 usage so logging and other components are aware
 		defaultModel := cfg.NLP.Models["default"]
@@ -552,6 +541,51 @@ func createRerankerClient(cfg config.RerankerConfig, fallbackEmbedder embedder.C
 	default:
 		return nil, fmt.Errorf("unsupported reranker provider: %s", provider)
 	}
+}
+
+func createGLiNER2NLPClient(endpoint string) (nlp.Client, error) {
+	if endpoint == "" {
+		endpoint = "http://localhost:11435"
+	}
+
+	primary, err := newGLiNER2NLPClient(endpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	if isLocalEndpoint(endpoint) {
+		if err := ensureGLiNER2Server(endpoint); err != nil {
+			return nil, fmt.Errorf("failed to ensure local GLiNER2 server: %w", err)
+		}
+		return primary, nil
+	}
+
+	fallbackEndpoint := "http://localhost:11435"
+	fmt.Printf("GLiNER2 fallback configured: primary=%s fallback=%s\n", endpoint, fallbackEndpoint)
+	return nlp.NewLazyFallbackClient(primary, func() (nlp.Client, error) {
+		if err := ensureGLiNER2Server(fallbackEndpoint); err != nil {
+			return nil, err
+		}
+		return newGLiNER2NLPClient(fallbackEndpoint)
+	}), nil
+}
+
+func newGLiNER2NLPClient(endpoint string) (nlp.Client, error) {
+	return gliner2.NewClient(gliner2.Config{
+		Provider: gliner2.ProviderLocal,
+		Local: &gliner2.LocalConfig{
+			Endpoint: endpoint,
+		},
+	})
+}
+
+func isLocalEndpoint(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "" || host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0"
 }
 
 func ensureGLiNER2Server(endpoint string) error {

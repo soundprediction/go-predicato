@@ -44,6 +44,10 @@ the remote service first. If the remote embedding request fails, it falls back
 to the internal Candle embedder. If the remote reranker fails, it falls back to
 embedding-similarity reranking over the same embedder client.
 
+With `--gliner2 --gliner2-endpoint http://GPU_PRIVATE_IP:18000`, predicato
+also treats the remote GLiNER2 service as primary and falls back to a local
+GLiNER2 service on `http://localhost:11435` if the remote request fails.
+
 ## What it exposes
 
 The service `predicato.v1.GraphService` (`proto/predicato/v1/graph.proto`):
