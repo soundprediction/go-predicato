@@ -39,6 +39,11 @@ predicato serve-grpc \
 Equivalent environment variables are `RERANKER_PROVIDER`,
 `RERANKER_BASE_URL`, `RERANKER_MODEL`, and `RERANKER_API_KEY`.
 
+With a remote embedding base URL or remote reranker configured, predicato tries
+the remote service first. If the remote embedding request fails, it falls back
+to the internal Candle embedder. If the remote reranker fails, it falls back to
+embedding-similarity reranking over the same embedder client.
+
 ## What it exposes
 
 The service `predicato.v1.GraphService` (`proto/predicato/v1/graph.proto`):

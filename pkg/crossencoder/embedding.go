@@ -15,8 +15,9 @@ import (
 // query-document pairs together), it provides good reranking performance using
 // bi-encoder embeddings.
 type EmbeddingRerankerClient struct {
-	embedder embedder.Client
-	config   Config
+	embedder       embedder.Client
+	config         Config
+	borrowEmbedder bool
 }
 
 // EmbeddingConfig holds embedding-specific configuration
@@ -26,6 +27,9 @@ type EmbeddingConfig struct {
 	SimilarityThreshold float64 `json:"similarity_threshold,omitempty"`
 	// NormalizeScores whether to normalize scores to 0-1 range
 	NormalizeScores bool `json:"normalize_scores,omitempty"`
+	// BorrowEmbedder prevents Close from closing the embedder. Use this when
+	// the reranker fallback shares the process-wide embedder client.
+	BorrowEmbedder bool `json:"borrow_embedder,omitempty"`
 }
 
 // NewEmbeddingRerankerClient creates a new embedding-based reranker client
@@ -35,8 +39,9 @@ func NewEmbeddingRerankerClient(embedderClient embedder.Client, config Embedding
 	}
 
 	return &EmbeddingRerankerClient{
-		embedder: embedderClient,
-		config:   config.Config,
+		embedder:       embedderClient,
+		config:         config.Config,
+		borrowEmbedder: config.BorrowEmbedder,
 	}
 }
 
@@ -129,7 +134,7 @@ func (c *EmbeddingRerankerClient) Rank(ctx context.Context, query string, passag
 
 // Close cleans up any resources used by the client
 func (c *EmbeddingRerankerClient) Close() error {
-	if c.embedder != nil {
+	if c.embedder != nil && !c.borrowEmbedder {
 		return c.embedder.Close()
 	}
 	return nil

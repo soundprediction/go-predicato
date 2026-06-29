@@ -426,7 +426,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 
 	// Initialize embedder client
 	var embedderClient embedder.Client
-	if cfg.Embedding.APIKey != "" {
+	if cfg.Embedding.APIKey != "" || cfg.Embedding.BaseURL != "" {
 		switch cfg.Embedding.Provider {
 		case "openai":
 			embedderConfig := embedder.Config{
@@ -434,17 +434,19 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 				BaseURL: cfg.Embedding.BaseURL,
 			}
 			embedderClient = embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedderConfig)
+			if fallback, err := createInternalEmbedder(); err != nil {
+				fmt.Printf("Warning: Failed to initialize fallback Candle embedder: %v\n", err)
+			} else {
+				embedderClient = embedder.NewFallbackClient(embedderClient, fallback)
+				fmt.Println("Embedding fallback enabled: internal Candle embedder")
+			}
 		default:
 			return nil, nil, nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Embedding.Provider)
 		}
 	} else {
 		// Default to internal Candle embedder (no external API required)
 		fmt.Println("Initializing internal Candle embedder service...")
-		internalEmbedder, err := candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
-			Model:      "qwen/qwen3-embedding-0.6b",
-			Dimensions: 1024,
-			Normalize:  true,
-		})
+		internalEmbedder, err := createInternalEmbedder()
 		if err != nil {
 			fmt.Printf("Warning: Failed to initialize Candle embedder: %v\n", err)
 			fmt.Println("Continuing without embedder - semantic search will be unavailable")
@@ -489,7 +491,7 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create Predicato client: %w", err)
 	}
-	if ce, err := createRerankerClient(cfg.Reranker); err != nil {
+	if ce, err := createRerankerClient(cfg.Reranker, embedderClient); err != nil {
 		return nil, nil, nil, err
 	} else if ce != nil {
 		client.SetCrossEncoder(ce)
@@ -507,7 +509,15 @@ func initializePredicato(cmd *cobra.Command, cfg *config.Config) (predicato.Pred
 	return client, embedderClient, nlProcessor, nil
 }
 
-func createRerankerClient(cfg config.RerankerConfig) (crossencoder.Client, error) {
+func createInternalEmbedder() (embedder.Client, error) {
+	return candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
+		Model:      "qwen/qwen3-embedding-0.6b",
+		Dimensions: 1024,
+		Normalize:  true,
+	})
+}
+
+func createRerankerClient(cfg config.RerankerConfig, fallbackEmbedder embedder.Client) (crossencoder.Client, error) {
 	if cfg.BaseURL == "" && cfg.Provider == "" && cfg.Model == "" {
 		return nil, nil
 	}
@@ -522,11 +532,19 @@ func createRerankerClient(cfg config.RerankerConfig) (crossencoder.Client, error
 		if cfg.BaseURL == "" {
 			return nil, fmt.Errorf("reranker.base_url is required for provider %q", provider)
 		}
-		return crossencoder.NewRerankerClient(crossencoder.RerankerConfig{
+		primary := crossencoder.NewRerankerClient(crossencoder.RerankerConfig{
 			BaseURL: cfg.BaseURL,
 			APIKey:  cfg.APIKey,
 			Config:  crossencoder.Config{Model: cfg.Model},
-		}), nil
+		})
+		if fallbackEmbedder == nil {
+			return primary, nil
+		}
+		fallback := crossencoder.NewEmbeddingRerankerClient(fallbackEmbedder, crossencoder.EmbeddingConfig{
+			Config:         crossencoder.Config{Model: "embedding-fallback"},
+			BorrowEmbedder: true,
+		})
+		return crossencoder.NewFallbackClient(primary, fallback), nil
 	case "local":
 		return crossencoder.NewLocalRerankerClient(crossencoder.Config{Model: cfg.Model}), nil
 	case "mock":
