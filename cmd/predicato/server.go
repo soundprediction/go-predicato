@@ -479,10 +479,10 @@ func createEmbedderClient(cfg *config.Config) (embedder.Client, error) {
 			}
 			var embedderClient embedder.Client = embedder.NewOpenAIEmbedder(cfg.Embedding.APIKey, embedderConfig)
 			if fallback, err := createInternalEmbedder(); err != nil {
-				fmt.Printf("Warning: Failed to initialize fallback Candle embedder: %v\n", err)
+				fmt.Printf("Warning: Failed to initialize fallback EmbedEverything embedder: %v\n", err)
 			} else {
 				embedderClient = embedder.NewFallbackClient(embedderClient, fallback)
-				fmt.Println("Embedding fallback enabled: internal Candle embedder")
+				fmt.Println("Embedding fallback enabled: internal EmbedEverything embedder")
 			}
 			return embedderClient, nil
 		default:
@@ -490,24 +490,25 @@ func createEmbedderClient(cfg *config.Config) (embedder.Client, error) {
 		}
 	}
 
-	fmt.Println("Initializing internal Candle embedder service...")
+	fmt.Println("Initializing internal EmbedEverything embedder service...")
 	internalEmbedder, err := createInternalEmbedder()
 	if err != nil {
-		fmt.Printf("Warning: Failed to initialize Candle embedder: %v\n", err)
+		fmt.Printf("Warning: Failed to initialize EmbedEverything embedder: %v\n", err)
 		fmt.Println("Continuing without embedder - semantic search will be unavailable")
 		return nil, nil
 	}
-	cfg.Embedding.Provider = "candle"
-	cfg.Embedding.Model = "qwen/qwen3-embedding-0.6b"
-	fmt.Println("Candle embedder initialized (internal, no API key required)")
+	cfg.Embedding.Provider = "embedeverything"
+	cfg.Embedding.Model = "Qwen/Qwen3-Embedding-0.6B"
+	fmt.Println("EmbedEverything embedder initialized (internal, no API key required)")
 	return internalEmbedder, nil
 }
 
 func createInternalEmbedder() (embedder.Client, error) {
-	return candleAdapter.NewCandleEmbedderClient(&candleAdapter.CandleEmbedderConfig{
-		Model:      "qwen/qwen3-embedding-0.6b",
-		Dimensions: 1024,
-		Normalize:  true,
+	return embedder.NewEmbedEverythingClient(&embedder.EmbedEverythingConfig{
+		Config: &embedder.Config{
+			Model:      "Qwen/Qwen3-Embedding-0.6B",
+			Dimensions: 1024,
+		},
 	})
 }
 
