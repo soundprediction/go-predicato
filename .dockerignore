@@ -1,0 +1,12 @@
+# Keep the Docker build context small and the build reproducible. The image only
+# needs the Go module source + cmd/vendor-libs (extracted at build time). Exclude
+# local cruft and things the build never uses.
+.git
+bin/
+python/
+examples/
+docs/
+openspec/
+ralphy-spec/
+**/*.test
+**/*.out
