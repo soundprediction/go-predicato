@@ -61,11 +61,45 @@ type RerankResponse struct {
 
 // RankedResult represents a single ranking result
 type RankedResult struct {
-	Document       string  `json:"document"`
-	Text           string  `json:"text"`
-	Index          int     `json:"index"`
-	RelevanceScore float64 `json:"relevance_score"`
-	Score          float64 `json:"score"`
+	Document       flexText `json:"document"`
+	Text           string   `json:"text"`
+	Index          int      `json:"index"`
+	RelevanceScore float64  `json:"relevance_score"`
+	Score          float64  `json:"score"`
+}
+
+// flexText unmarshals a rerank "document" field that may arrive either as a
+// plain string (Jina AI, LocalAI) or as an object such as
+// {"text": "...", "multi_modal": null} (vLLM's /v1/rerank, Cohere v2). Without
+// this, a server that returns the object form makes json.Unmarshal fail and the
+// whole rerank request errors out. We collapse both forms to the text string.
+type flexText string
+
+func (f *flexText) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		*f = ""
+		return nil
+	}
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*f = flexText(s)
+		return nil
+	}
+	// Object form: pull out a "text" field if present; otherwise ignore it
+	// (callers fall back to the input passage by index).
+	var obj struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(b, &obj); err != nil {
+		*f = ""
+		return nil
+	}
+	*f = flexText(obj.Text)
+	return nil
 }
 
 // Usage represents token usage information
@@ -213,7 +247,7 @@ func (c *RerankerClient) Rank(ctx context.Context, query string, passages []stri
 	// Convert to RankedPassage format
 	results := make([]RankedPassage, len(rerankResponse.Results))
 	for i, result := range rerankResponse.Results {
-		passage := result.Document
+		passage := string(result.Document)
 		if passage == "" {
 			passage = result.Text
 		}
