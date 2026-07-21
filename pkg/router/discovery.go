@@ -56,14 +56,15 @@ func DiscoverTopicGraphs(dir string) ([]ClientConfig, map[string]string, error) 
 
 		// Try to read settings from companion .yaml file
 		groupID := "default"
-		var fallback, excludeFromSecondary bool
+		fallback := slug == "canonical" // The broad graph is the deterministic catch-all.
+		var excludeFromSecondary bool
 		yamlPath := filepath.Join(absDir, slug+".yaml")
 		if yamlContent, err := os.ReadFile(yamlPath); err == nil {
 			yamlSettings := parseYAMLSettings(string(yamlContent))
 			if yamlSettings.GroupID != "" {
 				groupID = yamlSettings.GroupID
 			}
-			fallback = yamlSettings.Fallback
+			fallback = fallback || yamlSettings.Fallback
 			excludeFromSecondary = yamlSettings.ExcludeFromSecondary
 		}
 

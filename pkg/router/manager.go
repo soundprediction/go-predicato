@@ -80,6 +80,7 @@ func NewManagerWithOptions(
 		maxOpenClients:  maxOpenClients,
 	}
 
+	canonicalClientName := ""
 	for _, cfg := range configs {
 		if cfg.Default {
 			pm.defaultClientName = cfg.Name
@@ -87,6 +88,15 @@ func NewManagerWithOptions(
 		if cfg.Fallback {
 			pm.fallbackClientName = cfg.Name
 		}
+		if cfg.Name == "canonical" {
+			canonicalClientName = cfg.Name
+		}
+	}
+
+	// Prefer the broad canonical graph as the catch-all even when its companion
+	// YAML is absent, so a routing miss grounds against it rather than nothing.
+	if canonicalClientName != "" {
+		pm.fallbackClientName = canonicalClientName
 	}
 
 	if pm.defaultClientName == "" && len(configs) > 0 {
