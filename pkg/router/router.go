@@ -44,15 +44,19 @@ func NewRouter(
 func (r *Router) Route(ctx context.Context, query string) ([]string, error) {
 	matches, err := r.classifier.Classify(ctx, query)
 	if err != nil {
-		r.logger.Error("Failed to classify query, falling back to default client",
+		r.logger.Error("Failed to classify query, falling back to fallback/default client",
 			"error", err,
 			"query_preview", truncateString(query, 100),
+			"fallback_client", r.manager.fallbackClientName,
 			"default_client", r.manager.defaultClientName,
 		)
+		if r.manager.fallbackClientName != "" {
+			return []string{r.manager.fallbackClientName}, nil
+		}
 		if r.manager.defaultClientName != "" {
 			return []string{r.manager.defaultClientName}, nil
 		}
-		return nil, fmt.Errorf("failed to classify query and no default client: %w", err)
+		return nil, fmt.Errorf("failed to classify query and no fallback/default client: %w", err)
 	}
 
 	minConfidence := r.config.GetMinConfidenceOrDefault()
@@ -97,14 +101,56 @@ func (r *Router) Route(ctx context.Context, query string) ([]string, error) {
 	return clientNames, nil
 }
 
+// fallbackBackfillMinEdges is the edge-count threshold below which a routed
+// search re-queries the canonical fallback client and folds its results into the
+// merge. The topic router sends a query to the best-matching topic graph(s); when
+// those return little or nothing (sparse neighbourhood, niche phrasing, or a
+// query whose topic has no dedicated graph) the fact is often still present in
+// the broad canonical graph. Backfilling here — not only on a hard routing miss —
+// keeps grounding from coming up empty when the knowledge base holds the fact.
+const fallbackBackfillMinEdges = 5
+
 // Search routes the query to appropriate clients and returns merged results.
+// When the routed clients return sparse evidence and a canonical fallback client
+// is configured (and was not already queried as part of routing), it re-queries
+// including the fallback so its results fold into a single RRF merge.
 func (r *Router) Search(ctx context.Context, query string, searchConfig *types.SearchConfig) (*MergedSearchResults, error) {
 	clientNames, err := r.Route(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to route query: %w", err)
 	}
 
-	return r.SearchWithClients(ctx, query, clientNames, searchConfig)
+	merged, err := r.SearchWithClients(ctx, query, clientNames, searchConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	// Sparse-result backfill: pull in the canonical fallback when the routed
+	// topic graph(s) yielded too little to answer, and it was not already queried.
+	if fb := r.manager.fallbackClientName; fb != "" && !containsClient(clientNames, fb) && len(merged.Edges) < fallbackBackfillMinEdges {
+		augmented := append(append([]string{}, clientNames...), fb)
+		if fbMerged, fbErr := r.SearchWithClients(ctx, query, augmented, searchConfig); fbErr == nil {
+			r.logger.Info("canonical fallback backfill engaged",
+				"query", query,
+				"routed_clients", clientNames,
+				"fallback", fb,
+				"edges_before", len(merged.Edges),
+				"edges_after", len(fbMerged.Edges),
+			)
+			merged = fbMerged
+		}
+	}
+
+	return merged, nil
+}
+
+func containsClient(names []string, target string) bool {
+	for _, n := range names {
+		if n == target {
+			return true
+		}
+	}
+	return false
 }
 
 // SearchWithClients searches specific clients (bypassing routing) and merges results.
