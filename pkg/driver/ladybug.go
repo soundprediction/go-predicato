@@ -148,6 +148,16 @@ type LadybugDriver struct {
 	db     *ladybug.Database
 	client *ladybug.Connection // Note: Python uses AsyncConnection, but Go ladybug doesn't have async
 
+	// readPool holds additional connections used ONLY by read-only drivers, so
+	// concurrent reads against one graph run in parallel instead of serialising on
+	// k.mu. A single ladybug Connection is not thread-safe — hence the mutex — but
+	// the Database supports many independent Connections, which is how a read pool
+	// is safe here. Without it, callers that fan out over a graph (topic grounding,
+	// the recheck) collapse to one query at a time no matter how wide they fan.
+	// nil for read-write drivers, which keep the original single-connection path.
+	readPool  chan *ladybug.Connection
+	readConns []*ladybug.Connection
+
 	// Write queue for transparent concurrency handling
 	writeQueue   chan writeOperation
 	closeCh      chan struct{}
@@ -274,6 +284,11 @@ type LadybugDriverConfig struct {
 
 	// Maximum concurrent queries (defaults to 1)
 	MaxConcurrentQueries int
+
+	// ReadPoolSize is how many connections a READ-ONLY driver opens for concurrent
+	// reads. 0/1 keeps the historical single-connection behaviour. Ignored for
+	// read-write drivers, whose writes are already serialised through writeQueue.
+	ReadPoolSize int
 
 	// Write queue buffer size (defaults to 1000)
 	// Higher values allow more write operations to be queued before blocking
@@ -519,6 +534,35 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 	}
 	driver.client = client
 
+	// Read-only graphs are queried concurrently (topic grounding, recheck, and the
+	// router's own fan-out), and one connection behind a mutex serialises all of
+	// it. Open a small pool so those reads actually overlap. Best-effort: if an
+	// extra connection cannot be opened we simply run with fewer, and with none we
+	// fall back to the original single-client path.
+	if config.ReadOnly && config.ReadPoolSize > 1 {
+		pool := make(chan *ladybug.Connection, config.ReadPoolSize)
+		for i := 0; i < config.ReadPoolSize; i++ {
+			c := client
+			if i > 0 {
+				var cerr error
+				c, cerr = ladybug.OpenConnection(database)
+				if cerr != nil {
+					log.Printf("Warning: read pool connection %d/%d failed, continuing with %d: %v",
+						i+1, config.ReadPoolSize, i, cerr)
+					break
+				}
+				driver.readConns = append(driver.readConns, c)
+			}
+			pool <- c
+		}
+		if len(pool) > 1 {
+			driver.readPool = pool
+		} else {
+			// Only the primary made it in; keep the mutex path and release the pool.
+			close(pool)
+		}
+	}
+
 	// Load FTS extension for this connection
 	// Extensions must be loaded for each session (connection)
 	ftsResult, err := client.Query("LOAD EXTENSION FTS;")
@@ -638,10 +682,24 @@ func (k *LadybugDriver) writeWorker() {
 
 // executeQueryInternal performs the actual query execution with mutex protection
 func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[string]any) (any, any, any, error) {
+	// Read-only drivers borrow a private connection so concurrent reads proceed in
+	// parallel; each connection is still used by exactly one goroutine at a time,
+	// which is the property the C++ library actually requires.
+	if k.readPool != nil {
+		conn := <-k.readPool
+		defer func() { k.readPool <- conn }()
+		return k.executeOnConn(conn, cypherQuery, kwargs)
+	}
 	// Lock to prevent concurrent database access (ladybug C++ library is not thread-safe)
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	return k.executeOnConn(k.client, cypherQuery, kwargs)
+}
 
+// executeOnConn runs a query on a SPECIFIC connection. Callers must guarantee the
+// connection is not shared concurrently — either by holding k.mu (single-client
+// path) or by having borrowed it from readPool.
+func (k *LadybugDriver) executeOnConn(client *ladybug.Connection, cypherQuery string, kwargs map[string]any) (any, any, any, error) {
 	// Filter parameters exactly like Python implementation
 	params := make(map[string]any) // Use 'any' instead of 'interface{}' for go-ladybug compatibility
 	maps.Copy(params, kwargs)
@@ -656,7 +714,7 @@ func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[stri
 	// Check if we have parameters to use prepared statement
 	if len(params) > 0 {
 		// Use prepared statement for parameterized queries
-		preparedStatement, err := k.client.Prepare(cypherQuery)
+		preparedStatement, err := client.Prepare(cypherQuery)
 		if err != nil {
 			// Log error with truncated params for debugging (matching Python behavior)
 			truncatedParams := make(map[string]any)
@@ -671,7 +729,7 @@ func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[stri
 			return nil, nil, nil, err
 		}
 
-		results, err = k.client.Execute(preparedStatement, params)
+		results, err = client.Execute(preparedStatement, params)
 		if err != nil {
 			// Log error with truncated params for debugging (matching Python behavior)
 			truncatedParams := make(map[string]any)
@@ -687,7 +745,7 @@ func (k *LadybugDriver) executeQueryInternal(cypherQuery string, kwargs map[stri
 		}
 	} else {
 		// Use simple Query for queries without parameters
-		results, err = k.client.Query(cypherQuery)
+		results, err = client.Query(cypherQuery)
 		if err != nil {
 			log.Printf("Error executing ladybug query: %v\nQuery: %s", err, cypherQuery)
 			return nil, nil, nil, err
@@ -759,6 +817,25 @@ func (k *LadybugDriver) Close() error {
 			log.Printf("Cleaned up temporary database copy at %s", tempDir)
 		}
 	}
+
+	// Close pooled read connections before the primary. Drain the channel first so
+	// no in-flight borrower is holding one; readConns excludes the primary client,
+	// which is closed just below, so nothing is double-closed.
+	if k.readPool != nil {
+		for i := 0; i < cap(k.readPool); i++ {
+			select {
+			case <-k.readPool:
+			default:
+			}
+		}
+		k.readPool = nil
+	}
+	for _, c := range k.readConns {
+		if c != nil {
+			c.Close()
+		}
+	}
+	k.readConns = nil
 
 	// Explicitly close connection and database to ensure lock is released
 	if k.client != nil {

@@ -36,6 +36,12 @@ func init() {
 			// request. Read-only topic graphs are never written to, so widening this
 			// only adds scan/probe parallelism.
 			cfg.MaxConcurrentQueries = topicQueryThreads()
+			// One connection per graph behind a mutex serialised every read, so a
+			// caller fanning out over a graph (topic grounding, the recheck, the
+			// router's own fan-out) got no parallelism at all — the concurrency
+			// collapsed to the number of DISTINCT graphs a request happened to touch,
+			// which for topic-clustered queries is one or two.
+			cfg.ReadPoolSize = topicReadPoolSize()
 		}
 		return driver.NewLadybugDriverWithConfig(cfg)
 	})
