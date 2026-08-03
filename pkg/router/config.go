@@ -190,6 +190,20 @@ func topicQueryThreads() int {
 	return defaultTopicQueryThreads
 }
 
+// defaultTopicReadPoolSize is how many connections each read-only topic graph
+// opens for concurrent reads. Matches the default query-thread count so a graph
+// can service a full fan-out without queueing.
+const defaultTopicReadPoolSize = 4
+
+// topicReadPoolSize returns the per-graph read connection count, overridable via
+// PREDICATO_TOPIC_READ_POOL.
+func topicReadPoolSize() int {
+	if v := envBytes("PREDICATO_TOPIC_READ_POOL"); v > 0 && v <= 32 {
+		return int(v)
+	}
+	return defaultTopicReadPoolSize
+}
+
 // maxDbSizeForTopicGraph returns the per-graph virtual-size reservation.
 func maxDbSizeForTopicGraph() uint64 {
 	if v := envBytes("PREDICATO_TOPIC_MAX_DB_SIZE_BYTES"); v > 0 {
