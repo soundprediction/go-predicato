@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	predicato "github.com/soundprediction/predicato"
 	"github.com/soundprediction/predicato/pkg/crossencoder"
 	"github.com/soundprediction/predicato/pkg/driver"
@@ -24,8 +26,6 @@ const defaultMaxOpenClients = 10
 // It provides lazy initialization, thread-safe access, LRU eviction, and unified lifecycle management.
 type Manager struct {
 	sharedEmbedder embedder.Client
-	clients        map[string]*predicato.Client
-	drivers        map[string]driver.GraphDriver
 
 	// sharedNLPClient is the NLP client shared across all predicato clients.
 	// Can be nil for search-only use cases.
@@ -34,15 +34,24 @@ type Manager struct {
 	// crossEncoder is set on every new client for reranking support.
 	crossEncoder crossencoder.Client
 
-	// LRU tracking: ordered list of client names, most recently used at the end.
-	lruOrder       []string
-	maxOpenClients int
+	// opening collapses concurrent GetClient calls for the SAME graph into one
+	// open, so the manager lock never has to be held across a multi-second open
+	// just to keep duplicate work from happening.
+	opening singleflight.Group
+
+	clients map[string]*predicato.Client
+	drivers map[string]driver.GraphDriver
 
 	logger             *slog.Logger
 	defaultClientName  string
 	fallbackClientName string
-	configs            []ClientConfig
-	mu                 sync.Mutex
+
+	// LRU tracking: ordered list of client names, most recently used at the end.
+	lruOrder       []string
+	configs        []ClientConfig
+	maxOpenClients int
+
+	mu sync.Mutex
 }
 
 // NewManager creates a new Manager with the given configuration.
@@ -118,10 +127,9 @@ func NewManagerWithOptions(
 // If the max open clients limit is reached, the least recently used client is evicted.
 func (pm *Manager) GetClient(name string) (*predicato.Client, error) {
 	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
 	if client, exists := pm.clients[name]; exists {
 		pm.touchLRU(name)
+		pm.mu.Unlock()
 		return client, nil
 	}
 
@@ -132,27 +140,72 @@ func (pm *Manager) GetClient(name string) (*predicato.Client, error) {
 			break
 		}
 	}
-
 	if clientConfig == nil {
+		pm.mu.Unlock()
 		return nil, fmt.Errorf("client %q not found in configuration", name)
 	}
+	pm.mu.Unlock()
 
-	// Evict LRU client if at capacity
-	if pm.maxOpenClients > 0 && len(pm.clients) >= pm.maxOpenClients {
-		pm.evictLRU()
-	}
+	// Open OUTSIDE the manager lock. Opening a graph takes seconds; holding pm.mu
+	// across it meant one cold open stalled every other graph query in the
+	// process, including hits on already-open graphs — so Router.SearchWithClients'
+	// goroutine fan-out serialised behind whichever graph happened to be cold.
+	// singleflight keeps the concurrent-callers-for-the-same-graph case to one
+	// open, which is the only reason the lock was doing useful work here.
+	v, err, _ := pm.opening.Do(name, func() (any, error) {
+		// Another caller may have finished opening this client while we waited.
+		pm.mu.Lock()
+		if client, exists := pm.clients[name]; exists {
+			pm.touchLRU(name)
+			pm.mu.Unlock()
+			return client, nil
+		}
+		pm.mu.Unlock()
 
-	client, err := pm.initializeClient(clientConfig)
+		client, graphDriver, err := pm.initializeClient(clientConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize client %q: %w", name, err)
+		}
+
+		pm.mu.Lock()
+		defer pm.mu.Unlock()
+		// Lost the race: keep the published client and discard ours.
+		if existing, exists := pm.clients[name]; exists {
+			closeSpare(pm.logger, name, client, graphDriver)
+			pm.touchLRU(name)
+			return existing, nil
+		}
+		// Evict only once we actually have a replacement to publish, so a failed
+		// open never costs us an already-working graph.
+		if pm.maxOpenClients > 0 && len(pm.clients) >= pm.maxOpenClients {
+			pm.evictLRU()
+		}
+		pm.clients[name] = client
+		pm.drivers[name] = graphDriver
+		pm.lruOrder = append(pm.lruOrder, name)
+		pm.logger.Info("Predicato client initialized", "name", name, "group_id", clientConfig.GroupID,
+			"open_clients", len(pm.clients))
+		return client, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize client %q: %w", name, err)
+		return nil, err
 	}
-
-	pm.clients[name] = client
-	pm.lruOrder = append(pm.lruOrder, name)
-	pm.logger.Info("Predicato client initialized", "name", name, "group_id", clientConfig.GroupID,
-		"open_clients", len(pm.clients))
-
+	client, _ := v.(*predicato.Client)
 	return client, nil
+}
+
+// closeSpare discards the client and driver built by a losing racer. It touches
+// only the losers' own handles — never pm.clients/pm.drivers — so it can never
+// close the winner's driver.
+func closeSpare(logger *slog.Logger, name string, spare *predicato.Client, spareDriver driver.GraphDriver) {
+	if err := spare.Close(context.Background()); err != nil {
+		logger.Warn("Error closing spare client", "name", name, "error", err)
+	}
+	if spareDriver != nil {
+		if err := spareDriver.Close(); err != nil {
+			logger.Warn("Error closing spare driver", "name", name, "error", err)
+		}
+	}
 }
 
 // touchLRU moves a name to the end of the LRU list (most recently used).
@@ -176,7 +229,12 @@ func (pm *Manager) evictLRU() {
 	evictName := pm.lruOrder[0]
 	pm.lruOrder = pm.lruOrder[1:]
 
-	pm.logger.Info("Evicting LRU client", "name", evictName, "open_clients", len(pm.clients))
+	// WARN, not INFO: with the open-graph cap set to hold the whole corpus this
+	// never fires, so an eviction in steady state means the cap is misconfigured
+	// and the deployment is paying a full cold graph open to service it. It is a
+	// condition to alert on, not routine bookkeeping.
+	pm.logger.Warn("Evicting LRU client — open-graph cap reached; cold re-open will follow",
+		"name", evictName, "open_clients", len(pm.clients), "max_open_clients", pm.maxOpenClients)
 
 	ctx := context.Background()
 	if client, ok := pm.clients[evictName]; ok {
@@ -193,22 +251,23 @@ func (pm *Manager) evictLRU() {
 	}
 }
 
-// initializeClient creates a new predicato client from the given config.
-func (pm *Manager) initializeClient(cfg *ClientConfig) (*predicato.Client, error) {
+// initializeClient creates a new predicato client from the given config. It
+// RETURNS the driver rather than registering it in pm.drivers: this runs outside
+// the manager lock (see GetClient), so writing the shared map here would race,
+// and a losing racer that later closed pm.drivers[name] would be closing the
+// WINNER's driver. The caller registers it under the lock.
+func (pm *Manager) initializeClient(cfg *ClientConfig) (*predicato.Client, driver.GraphDriver, error) {
 	ctx := context.Background()
 
 	graphDriver, err := cfg.CreateDriver(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create graph driver: %w", err)
+		return nil, nil, fmt.Errorf("failed to create graph driver: %w", err)
 	}
-
-	pm.drivers[cfg.Name] = graphDriver
 
 	if !cfg.ReadOnly {
 		if err := graphDriver.CreateIndices(ctx); err != nil {
 			_ = graphDriver.Close()
-			delete(pm.drivers, cfg.Name)
-			return nil, fmt.Errorf("failed to create indices: %w", err)
+			return nil, nil, fmt.Errorf("failed to create indices: %w", err)
 		}
 	}
 
@@ -234,15 +293,17 @@ func (pm *Manager) initializeClient(cfg *ClientConfig) (*predicato.Client, error
 	client, err := predicato.NewClient(graphDriver, pm.sharedNLPClient, pm.sharedEmbedder, predicatoConfig, pm.logger)
 	if err != nil {
 		_ = graphDriver.Close()
-		delete(pm.drivers, cfg.Name)
-		return nil, fmt.Errorf("failed to create predicato client: %w", err)
+		return nil, nil, fmt.Errorf("failed to create predicato client: %w", err)
 	}
 
-	if pm.crossEncoder != nil {
-		client.SetCrossEncoder(pm.crossEncoder)
+	pm.mu.Lock()
+	ce := pm.crossEncoder
+	pm.mu.Unlock()
+	if ce != nil {
+		client.SetCrossEncoder(ce)
 	}
 
-	return client, nil
+	return client, graphDriver, nil
 }
 
 // SetCrossEncoder sets the cross-encoder reranker to be applied to all clients.

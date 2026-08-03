@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/soundprediction/predicato/pkg/driver"
 )
@@ -146,21 +148,53 @@ func (r *RouterConfig) GetMaxGraphsOrDefault() int {
 	return r.MaxGraphs
 }
 
-// bufferPoolForDBSize returns a buffer pool size scaled to the DB file size.
-func bufferPoolForDBSize(dbPath string) uint64 {
-	info, err := os.Stat(dbPath)
+// defaultTopicBufferPoolBytes is the per-graph buffer pool for a read-only topic
+// graph. The previous size ladder (768 MB / 1 GB / 2 GB by file size) was sized
+// for a handful of open graphs; across a whole topic corpus it asks for tens of
+// gigabytes and is the reason the open-graph cap had to stay small. These graphs
+// are read-only and memory-mapped, so the OS page cache — shared across all of
+// them and evictable under pressure — does the caching that matters, and a large
+// private pool per graph mostly buys address space and accounting.
+//
+// Override with PREDICATO_TOPIC_BUFFER_POOL_BYTES (the name humn already
+// documents) when a specific deployment's working set justifies more.
+const defaultTopicBufferPoolBytes uint64 = 256 * 1024 * 1024
+
+// defaultTopicMaxDbSize bounds the VIRTUAL address space each open graph
+// reserves via mmap. See driver_ladybug.go for why this must not be left at the
+// driver's 8 TiB default. Override with PREDICATO_TOPIC_MAX_DB_SIZE_BYTES.
+const defaultTopicMaxDbSize uint64 = 64 * 1024 * 1024 * 1024
+
+// topicBufferPoolBytes returns the per-graph buffer pool size. It no longer
+// scales with file size: with a whole corpus open at once the ladder's totals
+// were the binding constraint, and the page cache serves the same purpose.
+func topicBufferPoolBytes() uint64 {
+	if v := envBytes("PREDICATO_TOPIC_BUFFER_POOL_BYTES"); v > 0 {
+		return v
+	}
+	return defaultTopicBufferPoolBytes
+}
+
+// maxDbSizeForTopicGraph returns the per-graph virtual-size reservation.
+func maxDbSizeForTopicGraph() uint64 {
+	if v := envBytes("PREDICATO_TOPIC_MAX_DB_SIZE_BYTES"); v > 0 {
+		return v
+	}
+	return defaultTopicMaxDbSize
+}
+
+// envBytes reads a byte count from the environment, returning 0 when unset or
+// unparseable so the caller falls back to its default.
+func envBytes(name string) uint64 {
+	s := strings.TrimSpace(os.Getenv(name))
+	if s == "" {
+		return 0
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
-		return 768 * 1024 * 1024 // 768MB default
+		return 0
 	}
-	size := info.Size()
-	switch {
-	case size > 1<<30: // >1GB
-		return 2 * 1024 * 1024 * 1024 // 2GB
-	case size > 500<<20: // >500MB
-		return 1024 * 1024 * 1024 // 1GB
-	default:
-		return 768 * 1024 * 1024 // 768MB
-	}
+	return v
 }
 
 // GetMergeStrategyOrDefault returns the merge strategy or the default value.
