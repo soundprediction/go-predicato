@@ -73,6 +73,15 @@ func initializeRouterPredicato(cmd *cobra.Command, cfg *config.Config) (core.Pre
 		routerMaxOpenGraphs,
 	)
 
+	// Pre-open every topic graph in the background. Without this the pooled router
+	// starts fully cold and the first query per topic pays the graph open on the
+	// request path — on every deploy and restart. Backgrounded deliberately:
+	// opening a whole corpus serially would delay the listener by minutes.
+	go func() {
+		ok, fail := manager.InitializeAllClients()
+		logger.Info("Topic graph pre-warm complete", "opened", ok, "failed", fail)
+	}()
+
 	return &routerPredicato{
 		router:  router.NewRouter(manager, classifier, routerConfig, logger),
 		manager: manager,
