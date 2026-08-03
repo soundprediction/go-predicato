@@ -28,6 +28,14 @@ func init() {
 		cfg.MaxDbSize = maxDbSizeForTopicGraph()
 		if c.ReadOnly {
 			cfg.BufferPoolSize = topicBufferPoolBytes()
+			// MaxConcurrentQueries becomes the engine's MaxNumThreads, i.e. the
+			// intra-query parallelism. The driver default of 1 pins every search to a
+			// single core, which is the binding cost once the remote hops are cheap:
+			// on a live node the embedder answers in ~9ms, the reranker in ~37ms and
+			// NLI in ~0.2ms/pair, yet five searches accounted for 11s of a 14.6s
+			// request. Read-only topic graphs are never written to, so widening this
+			// only adds scan/probe parallelism.
+			cfg.MaxConcurrentQueries = topicQueryThreads()
 		}
 		return driver.NewLadybugDriverWithConfig(cfg)
 	})

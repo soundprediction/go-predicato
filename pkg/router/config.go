@@ -175,6 +175,21 @@ func topicBufferPoolBytes() uint64 {
 	return defaultTopicBufferPoolBytes
 }
 
+// defaultTopicQueryThreads is the intra-query thread count for a read-only topic
+// graph. Kept well below the host core count because searches fan out (max-graphs
+// per request, and callers issue several concurrently), so this multiplies rather
+// than replaces existing parallelism.
+const defaultTopicQueryThreads = 4
+
+// topicQueryThreads returns the per-query thread count, overridable via
+// PREDICATO_TOPIC_QUERY_THREADS.
+func topicQueryThreads() int {
+	if v := envBytes("PREDICATO_TOPIC_QUERY_THREADS"); v > 0 && v <= 64 {
+		return int(v)
+	}
+	return defaultTopicQueryThreads
+}
+
 // maxDbSizeForTopicGraph returns the per-graph virtual-size reservation.
 func maxDbSizeForTopicGraph() uint64 {
 	if v := envBytes("PREDICATO_TOPIC_MAX_DB_SIZE_BYTES"); v > 0 {
