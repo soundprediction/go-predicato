@@ -55,9 +55,14 @@ if [ ! -f "$LBUG_OUT" ]; then
   echo "Extracting ladybug (${NORM_OS}/${NORM_ARCH})..."
   gunzip -c "$LBUG_GZ" > "$LBUG_OUT"
   chmod +x "$LBUG_OUT"
-  # Create .so.0 symlink for Linux runtime linker
+  # Create the versioned SONAME symlink the runtime linker resolves. Binaries are
+  # linked against @rpath/liblbug.0.dylib (macOS) / liblbug.so.0 (Linux), so
+  # without this they build but abort at load with "Library not loaded". Only the
+  # Linux case existed, which is why the CGO driver tests could never run on macOS.
   if [ "$LBUG_EXT" = "so" ]; then
     ln -sf "liblbug.so" "${LBUG_DIR}/liblbug.so.0"
+  else
+    ln -sf "liblbug.dylib" "${LBUG_DIR}/liblbug.0.dylib"
   fi
   echo "  -> $LBUG_OUT"
 else
