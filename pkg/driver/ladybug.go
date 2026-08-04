@@ -563,25 +563,22 @@ func NewLadybugDriverWithConfig(config *LadybugDriverConfig) (*LadybugDriver, er
 		}
 	}
 
-	// Load FTS extension for this connection
-	// Extensions must be loaded for each session (connection)
-	ftsResult, err := client.Query("LOAD EXTENSION FTS;")
-	if err != nil && !strings.Contains(err.Error(), "already loaded") {
-		log.Printf("Warning: Failed to load FTS extension on main connection: %v", err)
-	}
-	if ftsResult != nil {
-		ftsResult.Close()
-	}
-
-	// Load the VECTOR extension for this connection too, so HNSW vector indexes
-	// (QUERY_VECTOR_INDEX) are usable. Without it, vector similarity search
-	// silently falls back to a brute-force cosine scan even when an index exists.
-	vecResult, verr := client.Query("LOAD VECTOR;")
-	if verr != nil && !strings.Contains(verr.Error(), "already loaded") {
-		log.Printf("Warning: Failed to load VECTOR extension on main connection: %v", verr)
-	}
-	if vecResult != nil {
-		vecResult.Close()
+	// The comment this replaced said "Extensions must be loaded for each session
+	// (connection)", but only ever loaded them on the primary — leaving the
+	// read-pool connections opened just above untouched. Load them everywhere so
+	// code and behaviour agree.
+	//
+	// Whether ladybug scopes extensions per-connection or per-database is NOT
+	// established here. Evidence points to per-database: the deployed node runs a
+	// 4-connection pool and, if the other three could not resolve
+	// QUERY_VECTOR_INDEX / QUERY_FTS_INDEX, those searches would ERROR (neither
+	// path has a non-indexed fallback) — yet it reports clients_failed=0. So this
+	// is defensive, not a proven fix, and repeated loads are cheap: a LOAD on an
+	// already-loaded session returns silently, and 10 of them cost the same as a
+	// trivial query.
+	loadSessionExtensions(client, "primary")
+	for i, c := range driver.readConns {
+		loadSessionExtensions(c, fmt.Sprintf("read-pool %d", i+1))
 	}
 
 	// Set up a finalizer to clean up temp directories if Close() is never called.
@@ -4610,4 +4607,33 @@ func (k *LadybugDriver) GetAllGroupIDs(ctx context.Context) ([]string, error) {
 	}
 
 	return []string{}, nil
+}
+
+// loadSessionExtensions loads the FTS and VECTOR extensions on one connection.
+//
+// Callers rely on QUERY_FTS_INDEX and QUERY_VECTOR_INDEX resolving. If VECTOR
+// cannot be resolved, vectorIndexName reads that as "no index" and
+// SearchNodes/SearchEdges take a brute-force cosine scan instead — which returns
+// CORRECT results slowly, so the cost surfaces as latency and never as an error.
+// Measured on the deployed thyroid graph (37,645 entities / 188,570 edges): the
+// HNSW path answers an edge search in ~0.1s, the brute-force branch in 11.7s.
+//
+// Best-effort by design: a graph genuinely without these extensions must keep
+// working through the fallbacks, so a failure is logged and not returned.
+func loadSessionExtensions(conn *ladybug.Connection, label string) {
+	if conn == nil {
+		return
+	}
+	for _, ext := range []struct{ name, stmt string }{
+		{"FTS", "LOAD EXTENSION FTS;"},
+		{"VECTOR", "LOAD VECTOR;"},
+	} {
+		res, err := conn.Query(ext.stmt)
+		if err != nil && !strings.Contains(err.Error(), "already loaded") {
+			log.Printf("Warning: failed to load %s extension on %s connection: %v", ext.name, label, err)
+		}
+		if res != nil {
+			res.Close()
+		}
+	}
 }
